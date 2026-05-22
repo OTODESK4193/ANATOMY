@@ -13,13 +13,11 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     setSize(800, 600);
 }
 
-AnatomyAudioProcessorEditor::~AnatomyAudioProcessorEditor()
-{
-}
+AnatomyAudioProcessorEditor::~AnatomyAudioProcessorEditor() {}
 
 bool AnatomyAudioProcessorEditor::isInterestedInFileDrag(const juce::StringArray& files)
 {
-    return true;
+    return true; // どのようなファイルでも受け入れる設定
 }
 
 void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, int x, int y)
@@ -32,7 +30,10 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
         juce::AudioBuffer<float> buffer((int)reader->numChannels, (int)reader->lengthInSamples);
         reader->read(&buffer, 0, (int)reader->lengthInSamples, 0, true, true);
 
+        // UIの更新
         waveA.setBuffer(buffer);
+
+        // 処理開始
         audioProcessor.startSeparation(buffer);
 
         delete reader;

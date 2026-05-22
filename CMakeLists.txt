@@ -56,7 +56,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     Source/PluginProcessor.h
     Source/PluginEditor.cpp
     Source/PluginEditor.h
- "Source/DSP/HpssSeparator.h" "Source/DSP/HpssSeparator.cpp" "Source/UI/WaveformComponent.h" "Source/UI/WaveformComponent.cpp")
+ "Source/DSP/HpssSeparator.h" "Source/DSP/HpssSeparator.cpp" "Source/UI/WaveformComponent.h" "Source/UI/WaveformComponent.cpp" "Source/DSP/AnatomyVoice.h" "Source/DSP/AnatomyVoice.cpp")
 
 # ==============================================================================
 # JUCEモジュールのリンク
