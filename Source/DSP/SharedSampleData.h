@@ -1,0 +1,29 @@
+#pragma once
+#include <juce_audio_basics/juce_audio_basics.h>
+#include <memory>
+
+class SharedSampleData
+{
+public:
+    SharedSampleData(juce::AudioBuffer<float>&& clickBufferToUse,
+        juce::AudioBuffer<float>&& sustainBufferToUse,
+        double sampleRate)
+        : clickBuffer(std::move(clickBufferToUse)),
+        sustainBuffer(std::move(sustainBufferToUse)),
+        originalSampleRate(sampleRate)
+    {
+    }
+
+    ~SharedSampleData() = default;
+
+    const juce::AudioBuffer<float>& getClickBuffer() const noexcept { return clickBuffer; }
+    const juce::AudioBuffer<float>& getSustainBuffer() const noexcept { return sustainBuffer; }
+    double getSampleRate() const noexcept { return originalSampleRate; }
+
+private:
+    juce::AudioBuffer<float> clickBuffer;
+    juce::AudioBuffer<float> sustainBuffer;
+    double originalSampleRate;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SharedSampleData)
+};

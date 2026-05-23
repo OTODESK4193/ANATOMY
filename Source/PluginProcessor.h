@@ -1,9 +1,12 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_core/juce_core.h>
 #include "DSP/HpssSeparator.h"
-#include "DSP/AnatomyVoice.h"
+#include "DSP/ThreadSafeSamplerSound.h"
+#include "DSP/ThreadSafeSamplerVoice.h"
 
-class AnatomyAudioProcessor : public juce::AudioProcessor, private juce::Thread
+class AnatomyAudioProcessor : public juce::AudioProcessor, public juce::Thread
 {
 public:
     AnatomyAudioProcessor();
@@ -21,49 +24,52 @@ public:
     bool producesMidi() const override;
     bool isMidiEffect() const override;
     double getTailLengthSeconds() const override;
+
     int getNumPrograms() override;
     int getCurrentProgram() override;
     void setCurrentProgram(int index) override;
     const juce::String getProgramName(int index) override;
     void changeProgramName(int index, const juce::String& newName) override;
+
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
-    // 非同期分離処理のエントリポイント
+    // バックグラウンド非同期スライススレッドの制御
     void startSeparation(const juce::AudioBuffer<float>& inputAudio);
+    void run() override;
 
-    // スレッド状態と進捗をEditorへ公開するゲッター
-    float getHpssProgress() const { return separator.getProgress(); }
     bool isCurrentlyProcessing() const { return isThreadRunning(); }
+    float getHpssProgress() const { return separator.getProgress(); }
 
-    // 各波形コンポーネントバインド用の永続ゲッター（原音・Transient・Tonalの3面個別化）
-    const juce::AudioBuffer<float>& getOriginalBuffer() const { return originalBufferThread; }
-    const juce::AudioBuffer<float>& getTransientBuffer() const { return transBufferThread; }
-    const juce::AudioBuffer<float>& getTonalBuffer() const { return tonalBufferThread; }
-
-    // 新設：Solo状態の制御メソッドとゲッター (0: Original, 1: Transient, 2: Tonal)
-    void setSoloMode(int mode);
     int getSoloMode() const { return currentSoloMode; }
+    void setSoloMode(int mode);
 
-    // 内部状態に合わせてシンセの音声ソースを安全に組み替えるメソッド
-    void updateSynthSound();
+    // UIバッファ読み出し用セーフティインターフェース
+    const juce::AudioBuffer<float>& getOriginalBuffer() const { return originalBufferUI; }
+    const juce::AudioBuffer<float>& getTransientBuffer() const { return transBufferUI; }
+    const juce::AudioBuffer<float>& getTonalBuffer() const { return tonalBufferUI; }
 
 private:
-    void run() override;
+    void updateSynthSound();
 
     HpssSeparator separator{ 2048 };
     juce::Synthesiser synth;
+    ThreadSafeSamplerSound* samplerSound = nullptr;
 
-    // 現在のSolo選択状態
-    int currentSoloMode = 0;
+    juce::CriticalSection lock;
 
-    // スレッド間で安全にコピー・保持するためのバッファ群
+    // スレッド間通信専用バッファ
     juce::AudioBuffer<float> inputBufferThread;
     juce::AudioBuffer<float> originalBufferThread;
     juce::AudioBuffer<float> transBufferThread;
     juce::AudioBuffer<float> tonalBufferThread;
 
-    juce::CriticalSection lock;
+    // UI描画安全確保用スタティックバッファ
+    juce::AudioBuffer<float> originalBufferUI;
+    juce::AudioBuffer<float> transBufferUI;
+    juce::AudioBuffer<float> tonalBufferUI;
+
+    int currentSoloMode = 0; // 0: Full Mix, 1: Transient Solo, 2: Sustain Solo
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnatomyAudioProcessor)
 };
