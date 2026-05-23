@@ -73,6 +73,9 @@ void AnatomyAudioProcessor::parameterChanged(const juce::String&, float)
 
 void AnatomyAudioProcessor::startSeparation(const juce::AudioBuffer<float>& inputAudio, double sourceSampleRate)
 {
+    if (isThreadRunning())
+        stopThread(2000);
+
     {
         const juce::ScopedLock sl(lock);
         if (&rawInputBuffer != &inputAudio)
@@ -80,7 +83,7 @@ void AnatomyAudioProcessor::startSeparation(const juce::AudioBuffer<float>& inpu
             rawInputBuffer.makeCopyOf(inputAudio);
         }
         inputBufferThread.makeCopyOf(inputAudio);
-        fileSampleRate = sourceSampleRate;
+        fileSampleRate = sourceSampleRate; // ファイル本来のサンプリングレートを厳密に記憶！
     }
     needsReanalysis.store(true);
 }
@@ -171,6 +174,7 @@ void AnatomyAudioProcessor::updateSynthSound()
         activeSustain.copyFrom(0, 0, tonalBufferThread, 0, 0, numSamples);
     }
 
+    // 修正：ファイル本来のサンプリングレート（fileSampleRate）を共有データコンテナへ確実に注入！
     auto newData = std::make_shared<SharedSampleData>(std::move(activeClick), std::move(activeSustain), fileSampleRate);
     samplerSound->updateSampleData(newData);
 }
@@ -199,10 +203,6 @@ void AnatomyAudioProcessor::setStateInformation(const void* data, int sizeInByte
     if (auto xmlState = getXmlFromBinary(data, sizeInBytes))
         apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
 }
-
-#if defined(_MSC_VER)
-#pragma comment(linker, "/export:?createPluginFilter@@YAPEAVAudioProcessor@juce@@XZ")
-#endif
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {

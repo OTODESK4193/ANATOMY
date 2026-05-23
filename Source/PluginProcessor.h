@@ -40,7 +40,7 @@ public:
 
     void parameterChanged(const juce::String& parameterID, float newValue) override;
 
-    // 【修正】引数に sourceSampleRate を厳密に追加拡張
+    // 仕様修正：ファイル本来のサンプリングレートを第2引数で受け取るように拡張
     void startSeparation(const juce::AudioBuffer<float>& inputAudio, double sourceSampleRate);
     void run() override;
 
@@ -52,8 +52,13 @@ public:
     int getSoloMode() const { return currentSoloMode; }
     void setSoloMode(int mode);
 
-    const juce::AudioBuffer<float>& getTransientBuffer() const { return transBufferUI; }
-    const juce::AudioBuffer<float>& getTonalBuffer() const { return tonalBufferUI; }
+    // 【重要】GUIスレッドからの不意のアクセス衝突を100%遮断する安全なディープコピー関数
+    void getCallbackBuffersSecure(juce::AudioBuffer<float>& transDest, juce::AudioBuffer<float>& tonalDest)
+    {
+        const juce::ScopedLock sl(lock);
+        transDest.makeCopyOf(transBufferUI);
+        tonalDest.makeCopyOf(tonalBufferUI);
+    }
 
     juce::AudioProcessorValueTreeState apvts;
 
@@ -63,12 +68,12 @@ private:
 
     HpssSeparator separator{ 2048 };
     juce::Synthesiser synth;
-    AnatomySound* samplerSound = nullptr; // 正規クラス名へバインド
+    AnatomySound* samplerSound = nullptr;
 
     juce::CriticalSection lock;
 
     std::atomic<bool> needsReanalysis{ false };
-    double fileSampleRate = 44100.0; // 【修正】未定義だった変数宣言を追加！
+    double fileSampleRate = 44100.0; // ファイル固有のサンプリングレート保持用
 
     juce::AudioBuffer<float> rawInputBuffer;
     juce::AudioBuffer<float> inputBufferThread;

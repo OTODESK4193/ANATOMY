@@ -91,7 +91,6 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
 
         waveDndFile.setBuffer(buffer);
 
-        // 【修正結合】ファイル本来のサンプリングレートを抽出し、プロセッサへ確実にパス！
         audioProcessor.startSeparation(buffer, reader->sampleRate);
         wasProcessing = true;
     }
@@ -105,8 +104,11 @@ void AnatomyAudioProcessorEditor::timerCallback()
 
     if (isProcessing || wasProcessing)
     {
-        waveTransient.setBuffer(audioProcessor.getTransientBuffer());
-        waveTonal.setBuffer(audioProcessor.getTonalBuffer());
+        juce::AudioBuffer<float> tempTrans, tempTonal;
+        audioProcessor.getCallbackBuffersSecure(tempTrans, tempTonal);
+
+        waveTransient.setBuffer(tempTrans);
+        waveTonal.setBuffer(tempTonal);
         repaint();
     }
 
@@ -128,6 +130,7 @@ void AnatomyAudioProcessorEditor::updateButtonToggleStates()
 
 void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
 {
+    // 【修正】タイポ ju Colours::black を juce::Colours::black へ完全補正
     g.fillAll(juce::Colours::black);
 
     g.setColour(juce::Colours::white.withAlpha(0.5f));
