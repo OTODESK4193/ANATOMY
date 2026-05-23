@@ -1,4 +1,6 @@
 #include "HpssSeparator.h"
+#include <cmath>
+#include <algorithm>
 
 HpssSeparator::HpssSeparator(int) {}
 
@@ -11,8 +13,8 @@ void HpssSeparator::performSeparation(const juce::AudioBuffer<float>& input,
     juce::AudioBuffer<float>& trans,
     juce::AudioBuffer<float>& tonal,
     float sensitivity,
-    float clickLengthMs,
-    float clickCurve,
+    float clickHoldMs,
+    float sustainFadeMs,
     float lookAheadMs,
     juce::Thread* callingThread)
 {
@@ -30,31 +32,16 @@ void HpssSeparator::performSeparation(const juce::AudioBuffer<float>& input,
         return;
     }
 
-    if (callingThread != nullptr && callingThread->threadShouldExit()) return;
-
-    progress.store(0.1f);
-    auto bounds = detector.analyzeBuffer(input, currentSampleRate, sensitivity, lookAheadMs);
-    progress.store(0.3f);
-
-    if (callingThread != nullptr && callingThread->threadShouldExit()) return;
-
     float* transData = trans.getWritePointer(0);
     float* tonalData = tonal.getWritePointer(0);
     const float* srcData = input.getReadPointer(0);
 
-    if (bounds.startIndex == -1 || bounds.peakIndex == -1)
-    {
-        juce::FloatVectorOperations::copy(transData, srcData, numSamples);
-        progress.store(1.0f);
-        return;
-    }
+    // ワンショットの絶対先頭（0ms）からHOLD時間とFADE-IN時間をサンプル数へ正確に変換
+    const int holdSamples = static_cast<int>((clickHoldMs / 1000.0f) * currentSampleRate);
+    const int fadeSamples = std::max(1, static_cast<int>((sustainFadeMs / 1000.0f) * currentSampleRate));
 
-    const int nStart = bounds.startIndex;
-    const int nPeak = bounds.peakIndex;
-
-    const int riseLength = std::max(1, nPeak - nStart);
-    const int fallLength = std::max(1, static_cast<int>((clickLengthMs / 1000.0f) * currentSampleRate));
-    const int nEnd = nPeak + fallLength;
+    const int nHoldEnd = holdSamples;
+    const int nFadeEnd = nHoldEnd + fadeSamples;
 
     for (int n = 0; n < numSamples; ++n)
     {
@@ -63,29 +50,24 @@ void HpssSeparator::performSeparation(const juce::AudioBuffer<float>& input,
 
         float wClick = 0.0f;
 
-        if (n < nStart)
+        if (n >= 0 && n < nHoldEnd)
         {
-            wClick = 0.0f;
+            // 絶対頭から指定ms間は原音を100%回収（Sustain側は完全無音）
+            wClick = 1.0f;
         }
-        else if (n >= nStart && n < nPeak)
+        else if (n >= nHoldEnd && n < nFadeEnd)
         {
-            float phase = (static_cast<float>(n - nStart) / static_cast<float>(riseLength)) * (juce::MathConstants<float>::pi * 0.5f);
-            wClick = std::sin(phase);
-        }
-        else if (n >= nPeak && n < nEnd)
-        {
-            float phase = (static_cast<float>(n - nPeak) / static_cast<float>(fallLength)) * (juce::MathConstants<float>::pi * 0.5f);
-
-            // 【新設】コサイン減衰窓を clickCurve で累乗変形。
-            // curve値を1.0より小さく（左に回す）すると凸型になり、ピーク直後の二次アタックエネルギーを長くClick側にホールドします
-            wClick = std::pow(std::cos(phase), clickCurve);
+            // 傾きゼロで軟着陸合流させるコサイン自乗（Hanning）フェードアウト
+            float phase = (static_cast<float>(n - nHoldEnd) / static_cast<float>(fadeSamples)) * (juce::MathConstants<float>::pi * 0.5f);
+            float cosVal = std::cos(phase);
+            wClick = cosVal * cosVal;
         }
         else
         {
             wClick = 0.0f;
         }
 
-        // 代数的完全再構成（総和1.0f）をミリサンプルの極限まで死守
+        // 相補的完全再構成条件の死守
         float wSustain = 1.0f - wClick;
 
         transData[n] = srcData[n] * wClick;
@@ -93,7 +75,7 @@ void HpssSeparator::performSeparation(const juce::AudioBuffer<float>& input,
 
         if (n % 4000 == 0)
         {
-            progress.store(0.3f + (static_cast<float>(n) / static_cast<float>(numSamples)) * 0.7f);
+            progress.store((static_cast<float>(n) / static_cast<float>(numSamples)));
         }
     }
 

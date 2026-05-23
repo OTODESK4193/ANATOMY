@@ -6,16 +6,16 @@ AnatomyAudioProcessor::AnatomyAudioProcessor()
     juce::Thread("AnatomyTimeDomainThread"),
     apvts(*this, nullptr, "PARAMETERS", createParameterLayout())
 {
-    auto* voice = new ThreadSafeSamplerVoice();
+    auto* voice = new AnatomyVoice();
     synth.addVoice(voice);
 
-    auto* sound = new ThreadSafeSamplerSound();
+    auto* sound = new AnatomySound();
     synth.addSound(sound);
     samplerSound = sound;
 
     apvts.addParameterListener("sensitivity", this);
     apvts.addParameterListener("clickLength", this);
-    apvts.addParameterListener("clickCurve", this); // リスナー拡張
+    apvts.addParameterListener("clickCurve", this);
     apvts.addParameterListener("lookAhead", this);
 }
 
@@ -38,11 +38,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
         juce::ParameterID("sensitivity", 1), "Attack Sensitivity", 0.1f, 2.0f, 0.8f));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID("clickLength", 1), "Click Length (ms)", 2.0f, 50.0f, 15.0f));
+        juce::ParameterID("clickLength", 1), "Click Hold (ms)", 0.0f, 50.0f, 2.0f));
 
-    // 【新設】Sustain最先端のエッジ漏洩を駆逐する曲率パラメータの追加 (0.2〜5.0乗可変)
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID("clickCurve", 1), "Click Fade Curve", 0.2f, 5.0f, 1.0f));
+        juce::ParameterID("clickCurve", 1), "Sustain Fade-In (ms)", 1.0f, 100.0f, 15.0f));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID("lookAhead", 1), "Pre-Attack Lookahead (ms)", 0.0f, 5.0f, 1.5f));
@@ -72,11 +71,16 @@ void AnatomyAudioProcessor::parameterChanged(const juce::String&, float)
     needsReanalysis.store(true);
 }
 
-void AnatomyAudioProcessor::startSeparation(const juce::AudioBuffer<float>& inputAudio)
+void AnatomyAudioProcessor::startSeparation(const juce::AudioBuffer<float>& inputAudio, double sourceSampleRate)
 {
     {
         const juce::ScopedLock sl(lock);
-        rawInputBuffer.makeCopyOf(inputAudio);
+        if (&rawInputBuffer != &inputAudio)
+        {
+            rawInputBuffer.makeCopyOf(inputAudio);
+        }
+        inputBufferThread.makeCopyOf(inputAudio);
+        fileSampleRate = sourceSampleRate;
     }
     needsReanalysis.store(true);
 }
@@ -110,12 +114,12 @@ void AnatomyAudioProcessor::run()
     juce::AudioBuffer<float> localTrans, localTonal;
 
     float sensitivity = apvts.getRawParameterValue("sensitivity")->load();
-    float clickLength = apvts.getRawParameterValue("clickLength")->load();
-    float clickCurve = apvts.getRawParameterValue("clickCurve")->load(); // スレッドロード拡張
+    float clickHold = apvts.getRawParameterValue("clickLength")->load();
+    float sustainFade = apvts.getRawParameterValue("clickCurve")->load();
     float lookAhead = apvts.getRawParameterValue("lookAhead")->load();
 
     separator.performSeparation(inputBufferThread, localTrans, localTonal,
-        sensitivity, clickLength, clickCurve, lookAhead, this);
+        sensitivity, clickHold, sustainFade, lookAhead, this);
 
     if (threadShouldExit()) return;
 
@@ -167,7 +171,7 @@ void AnatomyAudioProcessor::updateSynthSound()
         activeSustain.copyFrom(0, 0, tonalBufferThread, 0, 0, numSamples);
     }
 
-    auto newData = std::make_shared<SharedSampleData>(std::move(activeClick), std::move(activeSustain), getSampleRate());
+    auto newData = std::make_shared<SharedSampleData>(std::move(activeClick), std::move(activeSustain), fileSampleRate);
     samplerSound->updateSampleData(newData);
 }
 
@@ -195,6 +199,10 @@ void AnatomyAudioProcessor::setStateInformation(const void* data, int sizeInByte
     if (auto xmlState = getXmlFromBinary(data, sizeInBytes))
         apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
 }
+
+#if defined(_MSC_VER)
+#pragma comment(linker, "/export:?createPluginFilter@@YAPEAVAudioProcessor@juce@@XZ")
+#endif
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {

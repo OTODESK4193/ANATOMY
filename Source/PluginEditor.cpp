@@ -54,9 +54,9 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
         };
 
     configureSlider(sliderSensitivity, lblSensitivity, "ATTACK SENSITIVITY");
-    configureSlider(sliderClickLength, lblClickLength, "CLICK LENGTH");
-    configureSlider(sliderClickCurve, lblClickCurve, "CLICK FADE CURVE"); // 4連配置拡張
-    configureSlider(sliderLookAhead, lblLookAhead, "PRE-ATTACK");
+    configureSlider(sliderClickLength, lblClickLength, "CLICK HOLD (ms)");
+    configureSlider(sliderClickCurve, lblClickCurve, "SUSTAIN FADE-IN (ms)");
+    configureSlider(sliderLookAhead, lblLookAhead, "PRE-ATTACK (ms)");
 
     attachSensitivity = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "sensitivity", sliderSensitivity);
     attachClickLength = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "clickLength", sliderClickLength);
@@ -90,7 +90,9 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
         reader->read(&buffer, 0, (int)reader->lengthInSamples, 0, true, true);
 
         waveDndFile.setBuffer(buffer);
-        audioProcessor.startSeparation(buffer);
+
+        // 【修正結合】ファイル本来のサンプリングレートを抽出し、プロセッサへ確実にパス！
+        audioProcessor.startSeparation(buffer, reader->sampleRate);
         wasProcessing = true;
     }
 }
@@ -139,7 +141,6 @@ void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
     g.drawText("2. Extracted Transient Component (Click / Attack)", 15, 125 + h, getWidth(), 15, juce::Justification::left);
     g.drawText("3. Extracted Sustain Component (Body / Harmonics)", 15, 125 + h * 2, getWidth(), 15, juce::Justification::left);
 
-    // いずれのノブもドラッグ中でないときのみ、バックグラウンド完了率表示を重ねる
     if (audioProcessor.isCurrentlyProcessing() &&
         !sliderSensitivity.isMouseOverOrDragging() &&
         !sliderClickLength.isMouseOverOrDragging() &&
@@ -170,7 +171,6 @@ void AnatomyAudioProcessorEditor::resized()
     btnTransient.setBounds(buttonArea.removeFromLeft(btnWidth).reduced(2));
     btnTonal.setBounds(buttonArea.reduced(2));
 
-    // 4連コントロールの配置計算へグリッドリファクタリング
     auto controlArea = area.removeFromTop(90).reduced(5);
     auto ctrlWidth = controlArea.getWidth() / 4;
 

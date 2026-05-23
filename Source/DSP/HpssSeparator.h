@@ -10,13 +10,13 @@ public:
     HpssSeparator(int fftSizeIn);
     void prepare(double sampleRate);
 
-    // 第4のパラメータ clickCurve を統合した時間領域分離メソッド
+    // 絶対先頭基準 HOLD + SMOOTH FADE モデルの分離メソッド
     void performSeparation(const juce::AudioBuffer<float>& input,
         juce::AudioBuffer<float>& trans,
         juce::AudioBuffer<float>& tonal,
         float sensitivity,
-        float clickLengthMs,
-        float clickCurve,
+        float clickHoldMs,
+        float sustainFadeMs,
         float lookAheadMs,
         juce::Thread* callingThread);
 

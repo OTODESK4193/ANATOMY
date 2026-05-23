@@ -1,26 +1,52 @@
 #include "AnatomyVoice.h"
 
-AnatomyVoice::AnatomyVoice() {}
-AnatomyVoice::~AnatomyVoice() {}
-
 bool AnatomyVoice::canPlaySound(juce::SynthesiserSound* sound)
 {
     return dynamic_cast<AnatomySound*> (sound) != nullptr;
 }
 
-void AnatomyVoice::startNote(int midiNoteNumber, float velocity, juce::SynthesiserSound* sound, int /*currentPitchWheelPosition*/)
+void AnatomyVoice::startNote(int /*midiNoteNumber*/, float velocity, juce::SynthesiserSound* sound, int /*currentPitchWheelPosition*/)
 {
-    noteVelocity = velocity;
-    currentMidiNote = midiNoteNumber;
-    sourceSamplePosition = 0.0;
-    isPlaying = true;
+    if (auto* samplerSound = dynamic_cast<AnatomySound*>(sound))
+    {
+        activeData = samplerSound->getSampleData();
+        if (activeData != nullptr)
+        {
+            triggerVelocity = velocity;
+            clickReadIndex = 0.0;
+            sustainReadIndex = 0.0;
+
+            // DAWの動作レートとファイル本来のナマのレートを取得
+            double hostRate = getSampleRate();
+            double fileRate = activeData->getSampleRate();
+
+            // どのキーを押しても音階追従はせず、サンプリングレートの差のみを完全に相殺
+            if (hostRate > 0.0 && fileRate > 0.0)
+            {
+                pitchRatio = fileRate / hostRate;
+            }
+            else
+            {
+                pitchRatio = 1.0;
+            }
+
+            isActive = true;
+        }
+        else
+        {
+            clearCurrentNote();
+        }
+    }
 }
 
 void AnatomyVoice::stopNote(float /*velocity*/, bool allowTailOff)
 {
-    isPlaying = false;
-    currentMidiNote = -1;
-    clearCurrentNote();
+    if (!allowTailOff)
+    {
+        clearCurrentNote();
+        activeData = nullptr;
+        isActive = false;
+    }
 }
 
 void AnatomyVoice::pitchWheelMoved(int /*newPitchWheelValue*/) {}
@@ -28,69 +54,62 @@ void AnatomyVoice::controllerMoved(int /*controllerNumber*/, int /*newController
 
 void AnatomyVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer, int startSample, int numSamples)
 {
-    if (!isPlaying) return;
+    if (!isActive || activeData == nullptr) return;
 
-    auto* currentSound = dynamic_cast<AnatomySound*> (getCurrentlyPlayingSound().get());
-    if (currentSound == nullptr) return;
+    auto localData = activeData;
+    if (localData == nullptr) return;
 
-    const auto& transBuffer = currentSound->getTransientBuffer();
-    const auto& tonalBuffer = currentSound->getTonalBuffer();
+    const auto& click = localData->getClickBuffer();
+    const auto& sustain = localData->getSustainBuffer();
 
-    const int maxSamples = transBuffer.getNumSamples();
-    if (maxSamples == 0) return;
+    const int clickSamples = click.getNumSamples();
+    const int sustainSamples = sustain.getNumSamples();
 
-    // 【修正：案A】鍵盤の位置に関わらずピッチ倍率は常に1.0（等速）
-    double pitchRatio = 1.0;
+    if (clickSamples == 0 && sustainSamples == 0) return;
 
-    // ホストのサンプリングレート補正のみを維持
-    if (auto sampleRate = getSampleRate(); sampleRate > 0)
+    float* outL = outputBuffer.getWritePointer(0, startSample);
+    float* outR = outputBuffer.getNumChannels() > 1 ? outputBuffer.getWritePointer(1, startSample) : nullptr;
+
+    for (int i = 0; i < numSamples; ++i)
     {
-        pitchRatio *= (44100.0 / sampleRate);
-    }
+        float clickVal = 0.0f;
+        float sustainVal = 0.0f;
 
-    for (int ch = 0; ch < outputBuffer.getNumChannels(); ++ch)
-    {
-        const int sourceCh = (ch < transBuffer.getNumChannels()) ? ch : 0;
-        const float* transSrc = transBuffer.getReadPointer(sourceCh);
-        const float* tonalSrc = tonalBuffer.getReadPointer(sourceCh);
-        float* outData = outputBuffer.getWritePointer(ch);
-
-        double localPos = sourceSamplePosition;
-
-        for (int sample = 0; sample < numSamples; ++sample)
+        // 線形補間を完全維持した、安全なロックフリー等速オリジナル再生
+        double cPos = clickReadIndex;
+        int cIdx = static_cast<int>(cPos);
+        if (cIdx < clickSamples)
         {
-            int idx = static_cast<int>(localPos);
-            if (idx >= maxSamples - 1)
-            {
-                isPlaying = false;
-                break;
-            }
-
-            float fraction = static_cast<float>(localPos - idx);
-
-            float tSample0 = transSrc[idx];
-            float tSample1 = transSrc[idx + 1];
-            float interpolatedTrans = tSample0 + fraction * (tSample1 - tSample0);
-
-            float hSample0 = tonalSrc[idx];
-            float hSample1 = tonalSrc[idx + 1];
-            float interpolatedTonal = hSample0 + fraction * (hSample1 - hSample0);
-
-            float mixedSample = (interpolatedTrans + interpolatedTonal) * noteVelocity;
-
-            outData[startSample + sample] += mixedSample;
-
-            localPos += pitchRatio;
+            float frac = static_cast<float>(cPos - cIdx);
+            float s0 = click.getReadPointer(0)[cIdx];
+            float s1 = (cIdx + 1 < clickSamples) ? click.getReadPointer(0)[cIdx + 1] : 0.0f;
+            clickVal = s0 + frac * (s1 - s0);
         }
 
-        if (ch == outputBuffer.getNumChannels() - 1)
+        double sPos = sustainReadIndex;
+        int sIdx = static_cast<int>(sPos);
+        if (sIdx < sustainSamples)
         {
-            sourceSamplePosition = localPos;
+            float frac = static_cast<float>(sPos - sIdx);
+            float s0 = sustain.getReadPointer(0)[sIdx];
+            float s1 = (sIdx + 1 < sustainSamples) ? sustain.getReadPointer(0)[sIdx + 1] : 0.0f;
+            sustainVal = s0 + frac * (s1 - s0);
         }
-    }
 
-    if (!isPlaying)
-    {
-        clearCurrentNote();
+        const float mixedVal = (clickVal + sustainVal) * triggerVelocity;
+
+        if (outL != nullptr) outL[startSample + i] += mixedVal;
+        if (outR != nullptr) outR[startSample + i] += mixedVal;
+
+        clickReadIndex += pitchRatio;
+        sustainReadIndex += pitchRatio;
+
+        if (static_cast<int>(clickReadIndex) >= clickSamples && static_cast<int>(sustainReadIndex) >= sustainSamples)
+        {
+            clearCurrentNote();
+            activeData = nullptr;
+            isActive = false;
+            break;
+        }
     }
 }

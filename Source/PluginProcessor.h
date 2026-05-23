@@ -5,8 +5,8 @@
 #include <memory>
 #include <atomic>
 #include "DSP/HpssSeparator.h"
-#include "DSP/ThreadSafeSamplerSound.h"
-#include "DSP/ThreadSafeSamplerVoice.h"
+#include "DSP/AnatomySound.h"
+#include "DSP/AnatomyVoice.h"
 
 class AnatomyAudioProcessor : public juce::AudioProcessor,
     public juce::Thread,
@@ -40,7 +40,8 @@ public:
 
     void parameterChanged(const juce::String& parameterID, float newValue) override;
 
-    void startSeparation(const juce::AudioBuffer<float>& inputAudio);
+    // 【修正】引数に sourceSampleRate を厳密に追加拡張
+    void startSeparation(const juce::AudioBuffer<float>& inputAudio, double sourceSampleRate);
     void run() override;
 
     void handleAsyncReanalysis();
@@ -62,11 +63,12 @@ private:
 
     HpssSeparator separator{ 2048 };
     juce::Synthesiser synth;
-    ThreadSafeSamplerSound* samplerSound = nullptr;
+    AnatomySound* samplerSound = nullptr; // 正規クラス名へバインド
 
     juce::CriticalSection lock;
 
     std::atomic<bool> needsReanalysis{ false };
+    double fileSampleRate = 44100.0; // 【修正】未定義だった変数宣言を追加！
 
     juce::AudioBuffer<float> rawInputBuffer;
     juce::AudioBuffer<float> inputBufferThread;
