@@ -3,6 +3,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_core/juce_core.h>
 #include <memory>
+#include <atomic>
 #include "DSP/HpssSeparator.h"
 #include "DSP/ThreadSafeSamplerSound.h"
 #include "DSP/ThreadSafeSamplerVoice.h"
@@ -42,7 +43,9 @@ public:
     void startSeparation(const juce::AudioBuffer<float>& inputAudio);
     void run() override;
 
-    bool isCurrentlyProcessing() const { return isThreadRunning(); }
+    void handleAsyncReanalysis();
+
+    bool isCurrentlyProcessing() const { return isThreadRunning() || needsReanalysis.load(); }
     float getHpssProgress() const { return separator.getProgress(); }
 
     int getSoloMode() const { return currentSoloMode; }
@@ -55,8 +58,6 @@ public:
 
 private:
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
-
-    // 【修正：記述漏れ復元】クラス固有のボイス更新用プライベートメソッドを厳密に宣言！
     void updateSynthSound();
 
     HpssSeparator separator{ 2048 };
@@ -64,6 +65,8 @@ private:
     ThreadSafeSamplerSound* samplerSound = nullptr;
 
     juce::CriticalSection lock;
+
+    std::atomic<bool> needsReanalysis{ false };
 
     juce::AudioBuffer<float> rawInputBuffer;
     juce::AudioBuffer<float> inputBufferThread;

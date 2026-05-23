@@ -15,6 +15,7 @@ AnatomyAudioProcessor::AnatomyAudioProcessor()
 
     apvts.addParameterListener("sensitivity", this);
     apvts.addParameterListener("clickLength", this);
+    apvts.addParameterListener("clickCurve", this); // リスナー拡張
     apvts.addParameterListener("lookAhead", this);
 }
 
@@ -22,7 +23,10 @@ AnatomyAudioProcessor::~AnatomyAudioProcessor()
 {
     apvts.removeParameterListener("sensitivity", this);
     apvts.removeParameterListener("clickLength", this);
+    apvts.removeParameterListener("clickCurve", this);
     apvts.removeParameterListener("lookAhead", this);
+
+    signalThreadShouldExit();
     stopThread(4000);
 }
 
@@ -35,6 +39,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID("clickLength", 1), "Click Length (ms)", 2.0f, 50.0f, 15.0f));
+
+    // 【新設】Sustain最先端のエッジ漏洩を駆逐する曲率パラメータの追加 (0.2〜5.0乗可変)
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("clickCurve", 1), "Click Fade Curve", 0.2f, 5.0f, 1.0f));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID("lookAhead", 1), "Pre-Attack Lookahead (ms)", 0.0f, 5.0f, 1.5f));
@@ -61,29 +69,40 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
 void AnatomyAudioProcessor::parameterChanged(const juce::String&, float)
 {
-    const juce::ScopedLock sl(lock);
-    if (rawInputBuffer.getNumSamples() > 0)
-    {
-        startSeparation(rawInputBuffer);
-    }
+    needsReanalysis.store(true);
 }
 
 void AnatomyAudioProcessor::startSeparation(const juce::AudioBuffer<float>& inputAudio)
 {
-    if (isThreadRunning())
-        stopThread(2000);
-
     {
         const juce::ScopedLock sl(lock);
-        if (&rawInputBuffer != &inputAudio)
-        {
-            rawInputBuffer.makeCopyOf(inputAudio);
-        }
-        inputBufferThread.makeCopyOf(inputAudio);
+        rawInputBuffer.makeCopyOf(inputAudio);
     }
+    needsReanalysis.store(true);
+}
 
-    separator.resetProgress();
-    startThread();
+void AnatomyAudioProcessor::handleAsyncReanalysis()
+{
+    if (!needsReanalysis.load()) return;
+
+    if (isThreadRunning())
+    {
+        signalThreadShouldExit();
+    }
+    else
+    {
+        const juce::ScopedLock sl(lock);
+        if (rawInputBuffer.getNumSamples() > 0)
+        {
+            inputBufferThread.makeCopyOf(rawInputBuffer);
+            needsReanalysis.store(false);
+            startThread();
+        }
+        else
+        {
+            needsReanalysis.store(false);
+        }
+    }
 }
 
 void AnatomyAudioProcessor::run()
@@ -92,10 +111,11 @@ void AnatomyAudioProcessor::run()
 
     float sensitivity = apvts.getRawParameterValue("sensitivity")->load();
     float clickLength = apvts.getRawParameterValue("clickLength")->load();
+    float clickCurve = apvts.getRawParameterValue("clickCurve")->load(); // スレッドロード拡張
     float lookAhead = apvts.getRawParameterValue("lookAhead")->load();
 
     separator.performSeparation(inputBufferThread, localTrans, localTonal,
-        sensitivity, clickLength, lookAhead, this);
+        sensitivity, clickLength, clickCurve, lookAhead, this);
 
     if (threadShouldExit()) return;
 

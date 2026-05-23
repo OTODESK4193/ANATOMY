@@ -12,6 +12,7 @@ void HpssSeparator::performSeparation(const juce::AudioBuffer<float>& input,
     juce::AudioBuffer<float>& tonal,
     float sensitivity,
     float clickLengthMs,
+    float clickCurve,
     float lookAheadMs,
     juce::Thread* callingThread)
 {
@@ -29,7 +30,6 @@ void HpssSeparator::performSeparation(const juce::AudioBuffer<float>& input,
         return;
     }
 
-    // 早期キャンセレーションチェック
     if (callingThread != nullptr && callingThread->threadShouldExit()) return;
 
     progress.store(0.1f);
@@ -53,13 +53,11 @@ void HpssSeparator::performSeparation(const juce::AudioBuffer<float>& input,
     const int nPeak = bounds.peakIndex;
 
     const int riseLength = std::max(1, nPeak - nStart);
-    // 【新設】CLICK LENGTH ノブから直接フェードアウトサンプル数をダイナミックに計算！
     const int fallLength = std::max(1, static_cast<int>((clickLengthMs / 1000.0f) * currentSampleRate));
     const int nEnd = nPeak + fallLength;
 
     for (int n = 0; n < numSamples; ++n)
     {
-        // リアルタイムドラッグ時の超高速キャンセレーションインターラプト
         if (n % 2000 == 0 && callingThread != nullptr && callingThread->threadShouldExit())
             return;
 
@@ -77,14 +75,17 @@ void HpssSeparator::performSeparation(const juce::AudioBuffer<float>& input,
         else if (n >= nPeak && n < nEnd)
         {
             float phase = (static_cast<float>(n - nPeak) / static_cast<float>(fallLength)) * (juce::MathConstants<float>::pi * 0.5f);
-            wClick = std::cos(phase);
+
+            // 【新設】コサイン減衰窓を clickCurve で累乗変形。
+            // curve値を1.0より小さく（左に回す）すると凸型になり、ピーク直後の二次アタックエネルギーを長くClick側にホールドします
+            wClick = std::pow(std::cos(phase), clickCurve);
         }
         else
         {
             wClick = 0.0f;
         }
 
-        // 相補的完全再構成条件の死守
+        // 代数的完全再構成（総和1.0f）をミリサンプルの極限まで死守
         float wSustain = 1.0f - wClick;
 
         transData[n] = srcData[n] * wClick;

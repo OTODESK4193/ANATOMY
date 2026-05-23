@@ -10,12 +10,13 @@ public:
     HpssSeparator(int fftSizeIn);
     void prepare(double sampleRate);
 
-    // 3パラメータおよびキャンセレーションスレッド監視を統合した分離メソッド
+    // 第4のパラメータ clickCurve を統合した時間領域分離メソッド
     void performSeparation(const juce::AudioBuffer<float>& input,
         juce::AudioBuffer<float>& trans,
         juce::AudioBuffer<float>& tonal,
         float sensitivity,
         float clickLengthMs,
+        float clickCurve,
         float lookAheadMs,
         juce::Thread* callingThread);
 
