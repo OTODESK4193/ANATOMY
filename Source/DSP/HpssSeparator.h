@@ -10,29 +10,26 @@ public:
     HpssSeparator(int fftSizeIn);
     void prepare(double sampleRate);
 
-    // 重い分離処理を実行
+    // HPR-I（多解像度・反復型分離）アルゴリズムによる完全解剖
     void performSeparation(const juce::AudioBuffer<float>& input,
         juce::AudioBuffer<float>& trans,
         juce::AudioBuffer<float>& tonal);
 
-    // UIやProcessorから現在の進捗（0.0f 〜 1.0f）を取得するためのスレッド安全なゲッター
     float getProgress() const { return progress.load(); }
-
-    // 進捗率を外部から強制リセットするためのメソッド
     void resetProgress() { progress.store(0.0f); }
 
 private:
-    int fftSize;
-    juce::dsp::FFT fft;
-    std::vector<float> window;
-    double currentSampleRate = 44100.0;
-    int vertWindow = 3;
-    int horizWindow = 3;
+    // 多解像度用デュアルFFTプロセッサ
+    juce::dsp::FFT fftLarge; // 4096 (Tonal用)
+    juce::dsp::FFT fftSmall; // 256 (Transient用)
 
-    // スレッド間で安全に共有される進捗率フラグ
+    std::vector<float> windowLarge;
+    std::vector<float> windowSmall;
+
+    double currentSampleRate = 44100.0;
     std::atomic<float> progress{ 0.0f };
 
-    void applyWindow(const juce::AudioBuffer<float>& input, int offset, std::vector<float>& dest);
-    void applyHorizontalMedian(std::vector<std::vector<float>>& map, int windowSize);
-    void applyVerticalMedian(std::vector<std::vector<float>>& map, int windowSize);
+    // 高速化のためのAVX2/スカラーハイブリッド・メディアンフィルタ
+    void applyHorizontalMedianLarge(std::vector<std::vector<float>>& map, int windowSize);
+    void applyVerticalMedianSmall(std::vector<std::vector<float>>& map, int windowSize);
 };
