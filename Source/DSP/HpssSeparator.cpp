@@ -12,14 +12,12 @@ HpssSeparator::HpssSeparator(int fftSizeIn)
 
 void HpssSeparator::prepare(double sampleRate) {
     currentSampleRate = sampleRate;
-    int hopSize = fftSize / 2;
-    int samplesFor20ms = static_cast<int>(0.02 * sampleRate);
 
-    vertWindow = (samplesFor20ms / hopSize) | 1;
-    horizWindow = (samplesFor20ms / hopSize) | 1;
-
-    if (vertWindow < 3)  vertWindow = 3;
-    if (horizWindow < 3) horizWindow = 3;
+    // 【ワンショットサンプル特化設定】
+    // 短い打楽器サンプルの全帯域アタック（垂直スパイク）を極めて鋭く検出するため、周波数軸は狭く設定
+    vertWindow = 5;
+    // ワンショットの減衰・コード余韻（水平成分）を滑らかに抽出するため、時間軸は広く設定
+    horizWindow = 15;
 }
 
 void HpssSeparator::performSeparation(const juce::AudioBuffer<float>& input,
@@ -37,29 +35,24 @@ void HpssSeparator::performSeparation(const juce::AudioBuffer<float>& input,
         return;
     }
 
-    // 位相を保持するため、各フレームの複素FFTデータ（実数Real演算用サイズ: fftSize * 2）を丸ごと記録
     std::vector<std::vector<float>> complexFFTMap(numFrames, std::vector<float>(fftSize * 2, 0.0f));
     std::vector<std::vector<float>> magnitudeMap(numFrames, std::vector<float>(numBins, 0.0f));
 
-    // フェーズ1: 窓掛け + 正規リアルForward FFT -> マグニチュード抽出 (0% 〜 20%)
+    // フェーズ1: 窓掛け + 正確なJUCEリアルパッキング解析
     for (int f = 0; f < numFrames; ++f) {
         applyWindow(input, f * hopSize, complexFFTMap[f]);
-
-        // インプレースで周波数ドメインに変換 (実部/虚部が交互に並ぶJUCE仕様)
         fft.performRealOnlyForwardTransform(complexFFTMap[f].data());
 
-        // DC成分
+        // JUCE仕様: インデックス0がDC実部、インデックス1がナイキスト実部
         magnitudeMap[f][0] = std::abs(complexFFTMap[f][0]);
+        magnitudeMap[f][numBins - 1] = std::abs(complexFFTMap[f][1]);
 
-        // 複素成分からマグニチュードを計算
+        // インデックス2以降から[Real, Imag]のペアを正しく抽出
         for (int b = 1; b < numBins - 1; ++b) {
             float re = complexFFTMap[f][2 * b];
             float im = complexFFTMap[f][2 * b + 1];
             magnitudeMap[f][b] = std::sqrt(re * re + im * im);
         }
-
-        // ナイキスト成分
-        magnitudeMap[f][numBins - 1] = std::abs(complexFFTMap[f][fftSize]);
 
         progress.store(((float)f / (float)numFrames) * 0.20f);
     }
@@ -75,7 +68,6 @@ void HpssSeparator::performSeparation(const juce::AudioBuffer<float>& input,
     applyVerticalMedian(transMap, vertWindow);
     progress.store(0.80f);
 
-    // 出力時間バッファのクリア確保
     trans.setSize(1, numSamples, false, false, true);
     tonal.setSize(1, numSamples, false, false, true);
     trans.clear();
@@ -87,16 +79,28 @@ void HpssSeparator::performSeparation(const juce::AudioBuffer<float>& input,
     std::vector<float> ifftBufferTrans(fftSize * 2, 0.0f);
     std::vector<float> ifftBufferTonal(fftSize * 2, 0.0f);
 
-    // フェーズ4: AVX2複素マスク適用 + Inverse FFT + Overlap-Add 再構成 (80% 〜 100%)
+    // フェーズ4: JUCEパッキングに完全準拠したAVX2複素マスク適用 + iFFT
     for (int f = 0; f < numFrames; ++f) {
         int offset = f * hopSize;
         std::fill(ifftBufferTrans.begin(), ifftBufferTrans.end(), 0.0f);
         std::fill(ifftBufferTonal.begin(), ifftBufferTonal.end(), 0.0f);
 
-        int b = 0;
+        // 1. 特殊な独立インデックスである DC (0) と ナイキスト (numBins - 1) を個別にマスク演算
+        float t0 = tonalMap[f][0];
+        float p0 = transMap[f][0];
+        float sum0 = t0 + p0 + 1e-6f;
+        ifftBufferTonal[0] = complexFFTMap[f][0] * (t0 / sum0);
+        ifftBufferTrans[0] = complexFFTMap[f][0] * (p0 / sum0);
 
-        // AVX2による高速ウィーナーマスクの複素数への並列適用
-        for (; b <= numBins - 8; b += 8) {
+        float tN = tonalMap[f][numBins - 1];
+        float pN = transMap[f][numBins - 1];
+        float sumN = tN + pN + 1e-6f;
+        ifftBufferTonal[1] = complexFFTMap[f][1] * (tN / sumN);
+        ifftBufferTrans[1] = complexFFTMap[f][1] * (pN / sumN);
+
+        // 2. [Real, Imag]のペアが連続するインデックス1〜(numBins-2)の区間のみをAVX2で高速ループ
+        int b = 1;
+        for (; b <= numBins - 9; b += 8) {
             __m256 h = _mm256_loadu_ps(&tonalMap[f][b]);
             __m256 p = _mm256_loadu_ps(&transMap[f][b]);
 
@@ -112,7 +116,6 @@ void HpssSeparator::performSeparation(const juce::AudioBuffer<float>& input,
             _mm256_storeu_ps(tMask, maskTonal);
             _mm256_storeu_ps(pMask, maskTrans);
 
-            // 実部・虚部のペア(16要素)に対してAVX2で一列にロード・乗算するため、マスクをインターリーブ展開
             alignas(32) float tMaskComplex[16];
             alignas(32) float pMaskComplex[16];
             for (int i = 0; i < 8; ++i) {
@@ -122,13 +125,14 @@ void HpssSeparator::performSeparation(const juce::AudioBuffer<float>& input,
                 pMaskComplex[2 * i + 1] = pMask[i];
             }
 
+            // インデックス「2 * b」から正しくロードすることで実部・虚部へのマスク適用を完全整合
+            __m256 c0 = _mm256_loadu_ps(&complexFFTMap[f][2 * b]);
+            __m256 c1 = _mm256_loadu_ps(&complexFFTMap[f][2 * b + 8]);
+
             __m256 mCompTonal0 = _mm256_loadu_ps(&tMaskComplex[0]);
             __m256 mCompTonal1 = _mm256_loadu_ps(&tMaskComplex[8]);
             __m256 mCompTrans0 = _mm256_loadu_ps(&pMaskComplex[0]);
             __m256 mCompTrans1 = _mm256_loadu_ps(&pMaskComplex[8]);
-
-            __m256 c0 = _mm256_loadu_ps(&complexFFTMap[f][2 * b]);
-            __m256 c1 = _mm256_loadu_ps(&complexFFTMap[f][2 * b + 8]);
 
             _mm256_storeu_ps(&ifftBufferTonal[2 * b], _mm256_mul_ps(c0, mCompTonal0));
             _mm256_storeu_ps(&ifftBufferTonal[2 * b + 8], _mm256_mul_ps(c1, mCompTonal1));
@@ -137,36 +141,26 @@ void HpssSeparator::performSeparation(const juce::AudioBuffer<float>& input,
             _mm256_storeu_ps(&ifftBufferTrans[2 * b + 8], _mm256_mul_ps(c1, mCompTrans1));
         }
 
-        // 端数処理
-        for (; b < numBins; ++b) {
+        // 3. マスクループの端数処理
+        for (; b < numBins - 1; ++b) {
             float t = tonalMap[f][b];
             float p = transMap[f][b];
             float sum = t + p + 1e-6f;
             float maskTonal = t / sum;
             float maskTrans = p / sum;
 
-            if (b == 0) {
-                ifftBufferTonal[0] = complexFFTMap[f][0] * maskTonal;
-                ifftBufferTrans[0] = complexFFTMap[f][0] * maskTrans;
-            }
-            else if (b == numBins - 1) {
-                ifftBufferTonal[fftSize] = complexFFTMap[f][fftSize] * maskTonal;
-                ifftBufferTrans[fftSize] = complexFFTMap[f][fftSize] * maskTrans;
-            }
-            else {
-                ifftBufferTonal[2 * b] = complexFFTMap[f][2 * b] * maskTonal;
-                ifftBufferTonal[2 * b + 1] = complexFFTMap[f][2 * b + 1] * maskTonal;
+            ifftBufferTonal[2 * b] = complexFFTMap[f][2 * b] * maskTonal;
+            ifftBufferTonal[2 * b + 1] = complexFFTMap[f][2 * b + 1] * maskTonal;
 
-                ifftBufferTrans[2 * b] = complexFFTMap[f][2 * b] * maskTrans;
-                ifftBufferTrans[2 * b + 1] = complexFFTMap[f][2 * b + 1] * maskTrans;
-            }
+            ifftBufferTrans[2 * b] = complexFFTMap[f][2 * b] * maskTrans;
+            ifftBufferTrans[2 * b + 1] = complexFFTMap[f][2 * b + 1] * maskTrans;
         }
 
-        // 正規の逆FFTを実行して時間ドメインへ復元
+        // 逆リアルFFTを実行して正確に時間ドメインへ復元
         fft.performRealOnlyInverseTransform(ifftBufferTonal.data());
         fft.performRealOnlyInverseTransform(ifftBufferTrans.data());
 
-        // 逆窓掛け(Overlap-Add)。Hann窓の特性に合わせスケールを0.5fで正規化
+        // 逆窓掛け(Overlap-Add)
         for (int i = 0; i < fftSize; ++i) {
             if (offset + i < numSamples) {
                 tonalOut[offset + i] += ifftBufferTonal[i] * window[i] * 0.5f;
