@@ -9,7 +9,11 @@ void HpssSeparator::prepare(double sampleRate)
 
 void HpssSeparator::performSeparation(const juce::AudioBuffer<float>& input,
     juce::AudioBuffer<float>& trans,
-    juce::AudioBuffer<float>& tonal)
+    juce::AudioBuffer<float>& tonal,
+    float sensitivity,
+    float clickLengthMs,
+    float lookAheadMs,
+    juce::Thread* callingThread)
 {
     progress.store(0.0f);
     const int numSamples = input.getNumSamples();
@@ -25,33 +29,40 @@ void HpssSeparator::performSeparation(const juce::AudioBuffer<float>& input,
         return;
     }
 
-    // 1. 弱努力法を用いた高精度な時間軸境界解析 (0% 〜 30%)
+    // 早期キャンセレーションチェック
+    if (callingThread != nullptr && callingThread->threadShouldExit()) return;
+
     progress.store(0.1f);
-    auto bounds = detector.analyzeBuffer(input, currentSampleRate, 1.0f, -14.0f);
+    auto bounds = detector.analyzeBuffer(input, currentSampleRate, sensitivity, lookAheadMs);
     progress.store(0.3f);
+
+    if (callingThread != nullptr && callingThread->threadShouldExit()) return;
 
     float* transData = trans.getWritePointer(0);
     float* tonalData = tonal.getWritePointer(0);
     const float* srcData = input.getReadPointer(0);
 
-    // オンセットが検出できなかった場合の安全なフォールバック
-    if (bounds.startIndex == -1 || bounds.peakIndex == -1 || bounds.endIndex == -1)
+    if (bounds.startIndex == -1 || bounds.peakIndex == -1)
     {
         juce::FloatVectorOperations::copy(transData, srcData, numSamples);
         progress.store(1.0f);
         return;
     }
 
-    // 2. 代数的相補性を備えた非対称スプライシング窓の適用 (30% 〜 100%)
     const int nStart = bounds.startIndex;
     const int nPeak = bounds.peakIndex;
-    const int nEnd = bounds.endIndex;
 
     const int riseLength = std::max(1, nPeak - nStart);
-    const int fallLength = std::max(1, nEnd - nPeak);
+    // 【新設】CLICK LENGTH ノブから直接フェードアウトサンプル数をダイナミックに計算！
+    const int fallLength = std::max(1, static_cast<int>((clickLengthMs / 1000.0f) * currentSampleRate));
+    const int nEnd = nPeak + fallLength;
 
     for (int n = 0; n < numSamples; ++n)
     {
+        // リアルタイムドラッグ時の超高速キャンセレーションインターラプト
+        if (n % 2000 == 0 && callingThread != nullptr && callingThread->threadShouldExit())
+            return;
+
         float wClick = 0.0f;
 
         if (n < nStart)
@@ -60,13 +71,11 @@ void HpssSeparator::performSeparation(const juce::AudioBuffer<float>& input,
         }
         else if (n >= nStart && n < nPeak)
         {
-            // アタックの滑らかな立ち上がり (ハーフサインフェード)
             float phase = (static_cast<float>(n - nStart) / static_cast<float>(riseLength)) * (juce::MathConstants<float>::pi * 0.5f);
             wClick = std::sin(phase);
         }
         else if (n >= nPeak && n < nEnd)
         {
-            // アタックからサスティンへの軟着陸フェードアウト
             float phase = (static_cast<float>(n - nPeak) / static_cast<float>(fallLength)) * (juce::MathConstants<float>::pi * 0.5f);
             wClick = std::cos(phase);
         }
@@ -75,14 +84,13 @@ void HpssSeparator::performSeparation(const juce::AudioBuffer<float>& input,
             wClick = 0.0f;
         }
 
-        // 代数的完全再構成条件の絶対死守
+        // 相補的完全再構成条件の死守
         float wSustain = 1.0f - wClick;
 
-        // 元波形へ乗算積算して無損失スプリット
         transData[n] = srcData[n] * wClick;
         tonalData[n] = srcData[n] * wSustain;
 
-        if (n % 1000 == 0)
+        if (n % 4000 == 0)
         {
             progress.store(0.3f + (static_cast<float>(n) / static_cast<float>(numSamples)) * 0.7f);
         }

@@ -7,11 +7,9 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     formatManager.registerBasicFormats();
 
     addAndMakeVisible(waveDndFile);
-    addAndMakeVisible(waveProcessorOriginal);
     addAndMakeVisible(waveTransient);
     addAndMakeVisible(waveTonal);
 
-    // ラジオグループ化（相互排他トグル）
     btnOriginal.setRadioGroupId(1);
     btnTransient.setRadioGroupId(1);
     btnTonal.setRadioGroupId(1);
@@ -20,7 +18,6 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     btnTransient.setClickingTogglesState(true);
     btnTonal.setClickingTogglesState(true);
 
-    // 【点灯バグ完全修正】ON時にシアン（水色）背景・黒文字へ強制反転させるカラーバインディング
     auto configureButtonLook = [](juce::TextButton& b) {
         b.setColour(juce::TextButton::buttonOnColourId, juce::Colours::cyan);
         b.setColour(juce::TextButton::textColourOnId, juce::Colours::black);
@@ -42,12 +39,35 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     btnTransient.onClick = [this] { audioProcessor.setSoloMode(1); };
     btnTonal.onClick = [this] { audioProcessor.setSoloMode(2); };
 
-    setSize(800, 650);
-    startTimer(40); // 40ms（25FPS）の高速描画監視タイマー
+    auto configureSlider = [this](juce::Slider& s, juce::Label& l, const juce::String& name) {
+        s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+        s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
+        s.setColour(juce::Slider::rotarySliderFillColourId, juce::Colours::cyan);
+        s.setColour(juce::Slider::thumbColourId, juce::Colours::white);
+        addAndMakeVisible(s);
+
+        l.setText(name, juce::dontSendNotification);
+        l.setFont(juce::Font(11.0f, juce::Font::bold));
+        l.setJustificationType(juce::Justification::centred);
+        l.setColour(juce::Label::textColourId, juce::Colours::cyan.withAlpha(0.9f));
+        addAndMakeVisible(l);
+        };
+
+    configureSlider(sliderSensitivity, lblSensitivity, "ATTACK SENSITIVITY");
+    configureSlider(sliderClickLength, lblClickLength, "CLICK LENGTH");
+    configureSlider(sliderLookAhead, lblLookAhead, "PRE-ATTACK");
+
+    attachSensitivity = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "sensitivity", sliderSensitivity);
+    attachClickLength = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "clickLength", sliderClickLength);
+    attachLookAhead = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "lookAhead", sliderLookAhead);
+
+    setSize(800, 680);
+    startTimer(40);
 }
 
 AnatomyAudioProcessorEditor::~AnatomyAudioProcessorEditor()
 {
+    // 修正：スレッド停止誤記（stopThread）を正規のタイマーシャットダウン（stopTimer）へ差し替え
     stopTimer();
 }
 
@@ -86,8 +106,6 @@ void AnatomyAudioProcessorEditor::timerCallback()
 
     if (wasProcessing && !isProcessing)
     {
-        // 非同期スライス完了の瞬間に、時間軸完全再構成バッファをUIコンポーネントへ流し込み
-        waveProcessorOriginal.setBuffer(audioProcessor.getOriginalBuffer());
         waveTransient.setBuffer(audioProcessor.getTransientBuffer());
         waveTonal.setBuffer(audioProcessor.getTonalBuffer());
 
@@ -113,29 +131,26 @@ void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
     g.setFont(12.0f);
 
     auto area = getLocalBounds();
-    area.removeFromTop(45);
-    auto h = area.getHeight() / 4;
+    area.removeFromTop(125);
+    auto h = area.getHeight() / 3;
 
-    g.drawText("1. Drag & Drop Raw File (Source)", 10, 45, getWidth(), 15, juce::Justification::left);
-    g.drawText("2. Processor Reconstructed Original Buffer", 10, 45 + h, getWidth(), 15, juce::Justification::left);
-    g.drawText("3. Extracted Transient Component (Click / Attack)", 10, 45 + h * 2, getWidth(), 15, juce::Justification::left);
-    g.drawText("4. Extracted Sustain Component (Body / Harmonics)", 10, 45 + h * 3, getWidth(), 15, juce::Justification::left);
+    g.drawText("1. Drag & Drop Raw File (Original Source)", 15, 125, getWidth(), 15, juce::Justification::left);
+    g.drawText("2. Extracted Transient Component (Click / Attack)", 15, 125 + h, getWidth(), 15, juce::Justification::left);
+    g.drawText("3. Extracted Sustain Component (Body / Harmonics)", 15, 125 + h * 2, getWidth(), 15, juce::Justification::left);
 
     if (audioProcessor.isCurrentlyProcessing())
     {
-        g.setColour(juce::Colours::black.withAlpha(0.7f));
-        g.fillRect(getLocalBounds());
+        g.setColour(juce::Colours::black.withAlpha(0.5f));
+        g.fillRect(0, 125, getWidth(), getHeight() - 125);
 
         float progress = audioProcessor.getHpssProgress();
         int percent = static_cast<int>(std::round(progress * 100.0f));
 
         g.setColour(juce::Colours::cyan);
-        g.setFont(28.0f);
-
-        g.drawText("Splicing & Reconstructing: " + juce::String(percent) + "% ...",
-            getLocalBounds(),
-            juce::Justification::centred,
-            true);
+        g.setFont(20.0f);
+        g.drawText("Splicing: " + juce::String(percent) + "%",
+            0, 125, getWidth(), getHeight() - 125,
+            juce::Justification::centred, true);
     }
 }
 
@@ -143,17 +158,29 @@ void AnatomyAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds();
 
-    auto buttonArea = area.removeFromTop(45).reduced(5);
+    auto buttonArea = area.removeFromTop(35).reduced(5);
     auto btnWidth = buttonArea.getWidth() / 3;
-
     btnOriginal.setBounds(buttonArea.removeFromLeft(btnWidth).reduced(2));
     btnTransient.setBounds(buttonArea.removeFromLeft(btnWidth).reduced(2));
     btnTonal.setBounds(buttonArea.reduced(2));
 
-    auto h = area.getHeight() / 4;
+    auto controlArea = area.removeFromTop(90).reduced(5);
+    auto ctrlWidth = controlArea.getWidth() / 3;
 
-    waveDndFile.setBounds(area.removeFromTop(h));
-    waveProcessorOriginal.setBounds(area.removeFromTop(h));
-    waveTransient.setBounds(area.removeFromTop(h));
-    waveTonal.setBounds(area);
+    auto s0 = controlArea.removeFromLeft(ctrlWidth);
+    lblSensitivity.setBounds(s0.removeFromTop(15));
+    sliderSensitivity.setBounds(s0);
+
+    auto s1 = controlArea.removeFromLeft(ctrlWidth);
+    lblClickLength.setBounds(s1.removeFromTop(15));
+    sliderClickLength.setBounds(s1);
+
+    auto s2 = controlArea;
+    lblLookAhead.setBounds(s2.removeFromTop(15));
+    sliderLookAhead.setBounds(s2);
+
+    auto h = area.getHeight() / 3;
+    waveDndFile.setBounds(area.removeFromTop(h).reduced(10, 12));
+    waveTransient.setBounds(area.removeFromTop(h).reduced(10, 12));
+    waveTonal.setBounds(area.reduced(10, 12));
 }

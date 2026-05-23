@@ -2,11 +2,14 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_core/juce_core.h>
+#include <memory>
 #include "DSP/HpssSeparator.h"
 #include "DSP/ThreadSafeSamplerSound.h"
 #include "DSP/ThreadSafeSamplerVoice.h"
 
-class AnatomyAudioProcessor : public juce::AudioProcessor, public juce::Thread
+class AnatomyAudioProcessor : public juce::AudioProcessor,
+    public juce::Thread,
+    public juce::AudioProcessorValueTreeState::Listener
 {
 public:
     AnatomyAudioProcessor();
@@ -34,7 +37,8 @@ public:
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
-    // バックグラウンド非同期スライススレッドの制御
+    void parameterChanged(const juce::String& parameterID, float newValue) override;
+
     void startSeparation(const juce::AudioBuffer<float>& inputAudio);
     void run() override;
 
@@ -44,12 +48,15 @@ public:
     int getSoloMode() const { return currentSoloMode; }
     void setSoloMode(int mode);
 
-    // UIバッファ読み出し用セーフティインターフェース
-    const juce::AudioBuffer<float>& getOriginalBuffer() const { return originalBufferUI; }
     const juce::AudioBuffer<float>& getTransientBuffer() const { return transBufferUI; }
     const juce::AudioBuffer<float>& getTonalBuffer() const { return tonalBufferUI; }
 
+    juce::AudioProcessorValueTreeState apvts;
+
 private:
+    juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+
+    // 【修正：記述漏れ復元】クラス固有のボイス更新用プライベートメソッドを厳密に宣言！
     void updateSynthSound();
 
     HpssSeparator separator{ 2048 };
@@ -58,18 +65,15 @@ private:
 
     juce::CriticalSection lock;
 
-    // スレッド間通信専用バッファ
+    juce::AudioBuffer<float> rawInputBuffer;
     juce::AudioBuffer<float> inputBufferThread;
-    juce::AudioBuffer<float> originalBufferThread;
     juce::AudioBuffer<float> transBufferThread;
     juce::AudioBuffer<float> tonalBufferThread;
 
-    // UI描画安全確保用スタティックバッファ
-    juce::AudioBuffer<float> originalBufferUI;
     juce::AudioBuffer<float> transBufferUI;
     juce::AudioBuffer<float> tonalBufferUI;
 
-    int currentSoloMode = 0; // 0: Full Mix, 1: Transient Solo, 2: Sustain Solo
+    int currentSoloMode = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnatomyAudioProcessor)
 };

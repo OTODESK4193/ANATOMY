@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_core/juce_core.h>
 #include <atomic>
 #include "TransientBoundaryDetector.h"
 
@@ -9,10 +10,14 @@ public:
     HpssSeparator(int fftSizeIn);
     void prepare(double sampleRate);
 
-    // 時間領域相補クロスフェードスプライシング（HPR-I選択案2に完全準拠）
+    // 3パラメータおよびキャンセレーションスレッド監視を統合した分離メソッド
     void performSeparation(const juce::AudioBuffer<float>& input,
         juce::AudioBuffer<float>& trans,
-        juce::AudioBuffer<float>& tonal);
+        juce::AudioBuffer<float>& tonal,
+        float sensitivity,
+        float clickLengthMs,
+        float lookAheadMs,
+        juce::Thread* callingThread);
 
     float getProgress() const { return progress.load(); }
     void resetProgress() { progress.store(0.0f); }

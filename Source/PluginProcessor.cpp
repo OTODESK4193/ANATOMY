@@ -3,7 +3,8 @@
 
 AnatomyAudioProcessor::AnatomyAudioProcessor()
     : AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)),
-    juce::Thread("AnatomyTimeDomainThread")
+    juce::Thread("AnatomyTimeDomainThread"),
+    apvts(*this, nullptr, "PARAMETERS", createParameterLayout())
 {
     auto* voice = new ThreadSafeSamplerVoice();
     synth.addVoice(voice);
@@ -11,11 +12,34 @@ AnatomyAudioProcessor::AnatomyAudioProcessor()
     auto* sound = new ThreadSafeSamplerSound();
     synth.addSound(sound);
     samplerSound = sound;
+
+    apvts.addParameterListener("sensitivity", this);
+    apvts.addParameterListener("clickLength", this);
+    apvts.addParameterListener("lookAhead", this);
 }
 
 AnatomyAudioProcessor::~AnatomyAudioProcessor()
 {
+    apvts.removeParameterListener("sensitivity", this);
+    apvts.removeParameterListener("clickLength", this);
+    apvts.removeParameterListener("lookAhead", this);
     stopThread(4000);
+}
+
+juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::createParameterLayout()
+{
+    std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("sensitivity", 1), "Attack Sensitivity", 0.1f, 2.0f, 0.8f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("clickLength", 1), "Click Length (ms)", 2.0f, 50.0f, 15.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("lookAhead", 1), "Pre-Attack Lookahead (ms)", 0.0f, 5.0f, 1.5f));
+
+    return { params.begin(), params.end() };
 }
 
 void AnatomyAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
@@ -35,13 +59,28 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     synth.renderNextBlock(buffer, midiMessages, 0, buffer.getNumSamples());
 }
 
+void AnatomyAudioProcessor::parameterChanged(const juce::String&, float)
+{
+    const juce::ScopedLock sl(lock);
+    if (rawInputBuffer.getNumSamples() > 0)
+    {
+        startSeparation(rawInputBuffer);
+    }
+}
+
 void AnatomyAudioProcessor::startSeparation(const juce::AudioBuffer<float>& inputAudio)
 {
     if (isThreadRunning())
         stopThread(2000);
 
-    inputBufferThread.makeCopyOf(inputAudio);
-    originalBufferThread.makeCopyOf(inputAudio);
+    {
+        const juce::ScopedLock sl(lock);
+        if (&rawInputBuffer != &inputAudio)
+        {
+            rawInputBuffer.makeCopyOf(inputAudio);
+        }
+        inputBufferThread.makeCopyOf(inputAudio);
+    }
 
     separator.resetProgress();
     startThread();
@@ -50,7 +89,13 @@ void AnatomyAudioProcessor::startSeparation(const juce::AudioBuffer<float>& inpu
 void AnatomyAudioProcessor::run()
 {
     juce::AudioBuffer<float> localTrans, localTonal;
-    separator.performSeparation(inputBufferThread, localTrans, localTonal);
+
+    float sensitivity = apvts.getRawParameterValue("sensitivity")->load();
+    float clickLength = apvts.getRawParameterValue("clickLength")->load();
+    float lookAhead = apvts.getRawParameterValue("lookAhead")->load();
+
+    separator.performSeparation(inputBufferThread, localTrans, localTonal,
+        sensitivity, clickLength, lookAhead, this);
 
     if (threadShouldExit()) return;
 
@@ -59,7 +104,6 @@ void AnatomyAudioProcessor::run()
         transBufferThread.makeCopyOf(localTrans);
         tonalBufferThread.makeCopyOf(localTonal);
 
-        originalBufferUI.makeCopyOf(originalBufferThread);
         transBufferUI.makeCopyOf(localTrans);
         tonalBufferUI.makeCopyOf(localTonal);
     }
@@ -103,7 +147,6 @@ void AnatomyAudioProcessor::updateSynthSound()
         activeSustain.copyFrom(0, 0, tonalBufferThread, 0, 0, numSamples);
     }
 
-    // 修正：C++20の std::atomic<std::shared_ptr> に100%適合するよう std::make_shared でインスタンス化
     auto newData = std::make_shared<SharedSampleData>(std::move(activeClick), std::move(activeSustain), getSampleRate());
     samplerSound->updateSampleData(newData);
 }
@@ -120,8 +163,18 @@ int AnatomyAudioProcessor::getCurrentProgram() { return 0; }
 void AnatomyAudioProcessor::setCurrentProgram(int) {}
 const juce::String AnatomyAudioProcessor::getProgramName(int) { return {}; }
 void AnatomyAudioProcessor::changeProgramName(int, const juce::String&) {}
-void AnatomyAudioProcessor::getStateInformation(juce::MemoryBlock&) {}
-void AnatomyAudioProcessor::setStateInformation(const void*, int) {}
+
+void AnatomyAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
+{
+    if (auto xml = apvts.copyState().createXml())
+        copyXmlToBinary(*xml, destData);
+}
+
+void AnatomyAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
+{
+    if (auto xmlState = getXmlFromBinary(data, sizeInBytes))
+        apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
+}
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {

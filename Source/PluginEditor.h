@@ -29,14 +29,28 @@ private:
     juce::AudioFormatManager formatManager;
     bool wasProcessing = false;
 
+    // 2段目の監視バッファを完全抹消し、原音・過渡・持続の3階層へシェイプアップ
     WaveformComponent waveDndFile;
-    WaveformComponent waveProcessorOriginal;
     WaveformComponent waveTransient;
     WaveformComponent waveTonal;
 
     juce::TextButton btnOriginal{ "Full Mix" };
     juce::TextButton btnTransient{ "Transient Solo" };
     juce::TextButton btnTonal{ "Sustain Solo" };
+
+    // 新次世代操作ノブ（ロータリーコントロール）
+    juce::Slider sliderSensitivity;
+    juce::Slider sliderClickLength;
+    juce::Slider sliderLookAhead;
+
+    juce::Label lblSensitivity;
+    juce::Label lblClickLength;
+    juce::Label lblLookAhead;
+
+    // 双方向リアルタイム通信用パラメータアタッチメント
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachSensitivity;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachClickLength;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachLookAhead;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnatomyAudioProcessorEditor)
 };
