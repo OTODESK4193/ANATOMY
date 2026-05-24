@@ -1,10 +1,11 @@
 #pragma once
 #include <juce_audio_basics/juce_audio_basics.h>
-#include <memory>
 
-class SharedSampleData
+class SharedSampleData : public juce::ReferenceCountedObject
 {
 public:
+    using Ptr = juce::ReferenceCountedObjectPtr<SharedSampleData>;
+
     SharedSampleData(juce::AudioBuffer<float>&& clickBufferToUse,
         juce::AudioBuffer<float>&& sustainBufferToUse,
         double sampleRate)
@@ -14,7 +15,7 @@ public:
     {
     }
 
-    ~SharedSampleData() = default;
+    ~SharedSampleData() override = default;
 
     const juce::AudioBuffer<float>& getClickBuffer() const noexcept { return clickBuffer; }
     const juce::AudioBuffer<float>& getSustainBuffer() const noexcept { return sustainBuffer; }

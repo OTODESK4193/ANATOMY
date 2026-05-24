@@ -37,20 +37,14 @@ private:
     juce::TextButton btnTransient{ "Transient Solo" };
     juce::TextButton btnTonal{ "Sustain Solo" };
 
-    juce::Slider sliderSensitivity;
     juce::Slider sliderClickLength;
     juce::Slider sliderClickCurve;
-    juce::Slider sliderLookAhead;
 
-    juce::Label lblSensitivity;
     juce::Label lblClickLength;
     juce::Label lblClickCurve;
-    juce::Label lblLookAhead;
 
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachSensitivity;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachClickLength;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachClickCurve;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachLookAhead;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnatomyAudioProcessorEditor)
 };

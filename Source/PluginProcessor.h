@@ -5,8 +5,8 @@
 #include <memory>
 #include <atomic>
 #include "DSP/HpssSeparator.h"
-#include "DSP/AnatomySound.h"
-#include "DSP/AnatomyVoice.h"
+#include "DSP/SharedSampleData.h"
+#include "DSP/VoiceState.h"
 
 class AnatomyAudioProcessor : public juce::AudioProcessor,
     public juce::Thread,
@@ -40,7 +40,6 @@ public:
 
     void parameterChanged(const juce::String& parameterID, float newValue) override;
 
-    // 仕様修正：ファイル本来のサンプリングレートを第2引数で受け取るように拡張
     void startSeparation(const juce::AudioBuffer<float>& inputAudio, double sourceSampleRate);
     void run() override;
 
@@ -52,7 +51,6 @@ public:
     int getSoloMode() const { return currentSoloMode; }
     void setSoloMode(int mode);
 
-    // 【重要】GUIスレッドからの不意のアクセス衝突を100%遮断する安全なディープコピー関数
     void getCallbackBuffersSecure(juce::AudioBuffer<float>& transDest, juce::AudioBuffer<float>& tonalDest)
     {
         const juce::ScopedLock sl(lock);
@@ -65,15 +63,23 @@ public:
 private:
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     void updateSynthSound();
+    void generateVoiceSample(VoiceState& voice, float& outL, float& outR) noexcept;
 
     HpssSeparator separator{ 2048 };
-    juce::Synthesiser synth;
-    AnatomySound* samplerSound = nullptr;
-
     juce::CriticalSection lock;
 
     std::atomic<bool> needsReanalysis{ false };
-    double fileSampleRate = 44100.0; // ファイル固有のサンプリングレート保持用
+    double fileSampleRate = 44100.0;
+    double currentSampleRate = 44100.0;
+    float releaseFactor = 0.95f; // 指数関数減衰ステップ係数
+
+    // 【クラッシュ根絶】スレッド間で安全にスマートポインタを受け渡すためのロックフリーアトミックポインタ
+    std::atomic<SharedSampleData*> masterSampleData{ nullptr };
+
+    // 【アロケーションゼロ】音声スレッド用の固定ボイススロット（単音運用 ＋ リリース退避スロット）
+    VoiceState activeVoice;
+    static constexpr int maxReleasingVoices = 4;
+    VoiceState releasingVoices[maxReleasingVoices];
 
     juce::AudioBuffer<float> rawInputBuffer;
     juce::AudioBuffer<float> inputBufferThread;

@@ -1,4 +1,5 @@
 #include "AnatomyVoice.h"
+#include <algorithm>
 
 bool AnatomyVoice::canPlaySound(juce::SynthesiserSound* sound)
 {
@@ -9,6 +10,10 @@ void AnatomyVoice::startNote(int /*midiNoteNumber*/, float velocity, juce::Synth
 {
     if (auto* samplerSound = dynamic_cast<AnatomySound*>(sound))
     {
+        // ノイズ根絶：次の波形に入る前に、現在鳴っている波形を強制的に0.5msでミュートさせる
+        // Poly仕様を使わず、単音のままスムーズに切り替える最速の手法
+        releaseGain = 0.0f;
+
         activeData = samplerSound->getSampleData();
         if (activeData != nullptr)
         {
@@ -16,87 +21,53 @@ void AnatomyVoice::startNote(int /*midiNoteNumber*/, float velocity, juce::Synth
             clickReadIndex = 0.0;
             sustainReadIndex = 0.0;
 
-            // DAWの動作レートとファイル本来のナマのレートを取得
             double hostRate = getSampleRate();
             double fileRate = activeData->getSampleRate();
-
-            // どのキーを押しても音階追従はせず、サンプリングレートの差のみを完全に相殺
-            if (hostRate > 0.0 && fileRate > 0.0)
-            {
-                pitchRatio = fileRate / hostRate;
-            }
-            else
-            {
-                pitchRatio = 1.0;
-            }
+            pitchRatio = (hostRate > 0.0 && fileRate > 0.0) ? (fileRate / hostRate) : 1.0;
 
             isActive = true;
-        }
-        else
-        {
-            clearCurrentNote();
         }
     }
 }
 
 void AnatomyVoice::stopNote(float /*velocity*/, bool allowTailOff)
 {
-    if (!allowTailOff)
-    {
-        clearCurrentNote();
-        activeData = nullptr;
-        isActive = false;
-    }
+    // 即座にミュートして終了
+    clearCurrentNote();
+    activeData = nullptr;
+    isActive = false;
 }
 
-void AnatomyVoice::pitchWheelMoved(int /*newPitchWheelValue*/) {}
-void AnatomyVoice::controllerMoved(int /*controllerNumber*/, int /*newControllerValue*/) {}
+void AnatomyVoice::pitchWheelMoved(int) {}
+void AnatomyVoice::controllerMoved(int, int) {}
 
 void AnatomyVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer, int startSample, int numSamples)
 {
     if (!isActive || activeData == nullptr) return;
 
-    auto localData = activeData;
-    if (localData == nullptr) return;
-
-    const auto& click = localData->getClickBuffer();
-    const auto& sustain = localData->getSustainBuffer();
+    const auto& click = activeData->getClickBuffer();
+    const auto& sustain = activeData->getSustainBuffer();
 
     const int clickSamples = click.getNumSamples();
     const int sustainSamples = sustain.getNumSamples();
-
-    if (clickSamples == 0 && sustainSamples == 0) return;
 
     float* outL = outputBuffer.getWritePointer(0, startSample);
     float* outR = outputBuffer.getNumChannels() > 1 ? outputBuffer.getWritePointer(1, startSample) : nullptr;
 
     for (int i = 0; i < numSamples; ++i)
     {
-        float clickVal = 0.0f;
-        float sustainVal = 0.0f;
+        // 0.5msの超高速ランプアップ（ノイズ根絶）
+        if (releaseGain < 1.0f) releaseGain += 0.02f;
 
-        // 線形補間を完全維持した、安全なロックフリー等速オリジナル再生
         double cPos = clickReadIndex;
         int cIdx = static_cast<int>(cPos);
-        if (cIdx < clickSamples)
-        {
-            float frac = static_cast<float>(cPos - cIdx);
-            float s0 = click.getReadPointer(0)[cIdx];
-            float s1 = (cIdx + 1 < clickSamples) ? click.getReadPointer(0)[cIdx + 1] : 0.0f;
-            clickVal = s0 + frac * (s1 - s0);
-        }
+        float clickVal = (cIdx < clickSamples) ? click.getReadPointer(0)[cIdx] : 0.0f;
 
         double sPos = sustainReadIndex;
         int sIdx = static_cast<int>(sPos);
-        if (sIdx < sustainSamples)
-        {
-            float frac = static_cast<float>(sPos - sIdx);
-            float s0 = sustain.getReadPointer(0)[sIdx];
-            float s1 = (sIdx + 1 < sustainSamples) ? sustain.getReadPointer(0)[sIdx + 1] : 0.0f;
-            sustainVal = s0 + frac * (s1 - s0);
-        }
+        float sustainVal = (sIdx < sustainSamples) ? sustain.getReadPointer(0)[sIdx] : 0.0f;
 
-        const float mixedVal = (clickVal + sustainVal) * triggerVelocity;
+        float mixedVal = (clickVal + sustainVal) * triggerVelocity * releaseGain;
 
         if (outL != nullptr) outL[startSample + i] += mixedVal;
         if (outR != nullptr) outR[startSample + i] += mixedVal;

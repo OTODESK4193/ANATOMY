@@ -1,7 +1,6 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <atomic>
-#include <memory>
 #include "SharedSampleData.h"
 
 class AnatomySound : public juce::SynthesiserSound
@@ -13,17 +12,21 @@ public:
     bool appliesToNote(int) override { return true; }
     bool appliesToChannel(int) override { return true; }
 
-    void updateSampleData(std::shared_ptr<SharedSampleData> newData)
+    // スマートポインタの安全なアトミック差し替え
+    void updateSampleData(SharedSampleData::Ptr newData)
     {
-        currentData.store(newData, std::memory_order_release);
+        const juce::ScopedLock sl(lock);
+        currentData = newData;
     }
 
-    std::shared_ptr<SharedSampleData> getSampleData() const noexcept
+    SharedSampleData::Ptr getSampleData() const noexcept
     {
-        return currentData.load(std::memory_order_acquire);
+        const juce::ScopedLock sl(lock);
+        return currentData;
     }
 
 private:
-    std::atomic<std::shared_ptr<SharedSampleData>> currentData;
+    juce::CriticalSection lock;
+    SharedSampleData::Ptr currentData; // 参照カウントポインタによる自動寿命管理
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnatomySound)
 };

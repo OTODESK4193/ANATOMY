@@ -53,15 +53,11 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
         addAndMakeVisible(l);
         };
 
-    configureSlider(sliderSensitivity, lblSensitivity, "ATTACK SENSITIVITY");
     configureSlider(sliderClickLength, lblClickLength, "CLICK HOLD (ms)");
     configureSlider(sliderClickCurve, lblClickCurve, "SUSTAIN FADE-IN (ms)");
-    configureSlider(sliderLookAhead, lblLookAhead, "PRE-ATTACK (ms)");
 
-    attachSensitivity = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "sensitivity", sliderSensitivity);
     attachClickLength = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "clickLength", sliderClickLength);
     attachClickCurve = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "clickCurve", sliderClickCurve);
-    attachLookAhead = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "lookAhead", sliderLookAhead);
 
     setSize(800, 680);
     startTimer(40);
@@ -90,7 +86,6 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
         reader->read(&buffer, 0, (int)reader->lengthInSamples, 0, true, true);
 
         waveDndFile.setBuffer(buffer);
-
         audioProcessor.startSeparation(buffer, reader->sampleRate);
         wasProcessing = true;
     }
@@ -130,7 +125,6 @@ void AnatomyAudioProcessorEditor::updateButtonToggleStates()
 
 void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    // 【修正】タイポ ju Colours::black を juce::Colours::black へ完全補正
     g.fillAll(juce::Colours::black);
 
     g.setColour(juce::Colours::white.withAlpha(0.5f));
@@ -145,10 +139,8 @@ void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
     g.drawText("3. Extracted Sustain Component (Body / Harmonics)", 15, 125 + h * 2, getWidth(), 15, juce::Justification::left);
 
     if (audioProcessor.isCurrentlyProcessing() &&
-        !sliderSensitivity.isMouseOverOrDragging() &&
         !sliderClickLength.isMouseOverOrDragging() &&
-        !sliderClickCurve.isMouseOverOrDragging() &&
-        !sliderLookAhead.isMouseOverOrDragging())
+        !sliderClickCurve.isMouseOverOrDragging())
     {
         g.setColour(juce::Colours::black.withAlpha(0.4f));
         g.fillRect(0, 125, getWidth(), getHeight() - 125);
@@ -175,23 +167,15 @@ void AnatomyAudioProcessorEditor::resized()
     btnTonal.setBounds(buttonArea.reduced(2));
 
     auto controlArea = area.removeFromTop(90).reduced(5);
-    auto ctrlWidth = controlArea.getWidth() / 4;
+    auto ctrlWidth = controlArea.getWidth() / 2;
 
     auto s0 = controlArea.removeFromLeft(ctrlWidth);
-    lblSensitivity.setBounds(s0.removeFromTop(15));
-    sliderSensitivity.setBounds(s0);
+    lblClickLength.setBounds(s0.removeFromTop(15));
+    sliderClickLength.setBounds(s0);
 
-    auto s1 = controlArea.removeFromLeft(ctrlWidth);
-    lblClickLength.setBounds(s1.removeFromTop(15));
-    sliderClickLength.setBounds(s1);
-
-    auto s2 = controlArea.removeFromLeft(ctrlWidth);
-    lblClickCurve.setBounds(s2.removeFromTop(15));
-    sliderClickCurve.setBounds(s2);
-
-    auto s3 = controlArea;
-    lblLookAhead.setBounds(s3.removeFromTop(15));
-    sliderLookAhead.setBounds(s3);
+    auto s1 = controlArea;
+    lblClickCurve.setBounds(s1.removeFromTop(15));
+    sliderClickCurve.setBounds(s1);
 
     auto h = area.getHeight() / 3;
     waveDndFile.setBounds(area.removeFromTop(h).reduced(10, 12));
