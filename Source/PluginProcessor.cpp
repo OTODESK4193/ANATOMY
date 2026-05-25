@@ -112,6 +112,7 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
                     ? (activeVoice.sampleData->getSampleRate() / currentSampleRate) : 1.0;
 
                 activeVoice.resetProcessing();
+                customTonalReplacer.reset(); // ノートONの瞬間にTonalグラニュラーの位相を同期リセット
             }
         }
         else if (msg.isNoteOff())
@@ -191,13 +192,11 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice, float& outL, 
     // --- TRANSIENT (CLICK) PROCESS ---
     if (voice.transShifter && cIdx < clickLen)
     {
-        // 差し替えサンプルがロードされているか確認
         if (customTransientReplacer.isLoaded())
         {
             float clickHold = apvts.getRawParameterValue("clickLength")->load();
             float clickCurve = apvts.getRawParameterValue("clickCurve")->load();
 
-            // 1.0倍速固定のインデックスを渡し、内部でリサンプリングと元音の型抜きを行う
             shiftedClick = customTransientReplacer.processSample(
                 voice.clickReadIndex,
                 voice.pitchRatio,
@@ -210,7 +209,6 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice, float& outL, 
         }
         else
         {
-            // サンプルがない場合は、既存のSnap走行グラニュラー（元音のTransientピッチシフト）へ安全にフォールバック
             shiftedClick = voice.transShifter->processSample(click, cIdx, transScale);
             voice.clickReadIndex += voice.pitchRatio;
         }
@@ -219,8 +217,27 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice, float& outL, 
     // --- TONAL (SUSTAIN) PROCESS ---
     if (voice.tonalShifter && sIdx < sustainLen)
     {
-        shiftedSustain = voice.tonalShifter->processSample(sustain, sIdx, tonalScale);
-        voice.sustainReadIndex += voice.pitchRatio;
+        if (customTonalReplacer.isLoaded())
+        {
+            float clickHold = apvts.getRawParameterValue("clickLength")->load();
+            float clickCurve = apvts.getRawParameterValue("clickCurve")->load();
+
+            // Tonal差し替えルートの駆動（Gate/Releaseに完全同期発音）
+            shiftedSustain = customTonalReplacer.processSample(
+                voice.sustainReadIndex,
+                voice.pitchRatio,
+                tonalScale,
+                clickHold,
+                clickCurve,
+                currentSampleRate);
+
+            voice.sustainReadIndex += voice.pitchRatio;
+        }
+        else
+        {
+            shiftedSustain = voice.tonalShifter->processSample(sustain, sIdx, tonalScale);
+            voice.sustainReadIndex += voice.pitchRatio;
+        }
     }
 
     float finalSample = (shiftedClick + shiftedSustain) * voice.triggerVelocity * voice.releaseGain;

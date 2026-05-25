@@ -4,7 +4,8 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include "PluginProcessor.h"
 #include "UI/WaveformComponent.h"
-#include "UI/TransientBrowserPanel.h" // í«â¡
+#include "UI/TransientBrowserPanel.h"
+#include "UI/TonalBrowserPanel.h" // Åyí«â¡ÅzÉCÉìÉNÉãÅ[Éh
 
 class AnatomyAudioProcessorEditor : public juce::AudioProcessorEditor,
     public juce::FileDragAndDropTarget,
@@ -53,7 +54,8 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTransPitch;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTonalPitch;
 
-    TransientBrowserPanel transientBrowserPanel{ audioProcessor }; // Åyí«â¡Åzé¿ëÃâª
+    TransientBrowserPanel transientBrowserPanel{ audioProcessor };
+    TonalBrowserPanel tonalBrowserPanel{ audioProcessor }; // Åyí«â¡Åzé¿ëÃâª
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnatomyAudioProcessorEditor)
 };

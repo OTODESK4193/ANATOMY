@@ -9,7 +9,8 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     addAndMakeVisible(waveDndFile);
     addAndMakeVisible(waveTransient);
     addAndMakeVisible(waveTonal);
-    addAndMakeVisible(transientBrowserPanel); // 【追加】画面に登録
+    addAndMakeVisible(transientBrowserPanel);
+    addAndMakeVisible(tonalBrowserPanel); // 【追加】画面に登録
 
     btnOriginal.setRadioGroupId(1);
     btnTransient.setRadioGroupId(1);
@@ -195,13 +196,15 @@ void AnatomyAudioProcessorEditor::resized()
     // 1段目: Raw File
     waveDndFile.setBounds(area.removeFromTop(h).reduced(10, 12));
 
-    // 2段目: Transientエリア【核心：右端90pxを削り取ってブラウザコンポーネントを配置】
+    // 2段目: Transientエリア（右上のベスト位置に配置）
     auto transArea = area.removeFromTop(h).reduced(10, 12);
-    auto browserArea = transArea.removeFromRight(90); // 右端をクリップ
-
+    auto transBrowserArea = transArea.removeFromRight(90);
     waveTransient.setBounds(transArea);
-    transientBrowserPanel.setBounds(browserArea.removeFromTop(75)); // 右上のベスト位置に配置
+    transientBrowserPanel.setBounds(transBrowserArea.removeFromTop(75));
 
-    // 3段目: Tonalエリア
-    waveTonal.setBounds(area.reduced(10, 12));
+    // 3段目: Tonalエリア【核心：Transientとシネメトリーに右端90pxを削り取って配置】
+    auto tonalArea = area.reduced(10, 12);
+    auto tonalBrowserArea = tonalArea.removeFromRight(90);
+    waveTonal.setBounds(tonalArea);
+    tonalBrowserPanel.setBounds(tonalBrowserArea.removeFromTop(75));
 }
