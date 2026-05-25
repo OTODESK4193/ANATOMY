@@ -188,12 +188,35 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice, float& outL, 
     int cIdx = static_cast<int>(voice.clickReadIndex);
     int sIdx = static_cast<int>(voice.sustainReadIndex);
 
+    // --- TRANSIENT (CLICK) PROCESS ---
     if (voice.transShifter && cIdx < clickLen)
     {
-        shiftedClick = voice.transShifter->processSample(click, cIdx, transScale);
-        voice.clickReadIndex += voice.pitchRatio;
+        // 差し替えサンプルがロードされているか確認
+        if (customTransientReplacer.isLoaded())
+        {
+            float clickHold = apvts.getRawParameterValue("clickLength")->load();
+            float clickCurve = apvts.getRawParameterValue("clickCurve")->load();
+
+            // 1.0倍速固定のインデックスを渡し、内部でリサンプリングと元音の型抜きを行う
+            shiftedClick = customTransientReplacer.processSample(
+                voice.clickReadIndex,
+                voice.pitchRatio,
+                transScale,
+                clickHold,
+                clickCurve,
+                currentSampleRate);
+
+            voice.clickReadIndex += voice.pitchRatio;
+        }
+        else
+        {
+            // サンプルがない場合は、既存のSnap走行グラニュラー（元音のTransientピッチシフト）へ安全にフォールバック
+            shiftedClick = voice.transShifter->processSample(click, cIdx, transScale);
+            voice.clickReadIndex += voice.pitchRatio;
+        }
     }
 
+    // --- TONAL (SUSTAIN) PROCESS ---
     if (voice.tonalShifter && sIdx < sustainLen)
     {
         shiftedSustain = voice.tonalShifter->processSample(sustain, sIdx, tonalScale);
@@ -202,7 +225,7 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice, float& outL, 
 
     float finalSample = (shiftedClick + shiftedSustain) * voice.triggerVelocity * voice.releaseGain;
 
-    // 【最重要】モノラルからステレオへの複製による 4dB の音量オーバーを相殺する補正係数 (-4dB ≒ 0.63倍)
+    // ステレオ複製時の音量跳ね上がりを補正 (-4dB ≒ 0.63倍)
     finalSample *= 0.63f;
 
     outL = finalSample;
@@ -216,7 +239,6 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice, float& outL, 
         voice.reset();
     }
 }
-
 
 void AnatomyAudioProcessor::parameterChanged(const juce::String&, float)
 {

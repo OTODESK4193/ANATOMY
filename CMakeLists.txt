@@ -62,7 +62,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     "Source/UI/WaveformComponent.cpp"
     
     
-  "Source/DSP/SharedSampleData.h"    "Source/DSP/VoiceState.h")
+  "Source/DSP/SharedSampleData.h"    "Source/DSP/VoiceState.h" "Source/DSP/TransientReplacer.h" "Source/UI/TransientBrowserPanel.h")
 
 # ==============================================================================
 # JUCEモジュールのリンク

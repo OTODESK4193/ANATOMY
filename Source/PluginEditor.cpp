@@ -9,6 +9,7 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     addAndMakeVisible(waveDndFile);
     addAndMakeVisible(waveTransient);
     addAndMakeVisible(waveTonal);
+    addAndMakeVisible(transientBrowserPanel); // 【追加】画面に登録
 
     btnOriginal.setRadioGroupId(1);
     btnTransient.setRadioGroupId(1);
@@ -55,13 +56,13 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
 
     configureSlider(sliderClickLength, lblClickLength, "CLICK HOLD (ms)");
     configureSlider(sliderClickCurve, lblClickCurve, "SUSTAIN FADE-IN (ms)");
-    configureSlider(sliderTransPitch, lblTransPitch, "TRANSIENT PITCH (st)"); // 追加
-    configureSlider(sliderTonalPitch, lblTonalPitch, "SUSTAIN PITCH (st)");   // 追加
+    configureSlider(sliderTransPitch, lblTransPitch, "TRANSIENT PITCH (st)");
+    configureSlider(sliderTonalPitch, lblTonalPitch, "SUSTAIN PITCH (st)");
 
     attachClickLength = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "clickLength", sliderClickLength);
     attachClickCurve = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "clickCurve", sliderClickCurve);
-    attachTransPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "transPitch", sliderTransPitch); // 追加
-    attachTonalPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "tonalPitch", sliderTonalPitch); // 追加
+    attachTransPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "transPitch", sliderTransPitch);
+    attachTonalPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "tonalPitch", sliderTonalPitch);
 
     setSize(800, 680);
     startTimer(40);
@@ -171,7 +172,7 @@ void AnatomyAudioProcessorEditor::resized()
     btnTonal.setBounds(buttonArea.reduced(2));
 
     auto controlArea = area.removeFromTop(90).reduced(5);
-    auto ctrlWidth = controlArea.getWidth() / 4; // 2列から4列へ変更
+    auto ctrlWidth = controlArea.getWidth() / 4;
 
     auto s0 = controlArea.removeFromLeft(ctrlWidth);
     lblClickLength.setBounds(s0.removeFromTop(15));
@@ -181,16 +182,26 @@ void AnatomyAudioProcessorEditor::resized()
     lblClickCurve.setBounds(s1.removeFromTop(15));
     sliderClickCurve.setBounds(s1);
 
-    auto s2 = controlArea.removeFromLeft(ctrlWidth); // 追加
+    auto s2 = controlArea.removeFromLeft(ctrlWidth);
     lblTransPitch.setBounds(s2.removeFromTop(15));
     sliderTransPitch.setBounds(s2);
 
-    auto s3 = controlArea;                          // 追加
+    auto s3 = controlArea;
     lblTonalPitch.setBounds(s3.removeFromTop(15));
     sliderTonalPitch.setBounds(s3);
 
     auto h = area.getHeight() / 3;
+
+    // 1段目: Raw File
     waveDndFile.setBounds(area.removeFromTop(h).reduced(10, 12));
-    waveTransient.setBounds(area.removeFromTop(h).reduced(10, 12));
+
+    // 2段目: Transientエリア【核心：右端90pxを削り取ってブラウザコンポーネントを配置】
+    auto transArea = area.removeFromTop(h).reduced(10, 12);
+    auto browserArea = transArea.removeFromRight(90); // 右端をクリップ
+
+    waveTransient.setBounds(transArea);
+    transientBrowserPanel.setBounds(browserArea.removeFromTop(75)); // 右上のベスト位置に配置
+
+    // 3段目: Tonalエリア
     waveTonal.setBounds(area.reduced(10, 12));
 }

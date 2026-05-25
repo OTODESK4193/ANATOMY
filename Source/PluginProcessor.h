@@ -7,6 +7,7 @@
 #include "DSP/HpssSeparator.h"
 #include "DSP/SharedSampleData.h"
 #include "DSP/VoiceState.h"
+#include "DSP/TransientReplacer.h" // 追加
 
 class AnatomyAudioProcessor : public juce::AudioProcessor,
     public juce::Thread,
@@ -59,12 +60,13 @@ public:
     }
 
     juce::AudioProcessorValueTreeState apvts;
+    TransientReplacer customTransientReplacer; // 【追加】外部UIからダイレクトにアクセスできる安全な窓口
 
 private:
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     void updateSynthSound();
     void generateVoiceSample(VoiceState& voice, float& outL, float& outR) noexcept;
-    void updateActiveSampleData(); // ← 【この関数宣言が欠落していたため追加しました】
+    void updateActiveSampleData();
 
     HpssSeparator separator{ 2048 };
     juce::CriticalSection lock;

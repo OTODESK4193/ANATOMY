@@ -4,6 +4,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include "PluginProcessor.h"
 #include "UI/WaveformComponent.h"
+#include "UI/TransientBrowserPanel.h" // í«â¡
 
 class AnatomyAudioProcessorEditor : public juce::AudioProcessorEditor,
     public juce::FileDragAndDropTarget,
@@ -39,18 +40,20 @@ private:
 
     juce::Slider sliderClickLength;
     juce::Slider sliderClickCurve;
-    juce::Slider sliderTransPitch; // í«â¡
-    juce::Slider sliderTonalPitch; // í«â¡
+    juce::Slider sliderTransPitch;
+    juce::Slider sliderTonalPitch;
 
     juce::Label lblClickLength;
     juce::Label lblClickCurve;
-    juce::Label lblTransPitch;     // í«â¡
-    juce::Label lblTonalPitch;     // í«â¡
+    juce::Label lblTransPitch;
+    juce::Label lblTonalPitch;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachClickLength;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachClickCurve;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTransPitch; // í«â¡
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTonalPitch; // í«â¡
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTransPitch;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTonalPitch;
+
+    TransientBrowserPanel transientBrowserPanel{ audioProcessor }; // Åyí«â¡Åzé¿ëÃâª
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnatomyAudioProcessorEditor)
 };
