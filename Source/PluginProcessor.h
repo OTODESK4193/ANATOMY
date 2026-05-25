@@ -64,6 +64,7 @@ private:
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     void updateSynthSound();
     void generateVoiceSample(VoiceState& voice, float& outL, float& outR) noexcept;
+    void updateActiveSampleData(); // ← 【この関数宣言が欠落していたため追加しました】
 
     HpssSeparator separator{ 2048 };
     juce::CriticalSection lock;
@@ -71,12 +72,10 @@ private:
     std::atomic<bool> needsReanalysis{ false };
     double fileSampleRate = 44100.0;
     double currentSampleRate = 44100.0;
-    float releaseFactor = 0.95f; // 指数関数減衰ステップ係数
+    float releaseFactor = 0.95f;
 
-    // 【クラッシュ根絶】スレッド間で安全にスマートポインタを受け渡すためのロックフリーアトミックポインタ
     std::atomic<SharedSampleData*> masterSampleData{ nullptr };
 
-    // 【アロケーションゼロ】音声スレッド用の固定ボイススロット（単音運用 ＋ リリース退避スロット）
     VoiceState activeVoice;
     static constexpr int maxReleasingVoices = 4;
     VoiceState releasingVoices[maxReleasingVoices];

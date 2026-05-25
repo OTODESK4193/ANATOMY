@@ -60,9 +60,9 @@ target_sources(${PROJECT_NAME} PRIVATE
     "Source/DSP/HpssSeparator.cpp"
     "Source/UI/WaveformComponent.h"
     "Source/UI/WaveformComponent.cpp"
-    "Source/DSP/AnatomyVoice.h"
-    "Source/DSP/AnatomyVoice.cpp"
- "Source/DSP/TransientBoundaryDetector.h" "Source/DSP/SharedSampleData.h" "Source/DSP/ThreadSafeSamplerSound.h" "Source/DSP/ThreadSafeSamplerVoice.h" "Source/DSP/AnatomySound.h" "Source/DSP/VoiceState.h")
+    
+    
+  "Source/DSP/SharedSampleData.h"    "Source/DSP/VoiceState.h")
 
 # ==============================================================================
 # JUCEモジュールのリンク
