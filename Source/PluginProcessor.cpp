@@ -166,7 +166,7 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
 void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice, float& outL, float& outR) noexcept
 {
-    // 呼び出し元のローカル変数への初期化保証（未初期化ビルドエラーの完全根絶）
+    // 呼び出し元のローカル変数への初期化保証
     outL = 0.0f;
     outR = 0.0f;
 
@@ -177,7 +177,6 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice, float& outL, 
     const int clickLen = click.getNumSamples();
     const int sustainLen = sustain.getNumSamples();
 
-    // APVTSから安全にパラメータをロードして半音から比率に換算 ($R = 2^{st / 12}$)
     float transPitchVal = apvts.getRawParameterValue("transPitch")->load();
     float tonalPitchVal = apvts.getRawParameterValue("tonalPitch")->load();
     float transScale = std::pow(2.0f, transPitchVal / 12.0f);
@@ -202,6 +201,10 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice, float& outL, 
     }
 
     float finalSample = (shiftedClick + shiftedSustain) * voice.triggerVelocity * voice.releaseGain;
+
+    // 【最重要】モノラルからステレオへの複製による 4dB の音量オーバーを相殺する補正係数 (-4dB ≒ 0.63倍)
+    finalSample *= 0.63f;
+
     outL = finalSample;
     outR = finalSample;
 
@@ -213,6 +216,7 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice, float& outL, 
         voice.reset();
     }
 }
+
 
 void AnatomyAudioProcessor::parameterChanged(const juce::String&, float)
 {
