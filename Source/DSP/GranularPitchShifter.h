@@ -4,6 +4,12 @@
 #include <cmath>
 #include <algorithm>
 
+/**
+ * GranularPitchShifter (Snap-Engine Architecture)
+ * * 1. Transient: 窓関数を完全に排除した「ワンショット・リサンプリング」で鋭さを100%維持
+ * 2. Tonal: ポインタのワープを根絶した「中心基準型・連続位相走行シフター」で滑らかさを維持
+ * 3. 接着剤: ノートONの瞬間に遅延を「完全ゼロ」に強制同期して一体感を偽装
+ */
 class GranularPitchShifter
 {
 public:
@@ -14,115 +20,121 @@ public:
 
     ~GranularPitchShifter() = default;
 
-    void init(double sampleRate, float grainSizeMs, int numOverlaps)
+    /**
+     * アルゴリズムの初期化
+     * @param grainSizeMs 20ms未満であれば自動的にTransient（ワンショット）モードとして動作します
+     */
+    void init(double sampleRate, float grainSizeMs, int /*numOverlaps*/)
     {
         this->currentSampleRate = sampleRate;
-        this->overlaps = std::max(2, numOverlaps);
 
-        this->grainSizeSamples = static_cast<int>((grainSizeMs / 1000.0f) * sampleRate);
-        if (this->grainSizeSamples < 32) this->grainSizeSamples = 32;
+        // 20ms未満の短い設定（VoiceStateでの10ms）なら自動でTransientワンショットモードに設定
+        this->isTransientMode = (grainSizeMs < 20.0f);
 
-        this->grainInterval = this->grainSizeSamples / this->overlaps;
-        if (this->grainInterval < 1) this->grainInterval = 1;
-
-        grains.resize(this->overlaps);
-
-        window.resize(this->grainSizeSamples);
-        for (int i = 0; i < this->grainSizeSamples; ++i)
-        {
-            window[i] = 0.5f * (1.0f - std::cos(2.0f * juce::MathConstants<float>::pi * i / (this->grainSizeSamples - 1)));
-        }
+        // Tonal用の最大遅延幅（窓サイズ）の設定
+        this->maxDelaySamples = static_cast<float>((grainSizeMs / 1000.0f) * sampleRate);
+        if (this->maxDelaySamples < 64.0f) this->maxDelaySamples = 64.0f;
 
         reset();
     }
 
+    /**
+     * ノートON（トリガー）の瞬間に呼ばれる強制同期関数【接着剤】
+     */
     void reset() noexcept
     {
-        sampleCounter = 0;
-        for (auto& g : grains)
-        {
-            g.isActive = false;
-            g.readIndex = 0.0;
-            g.centerTimelinePos = 0;
-        }
+        // 仮想再生ポインタの初期位相を「0.5」に強制アライメント
+        // これにより、ノートONの瞬間は「遅延が完全にゼロ」の状態でTransientと100%同期してスタートします
+        tapAPhase = 0.5f;
     }
 
-    float processSample(const juce::AudioBuffer<float>& sourceBuffer, int currentTimelineIdx, float pitchRatio) noexcept
+    /**
+     * タイムドメイン・ピッチシフト処理の実体
+     */
+    float processSample(const juce::AudioBuffer<float>& sourceBuffer, int currentTimelineIdx, float scaleFactor) noexcept
     {
         const int maxSamples = sourceBuffer.getNumSamples();
         if (maxSamples <= 0 || currentTimelineIdx < 0 || currentTimelineIdx >= maxSamples)
             return 0.0f;
 
-        if (std::abs(pitchRatio - 1.0f) < 0.001f)
+        // ピッチ変更なし（1.0倍）の時は、一切の演算をバイパスして100%完全な同値原音を保証
+        if (std::abs(scaleFactor - 1.0f) < 0.001f)
         {
             return sourceBuffer.getReadPointer(0)[currentTimelineIdx];
         }
 
         const float* src = sourceBuffer.getReadPointer(0);
 
-        if (sampleCounter % grainInterval == 0)
+        // ==============================================================================
+        // 【MODE 1】Transient: 窓関数を通さない「ワンショット・リサンプリング」
+        // ==============================================================================
+        if (isTransientMode)
         {
-            for (auto& g : grains)
-            {
-                if (!g.isActive)
-                {
-                    g.isActive = true;
-                    g.readIndex = 0.0;
-                    g.centerTimelinePos = currentTimelineIdx;
-                    break;
-                }
-            }
-        }
-        sampleCounter++;
+            float srcPos = static_cast<float>(currentTimelineIdx) * scaleFactor;
 
-        float outputSample = 0.0f;
+            if (srcPos < 0.0f) srcPos = 0.0f;
+            if (srcPos >= static_cast<float>(maxSamples - 1)) return 0.0f;
 
-        for (auto& g : grains)
-        {
-            if (!g.isActive) continue;
+            int idx0 = static_cast<int>(srcPos);
+            int idx1 = std::min(idx0 + 1, maxSamples - 1);
+            float frac = srcPos - static_cast<float>(idx0);
 
-            int writeIdx = static_cast<int>(g.readIndex);
-
-            if (writeIdx >= grainSizeSamples - 1)
-            {
-                g.isActive = false;
-                continue;
-            }
-
-            float grainOffset = static_cast<float>(writeIdx - grainSizeSamples / 2);
-            float sourceOffset = grainOffset * pitchRatio;
-            float sourcePos = static_cast<float>(g.centerTimelinePos) + sourceOffset;
-
-            int srcIdx = static_cast<int>(sourcePos);
-
-            if (srcIdx >= 0 && srcIdx < maxSamples - 1)
-            {
-                float frac = sourcePos - static_cast<float>(srcIdx);
-                float s0 = src[srcIdx];
-                float s1 = src[srcIdx + 1];
-                outputSample += (s0 + frac * (s1 - s0)) * window[writeIdx];
-            }
-
-            g.readIndex += 1.0;
+            return src[idx0] + frac * (src[idx1] - src[idx0]);
         }
 
-        return outputSample;
+        // ==============================================================================
+        // 【MODE 2】Tonal: ポインタをワープさせない「連続走行グラニュラー」
+        // ==============================================================================
+        // ピッチ比に基づいて、遅延の進捗（ノコギリ波の傾き）を完全に連続走行させる
+        float phaseIncrement = (1.0f - scaleFactor) / maxDelaySamples;
+        tapAPhase += phaseIncrement;
+
+        // 位相を 0.0 〜 1.0 の間に滑らかにローテーション（ワープの根絶）
+        while (tapAPhase >= 1.0f) tapAPhase -= 1.0f;
+        while (tapAPhase < 0.0f)  tapAPhase += 1.0f;
+
+        // もう一つの仮想ポインタ（Tap B）は常に180度反転した位置を追従
+        float tapBPhase = tapAPhase + 0.5f;
+        if (tapBPhase >= 1.0f) tapBPhase -= 1.0f;
+
+        // 中心基準型ディ延数：未来と過去を対象に分配（レンジ： -maxDelay/2 〜 +maxDelay/2）
+        float delayA = (tapAPhase - 0.5f) * maxDelaySamples;
+        float delayB = (tapBPhase - 0.5f) * maxDelaySamples;
+
+        // 窓関数（Hann Window）によるクロスフェード係数の算出
+        auto getHannWeight = [](float phase) noexcept -> float
+            {
+                return 0.5f * (1.0f - std::cos(2.0f * juce::MathConstants<float>::pi * phase));
+            };
+
+        float weightA = getHannWeight(tapAPhase);
+        float weightB = getHannWeight(tapBPhase);
+
+        // 2つの波形位置から高品質に線形補間読み出し
+        auto readSourceInterpolated = [src, maxSamples, currentTimelineIdx](float delay) noexcept -> float
+            {
+                float srcPos = static_cast<float>(currentTimelineIdx) - delay;
+
+                if (srcPos < 0.0f) srcPos = 0.0f;
+                if (srcPos >= static_cast<float>(maxSamples - 1)) srcPos = static_cast<float>(maxSamples - 1);
+
+                int idx0 = static_cast<int>(srcPos);
+                int idx1 = std::min(idx0 + 1, maxSamples - 1);
+                float frac = srcPos - static_cast<float>(idx0);
+
+                return src[idx0] + frac * (src[idx1] - src[idx0]);
+            };
+
+        float sampleA = readSourceInterpolated(delayA);
+        float sampleB = readSourceInterpolated(delayB);
+
+        // 重ね合わせ（Overlap-Add）して滑らかに出力
+        return (sampleA * weightA) + (sampleB * weightB);
     }
 
 private:
     double currentSampleRate = 44100.0;
-    int grainSizeSamples = 1024;
-    int grainInterval = 256;
-    int overlaps = 4;
-    int sampleCounter = 0;
-    std::vector<float> window;
-
-    struct Grain
-    {
-        Grain() : isActive(false), readIndex(0.0), centerTimelinePos(0) {}
-        bool isActive;
-        double readIndex;
-        int centerTimelinePos;
-    };
-    std::vector<Grain> grains;
+    float maxDelaySamples = 1024.0f;
+    float tapAPhase = 0.5f;
+    bool isTransientMode = false;
 };
