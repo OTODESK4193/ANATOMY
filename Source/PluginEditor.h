@@ -39,12 +39,18 @@ private:
 
     juce::Slider sliderClickLength;
     juce::Slider sliderClickCurve;
+    juce::Slider sliderTransPitch; // ’Ç‰Á
+    juce::Slider sliderTonalPitch; // ’Ç‰Á
 
     juce::Label lblClickLength;
     juce::Label lblClickCurve;
+    juce::Label lblTransPitch;     // ’Ç‰Á
+    juce::Label lblTonalPitch;     // ’Ç‰Á
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachClickLength;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachClickCurve;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTransPitch; // ’Ç‰Á
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTonalPitch; // ’Ç‰Á
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnatomyAudioProcessorEditor)
 };

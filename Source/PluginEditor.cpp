@@ -55,9 +55,13 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
 
     configureSlider(sliderClickLength, lblClickLength, "CLICK HOLD (ms)");
     configureSlider(sliderClickCurve, lblClickCurve, "SUSTAIN FADE-IN (ms)");
+    configureSlider(sliderTransPitch, lblTransPitch, "TRANSIENT PITCH (st)"); // í«â¡
+    configureSlider(sliderTonalPitch, lblTonalPitch, "SUSTAIN PITCH (st)");   // í«â¡
 
     attachClickLength = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "clickLength", sliderClickLength);
     attachClickCurve = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "clickCurve", sliderClickCurve);
+    attachTransPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "transPitch", sliderTransPitch); // í«â¡
+    attachTonalPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "tonalPitch", sliderTonalPitch); // í«â¡
 
     setSize(800, 680);
     startTimer(40);
@@ -167,15 +171,23 @@ void AnatomyAudioProcessorEditor::resized()
     btnTonal.setBounds(buttonArea.reduced(2));
 
     auto controlArea = area.removeFromTop(90).reduced(5);
-    auto ctrlWidth = controlArea.getWidth() / 2;
+    auto ctrlWidth = controlArea.getWidth() / 4; // 2óÒÇ©ÇÁ4óÒÇ÷ïœçX
 
     auto s0 = controlArea.removeFromLeft(ctrlWidth);
     lblClickLength.setBounds(s0.removeFromTop(15));
     sliderClickLength.setBounds(s0);
 
-    auto s1 = controlArea;
+    auto s1 = controlArea.removeFromLeft(ctrlWidth);
     lblClickCurve.setBounds(s1.removeFromTop(15));
     sliderClickCurve.setBounds(s1);
+
+    auto s2 = controlArea.removeFromLeft(ctrlWidth); // í«â¡
+    lblTransPitch.setBounds(s2.removeFromTop(15));
+    sliderTransPitch.setBounds(s2);
+
+    auto s3 = controlArea;                          // í«â¡
+    lblTonalPitch.setBounds(s3.removeFromTop(15));
+    sliderTonalPitch.setBounds(s3);
 
     auto h = area.getHeight() / 3;
     waveDndFile.setBounds(area.removeFromTop(h).reduced(10, 12));
