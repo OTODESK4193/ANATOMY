@@ -39,6 +39,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("transPitch", 1), "Transient Pitch (st)", -12.0f, 12.0f, 0.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("tonalPitch", 1), "Sustain Pitch (st)", -12.0f, 12.0f, 0.0f));
 
+    // 【新設】Tonal（サステイン）専用の可変リリースタイムノブ（10ms 〜 5秒）
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("sustainRelease", 1), "Sustain Release (ms)", 10.0f, 5000.0f, 500.0f));
+
     return { params.begin(), params.end() };
 }
 
@@ -112,7 +115,7 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
                     ? (activeVoice.sampleData->getSampleRate() / currentSampleRate) : 1.0;
 
                 activeVoice.resetProcessing();
-                customTonalReplacer.reset(); // ノートONの瞬間にTonalグラニュラーの位相を同期リセット
+                customTonalReplacer.reset(); // トリガーされた瞬間にグラニュラー位相を同期
             }
         }
         else if (msg.isNoteOff())
@@ -126,6 +129,11 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
     float* outL = buffer.getWritePointer(0);
     float* outR = buffer.getNumChannels() > 1 ? buffer.getWritePointer(1) : nullptr;
+
+    // 可変リリースタイムのステップデクリメント係数をロードしてリアルタイム適用
+    float relMs = apvts.getRawParameterValue("sustainRelease")->load();
+    float rampSamples = static_cast<float>((relMs / 1000.0f) * currentSampleRate);
+    float dynamicReleaseFactor = std::exp(std::log(0.001f) / std::max(1.0f, rampSamples));
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
@@ -141,7 +149,7 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
             if (activeVoice.isReleasing)
             {
-                activeVoice.releaseGain *= releaseFactor;
+                activeVoice.releaseGain *= dynamicReleaseFactor;
                 if (activeVoice.releaseGain <= 0.001f) activeVoice.reset();
             }
         }
@@ -155,7 +163,7 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
                 mixedL += vL;
                 mixedR += vR;
 
-                releasingVoices[i].releaseGain *= releaseFactor;
+                releasingVoices[i].releaseGain *= dynamicReleaseFactor;
                 if (releasingVoices[i].releaseGain <= 0.001f) releasingVoices[i].reset();
             }
         }
@@ -167,7 +175,6 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
 void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice, float& outL, float& outR) noexcept
 {
-    // 呼び出し元のローカル変数への初期化保証
     outL = 0.0f;
     outR = 0.0f;
 
@@ -190,70 +197,76 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice, float& outL, 
     int sIdx = static_cast<int>(voice.sustainReadIndex);
 
     // --- TRANSIENT (CLICK) PROCESS ---
-    if (voice.transShifter && cIdx < clickLen)
+    if (customTransientReplacer.isLoaded())
     {
-        if (customTransientReplacer.isLoaded())
-        {
-            float clickHold = apvts.getRawParameterValue("clickLength")->load();
-            float clickCurve = apvts.getRawParameterValue("clickCurve")->load();
+        float clickHold = apvts.getRawParameterValue("clickLength")->load();
+        float clickCurve = apvts.getRawParameterValue("clickCurve")->load();
 
-            shiftedClick = customTransientReplacer.processSample(
-                voice.clickReadIndex,
-                voice.pitchRatio,
-                transScale,
-                clickHold,
-                clickCurve,
-                currentSampleRate);
+        shiftedClick = customTransientReplacer.processSample(
+            voice.clickReadIndex, voice.pitchRatio, transScale,
+            clickHold, clickCurve, currentSampleRate, currentSoloMode);
 
-            voice.clickReadIndex += voice.pitchRatio;
-        }
-        else
-        {
+        // 差し替え時は、ホストのタイムラインとしてインデックスをインクリメント走行
+        voice.clickReadIndex += voice.pitchRatio;
+    }
+    else if (voice.transShifter && cIdx < clickLen)
+    {
+        // 原音再生時は、SoloモードがTransient以外(2)ならミュート
+        if (currentSoloMode != 2)
             shiftedClick = voice.transShifter->processSample(click, cIdx, transScale);
-            voice.clickReadIndex += voice.pitchRatio;
-        }
+
+        voice.clickReadIndex += voice.pitchRatio;
     }
 
     // --- TONAL (SUSTAIN) PROCESS ---
-    if (voice.tonalShifter && sIdx < sustainLen)
+    if (customTonalReplacer.isLoaded())
     {
-        if (customTonalReplacer.isLoaded())
-        {
-            float clickHold = apvts.getRawParameterValue("clickLength")->load();
-            float clickCurve = apvts.getRawParameterValue("clickCurve")->load();
+        float clickHold = apvts.getRawParameterValue("clickLength")->load();
+        float clickCurve = apvts.getRawParameterValue("clickCurve")->load();
 
-            // Tonal差し替えルートの駆動（Gate/Releaseに完全同期発音）
-            shiftedSustain = customTonalReplacer.processSample(
-                voice.sustainReadIndex,
-                voice.pitchRatio,
-                tonalScale,
-                clickHold,
-                clickCurve,
-                currentSampleRate);
+        shiftedSustain = customTonalReplacer.processSample(
+            voice.sustainReadIndex, voice.pitchRatio, tonalScale,
+            clickHold, clickCurve, currentSampleRate, currentSoloMode);
 
-            voice.sustainReadIndex += voice.pitchRatio;
-        }
-        else
-        {
+        voice.sustainReadIndex += voice.pitchRatio;
+    }
+    else if (voice.tonalShifter && sIdx < sustainLen)
+    {
+        // 原音再生時は、SoloモードがSustain以外(1)ならミュート
+        if (currentSoloMode != 1)
             shiftedSustain = voice.tonalShifter->processSample(sustain, sIdx, tonalScale);
-            voice.sustainReadIndex += voice.pitchRatio;
-        }
+
+        voice.sustainReadIndex += voice.pitchRatio;
     }
 
     float finalSample = (shiftedClick + shiftedSustain) * voice.triggerVelocity * voice.releaseGain;
-
-    // ステレオ複製時の音量跳ね上がりを補正 (-4dB ≒ 0.63倍)
-    finalSample *= 0.63f;
+    finalSample *= 0.63f; // ステレオ音量相殺
 
     outL = finalSample;
     outR = finalSample;
 
-    bool clickFinished = (static_cast<int>(voice.clickReadIndex) >= clickLen);
-    bool sustainFinished = (static_cast<int>(voice.sustainReadIndex) >= sustainLen);
+    // 【新・堅牢寿命判定】差し替えサンプル駆動中、または鍵盤を離してリリースフェード中の場合は
+    // 元音のバッファの長さの壁（sustainFinished）による強制ブチ切りを完全バイパスする
+    bool isCustomActive = customTransientReplacer.isLoaded() || customTonalReplacer.isLoaded();
 
-    if (clickFinished && sustainFinished)
+    if (isCustomActive)
     {
-        voice.reset();
+        // 鍵盤が離されて、リリースのフェードアウトが完全にゼロ以下になった時のみ安全にボイスを消去
+        if (voice.isReleasing && voice.releaseGain <= 0.001f)
+        {
+            voice.reset();
+        }
+    }
+    else
+    {
+        // 通常の原音モードの時は、両方のスキャンが終了したらボイスを消去
+        bool clickFinished = (static_cast<int>(voice.clickReadIndex) >= clickLen);
+        bool sustainFinished = (static_cast<int>(voice.sustainReadIndex) >= sustainLen);
+
+        if (clickFinished && sustainFinished)
+        {
+            voice.reset();
+        }
     }
 }
 

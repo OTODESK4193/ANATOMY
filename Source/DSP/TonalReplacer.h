@@ -5,32 +5,24 @@
 #include <algorithm>
 #include <atomic>
 
-/**
- * TonalReplacer (Header-Only DSP Module)
- * * 1. ノートONのGate/Releaseに完全追従
- * 2. 指定したSTART位置から、ワープのない「Centered型・連続位相グラニュラー」を駆動
- * 3. 元音のHPSSフェードイン窓を完全移植してアタックのハミ出しを根絶
- */
 class TonalReplacer
 {
 public:
     TonalReplacer() = default;
     ~TonalReplacer() = default;
 
-    /**
-     * ブラウザ側から新しいWavが確定された時に呼ばれるデータロード関数
-     */
     void loadSample(const juce::AudioBuffer<float>& buffer, double sampleRate)
     {
         const juce::ScopedLock sl(lock);
         replacedBuffer.makeCopyOf(buffer);
         sourceSampleRate = sampleRate;
+
+        float durationMs = (static_cast<float>(buffer.getNumSamples()) / static_cast<float>(sampleRate)) * 1000.0f;
+        endOffsetMs.store(durationMs, std::memory_order_release);
+
         hasSample.store(true, std::memory_order_release);
     }
 
-    /**
-     * 差し替えを解除して元のTonal（原音サステイン）に戻すためのクリア関数
-     */
     void clearSample()
     {
         const juce::ScopedLock sl(lock);
@@ -39,38 +31,24 @@ public:
     }
 
     bool isLoaded() const noexcept { return hasSample.load(std::memory_order_acquire); }
+    double getSourceSampleRate() const noexcept { return sourceSampleRate; }
 
-    /**
-     * UIのStartノブからミリ秒単位で再生開始位置を受け取る関数
-     */
-    void setStartOffsetMs(float offsetMs) noexcept
-    {
-        startOffsetMs.store(offsetMs, std::memory_order_relaxed);
-    }
+    void setStartOffsetMs(float offsetMs) noexcept { startOffsetMs.store(offsetMs, std::memory_order_relaxed); }
+    void setEndOffsetMs(float offsetMs) noexcept { endOffsetMs.store(offsetMs, std::memory_order_relaxed); }
 
-    /**
-     * ノートON（トリガー）の瞬間に呼ばれるグラニュラー位相リセット【接着剤】
-     */
-    void reset() noexcept
-    {
-        tapAPhase = 0.5f; // 開始時は遅延ゼロの完全同期ポイントにロック
-    }
+    void reset() noexcept { tapAPhase = 0.5f; }
 
-    /**
-     * 核心ロジック：Gate/Releaseに追従しながら、Start位置基準で連続グラニュラー伸縮を実行
-     */
     float processSample(double sustainReadIndex, double originalPitchRatio, float tonalScale,
-        float clickHoldMs, float clickCurveMs, double hostSampleRate) noexcept
+        float clickHoldMs, float clickCurveMs, double hostSampleRate, int soloMode) noexcept
     {
-        if (!hasSample.load(std::memory_order_relaxed)) return 0.0f;
+        if (soloMode == 1 || !hasSample.load(std::memory_order_relaxed))
+            return 0.0f;
 
         const int maxSamples = replacedBuffer.getNumSamples();
         if (maxSamples <= 0) return 0.0f;
 
-        // 1. ノートONからのホスト純粋経過サンプル数 n を逆算
         double n = (originalPitchRatio > 0.0) ? (sustainReadIndex / originalPitchRatio) : sustainReadIndex;
 
-        // 2. 元音のHPSS分離と完全に同期するサステイン・フェードイン窓（wSustain）のリアルタイム移植
         float wSustain = 1.0f;
         double elapsedMs = (n / hostSampleRate) * 1000.0;
 
@@ -88,7 +66,6 @@ public:
             }
         }
 
-        // 3. Tonal専用：ポインタをワープさせない「40ms固定・無限連続走行グラニュラー」
         float maxDelaySamples = static_cast<float>((40.0f / 1000.0f) * hostSampleRate);
         if (maxDelaySamples < 64.0f) maxDelaySamples = 64.0f;
 
@@ -111,20 +88,21 @@ public:
         float weightA = getHannWeight(tapAPhase);
         float weightB = getHannWeight(tapBPhase);
 
-        // 4. 【核心】ユーザーが指定したSTART位置を「不動の故郷（基準）」とし、そこから等速時間軸を展開
         const float* src = replacedBuffer.getReadPointer(0);
         double offsetSamples = (startOffsetMs.load(std::memory_order_relaxed) / 1000.0) * sourceSampleRate;
         double speedRatio = sourceSampleRate / hostSampleRate;
-
-        // 仮想的な再生の基準線（Start位置 ＋ ノートONからの経過時間）
         double baseTimelinePos = offsetSamples + (n * speedRatio);
 
-        auto readSourceInterpolated = [src, maxSamples](double timelinePos, float delay) noexcept -> float
+        auto readSourceInterpolated = [src, maxSamples, this](double timelinePos, float delay) noexcept -> float
             {
                 double srcPos = timelinePos - delay;
 
+                // --- END位置によるクリップ判定 ---
+                double endSamples = (endOffsetMs.load(std::memory_order_relaxed) / 1000.0) * sourceSampleRate;
+                if (srcPos >= endSamples || srcPos >= static_cast<double>(maxSamples - 1))
+                    return 0.0f;
+
                 if (srcPos < 0.0) srcPos = 0.0;
-                if (srcPos >= static_cast<double>(maxSamples - 1)) return 0.0f;
 
                 int idx0 = static_cast<int>(srcPos);
                 int idx1 = std::min(idx0 + 1, maxSamples - 1);
@@ -136,7 +114,6 @@ public:
         float sampleA = readSourceInterpolated(baseTimelinePos, delayA);
         float sampleB = readSourceInterpolated(baseTimelinePos, delayB);
 
-        // クロスフェード結合し、元のフェードイン窓を乗算して出力（リリース音量はプロセッサ側が追従）
         return ((sampleA * weightA) + (sampleB * weightB)) * wSustain;
     }
 
@@ -144,8 +121,8 @@ private:
     juce::CriticalSection lock;
     juce::AudioBuffer<float> replacedBuffer;
     double sourceSampleRate = 44100.0;
-
     std::atomic<float> startOffsetMs{ 0.0f };
-    std::atomic<bool> hasSample{ false };
+    std::atomic<float> endOffsetMs{ 0.0f };
     float tapAPhase = 0.5f;
+    std::atomic<bool> hasSample{ false };
 };

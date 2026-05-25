@@ -5,7 +5,7 @@
 #include "PluginProcessor.h"
 #include "UI/WaveformComponent.h"
 #include "UI/TransientBrowserPanel.h"
-#include "UI/TonalBrowserPanel.h" // Åyí«â¡ÅzÉCÉìÉNÉãÅ[Éh
+#include "UI/TonalBrowserPanel.h"
 
 class AnatomyAudioProcessorEditor : public juce::AudioProcessorEditor,
     public juce::FileDragAndDropTarget,
@@ -43,19 +43,22 @@ private:
     juce::Slider sliderClickCurve;
     juce::Slider sliderTransPitch;
     juce::Slider sliderTonalPitch;
+    juce::Slider sliderSustainRelease; // ÅyêVê›Åz
 
     juce::Label lblClickLength;
     juce::Label lblClickCurve;
     juce::Label lblTransPitch;
     juce::Label lblTonalPitch;
+    juce::Label lblSustainRelease;     // ÅyêVê›Åz
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachClickLength;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachClickCurve;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTransPitch;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTonalPitch;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachSustainRelease; // ÅyêVê›Åz
 
-    TransientBrowserPanel transientBrowserPanel{ audioProcessor };
-    TonalBrowserPanel tonalBrowserPanel{ audioProcessor }; // Åyí«â¡Åzé¿ëÃâª
+    TransientBrowserPanel transientBrowserPanel{ audioProcessor, waveTransient };
+    TonalBrowserPanel tonalBrowserPanel{ audioProcessor, waveTonal };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnatomyAudioProcessorEditor)
 };

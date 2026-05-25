@@ -8,7 +8,7 @@
 #include "DSP/SharedSampleData.h"
 #include "DSP/VoiceState.h"
 #include "DSP/TransientReplacer.h"
-#include "DSP/TonalReplacer.h" // ← 【1行追加】
+#include "DSP/TonalReplacer.h"
 
 class AnatomyAudioProcessor : public juce::AudioProcessor,
     public juce::Thread,
@@ -61,8 +61,10 @@ public:
     }
 
     juce::AudioProcessorValueTreeState apvts;
+
+    // UIウィンドウと直結する安全なリプレイス・コア
     TransientReplacer customTransientReplacer;
-    TonalReplacer customTonalReplacer; // Kish 【1行追加】外部UIと直結する安全な窓口
+    TonalReplacer customTonalReplacer;
 
 private:
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
