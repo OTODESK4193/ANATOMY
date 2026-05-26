@@ -59,15 +59,15 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     configureSlider(sliderClickCurve, lblClickCurve, "SUSTAIN FADE-IN (ms)");
     configureSlider(sliderTransPitch, lblTransPitch, "TRANSIENT PITCH (st)");
     configureSlider(sliderTonalPitch, lblTonalPitch, "SUSTAIN PITCH (st)");
-    configureSlider(sliderSustainRelease, lblSustainRelease, "SUSTAIN RELEASE (ms)"); // 【追加】
+    configureSlider(sliderSustainRelease, lblSustainRelease, "SUSTAIN RELEASE (ms)");
 
     attachClickLength = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "clickLength", sliderClickLength);
     attachClickCurve = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "clickCurve", sliderClickCurve);
     attachTransPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "transPitch", sliderTransPitch);
     attachTonalPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "tonalPitch", sliderTonalPitch);
-    attachSustainRelease = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "sustainRelease", sliderSustainRelease); // 【追加】
+    attachSustainRelease = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "sustainRelease", sliderSustainRelease);
 
-    setSize(800, 710); // 上部ノブ追加に伴い高さを微増調整
+    setSize(800, 710);
     startTimer(40);
 }
 
@@ -101,6 +101,7 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
 
 void AnatomyAudioProcessorEditor::timerCallback()
 {
+    // メッセージスレッド側で非同期HPSS解析スレッドの状態監視・完了同期を実行
     audioProcessor.handleAsyncReanalysis();
 
     bool isProcessing = audioProcessor.isCurrentlyProcessing();
@@ -110,8 +111,6 @@ void AnatomyAudioProcessorEditor::timerCallback()
         juce::AudioBuffer<float> tempTrans, tempTonal;
         audioProcessor.getCallbackBuffersSecure(tempTrans, tempTonal);
 
-        // 【核心】差し替えサンプルがロードされている場合は、
-        // タイマーによるバックグラウンドHPSSバッファでの画面上書きを安全にバイパスする
         if (!audioProcessor.customTransientReplacer.isLoaded())
             waveTransient.setBuffer(tempTrans);
 
@@ -145,7 +144,7 @@ void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
     g.setFont(12.0f);
 
     auto area = getLocalBounds();
-    area.removeFromTop(155); // コントロールエリア増分調整
+    area.removeFromTop(155);
     auto h = area.getHeight() / 3;
 
     g.drawText("1. Drag & Drop Raw File (Original Source)", 15, 155, getWidth(), 15, juce::Justification::left);
@@ -180,9 +179,8 @@ void AnatomyAudioProcessorEditor::resized()
     btnTransient.setBounds(buttonArea.removeFromLeft(btnWidth).reduced(2));
     btnTonal.setBounds(buttonArea.reduced(2));
 
-    // コントロールエリア（ノブ配置）の幅計算を可変に適合
     auto controlArea = area.removeFromTop(120).reduced(5);
-    auto ctrlWidth = controlArea.getWidth() / 5; // 5個のノブを等幅配置
+    auto ctrlWidth = controlArea.getWidth() / 5;
 
     auto s0 = controlArea.removeFromLeft(ctrlWidth);
     lblClickLength.setBounds(s0.removeFromTop(15));
@@ -206,16 +204,13 @@ void AnatomyAudioProcessorEditor::resized()
 
     auto h = area.getHeight() / 3;
 
-    // 1段目: Raw File
     waveDndFile.setBounds(area.removeFromTop(h).reduced(10, 12));
 
-    // 2段目: Transientエリア
     auto transArea = area.removeFromTop(h).reduced(10, 12);
     auto transBrowserArea = transArea.removeFromRight(90);
     waveTransient.setBounds(transArea);
     transientBrowserPanel.setBounds(transBrowserArea.removeFromTop(75));
 
-    // 3段目: Tonalエリア
     auto tonalArea = area.reduced(10, 12);
     auto tonalBrowserArea = tonalArea.removeFromRight(90);
     waveTonal.setBounds(tonalArea);

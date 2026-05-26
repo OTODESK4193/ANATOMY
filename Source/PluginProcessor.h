@@ -1,9 +1,12 @@
 #pragma once
+
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_core/juce_core.h>
 #include <memory>
 #include <atomic>
+#include <vector>
+
 #include "DSP/HpssSeparator.h"
 #include "DSP/SharedSampleData.h"
 #include "DSP/VoiceState.h"
@@ -47,7 +50,7 @@ public:
 
     void handleAsyncReanalysis();
 
-    bool isCurrentlyProcessing() const { return isThreadRunning() || needsReanalysis.load(); }
+    bool isCurrentlyProcessing() const { return isThreadRunning() || needsReanalysis.load(std::memory_order_acquire); }
     float getHpssProgress() const { return separator.getProgress(); }
 
     int getSoloMode() const { return currentSoloMode; }
@@ -62,20 +65,23 @@ public:
 
     juce::AudioProcessorValueTreeState apvts;
 
-    // UIウィンドウと直結する安全なリプレイス・コア
     TransientReplacer customTransientReplacer;
     TonalReplacer customTonalReplacer;
 
 private:
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
-    void updateSynthSound();
-    void generateVoiceSample(VoiceState& voice, float& outL, float& outR) noexcept;
+    void generateVoiceSample(VoiceState& voice, float& outL, float& outR,
+        float clickHold, float clickCurve,
+        float transScale, float tonalScale) noexcept;
     void updateActiveSampleData();
+    void cleanUpGarbageBin();
 
     HpssSeparator separator{ 2048 };
     juce::CriticalSection lock;
 
     std::atomic<bool> needsReanalysis{ false };
+    std::atomic<bool> isAnalysisFinished{ false };
+
     double fileSampleRate = 44100.0;
     double currentSampleRate = 44100.0;
     float releaseFactor = 0.95f;
@@ -85,6 +91,15 @@ private:
     VoiceState activeVoice;
     static constexpr int maxReleasingVoices = 4;
     VoiceState releasingVoices[maxReleasingVoices];
+
+    // 核心制約4：連打（再トリガー）時の1.5ms固定ミュートとユーザーリリースの分離用並列管理
+    bool activeIsMuting = false;
+    float activeMuteGain = 1.0f;
+    bool releasingIsMuting[maxReleasingVoices];
+    float releasingMuteGain[maxReleasingVoices];
+
+    // 核心制約3：非オーディオスレッド安全回収用の遅延ゴミ箱コンテナ
+    std::vector<SharedSampleData*> garbageBin;
 
     juce::AudioBuffer<float> rawInputBuffer;
     juce::AudioBuffer<float> inputBufferThread;

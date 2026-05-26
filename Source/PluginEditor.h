@@ -1,4 +1,5 @@
 #pragma once
+
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -43,19 +44,19 @@ private:
     juce::Slider sliderClickCurve;
     juce::Slider sliderTransPitch;
     juce::Slider sliderTonalPitch;
-    juce::Slider sliderSustainRelease; // ÅyêVê›Åz
+    juce::Slider sliderSustainRelease;
 
     juce::Label lblClickLength;
     juce::Label lblClickCurve;
     juce::Label lblTransPitch;
     juce::Label lblTonalPitch;
-    juce::Label lblSustainRelease;     // ÅyêVê›Åz
+    juce::Label lblSustainRelease;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachClickLength;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachClickCurve;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTransPitch;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTonalPitch;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachSustainRelease; // ÅyêVê›Åz
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachSustainRelease;
 
     TransientBrowserPanel transientBrowserPanel{ audioProcessor, waveTransient };
     TonalBrowserPanel tonalBrowserPanel{ audioProcessor, waveTonal };
