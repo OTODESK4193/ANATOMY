@@ -6,13 +6,18 @@
 #include <memory>
 #include <atomic>
 #include <vector>
-
 #include "DSP/HpssSeparator.h"
 #include "DSP/SharedSampleData.h"
 #include "DSP/VoiceState.h"
 #include "DSP/TransientReplacer.h"
 #include "DSP/TonalReplacer.h"
+#include "DSP/Effects/EffectChain.h"
 
+/**
+ * AnatomyAudioProcessor
+ * エフェクトプロセッシングの「通過パイプ」に徹するコアプロセッサクラス。
+ * リアルタイム安全性を100%死守しつつ、動的マルチエフェクトチェインを包含します。
+ */
 class AnatomyAudioProcessor : public juce::AudioProcessor,
     public juce::Thread,
     public juce::AudioProcessorValueTreeState::Listener
@@ -63,16 +68,28 @@ public:
         tonalDest.makeCopyOf(tonalBufferUI);
     }
 
+    void updateTransientChain(std::vector<std::unique_ptr<AudioEffect>>&& newEffects);
+    void updateTonalChain(std::vector<std::unique_ptr<AudioEffect>>&& newEffects);
+    void updateFullMixChain(std::vector<std::unique_ptr<AudioEffect>>&& newEffects);
+
     juce::AudioProcessorValueTreeState apvts;
 
     TransientReplacer customTransientReplacer;
     TonalReplacer customTonalReplacer;
 
+    EffectChain transientChain;
+    EffectChain tonalChain;
+    EffectChain fullMixChain;
+
 private:
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
-    void generateVoiceSample(VoiceState& voice, float& outL, float& outR,
+
+    void generateVoiceSample(VoiceState& voice,
+        float& outTransL, float& outTransR,
+        float& outTonalL, float& outTonalR,
         float clickHold, float clickCurve,
         float transScale, float tonalScale) noexcept;
+
     void updateActiveSampleData();
     void cleanUpGarbageBin();
 
@@ -92,14 +109,18 @@ private:
     static constexpr int maxReleasingVoices = 4;
     VoiceState releasingVoices[maxReleasingVoices];
 
-    // 核心制約4：連打（再トリガー）時の1.5ms固定ミュートとユーザーリリースの分離用並列管理
     bool activeIsMuting = false;
     float activeMuteGain = 1.0f;
     bool releasingIsMuting[maxReleasingVoices];
     float releasingMuteGain[maxReleasingVoices];
 
-    // 核心制約3：非オーディオスレッド安全回収用の遅延ゴミ箱コンテナ
+    // 非オーディオスレッド安全回収用の遅延ゴミ箱コンテナ
     std::vector<SharedSampleData*> garbageBin;
+    std::vector<EffectChainSnapshot*> fxGarbageBin;
+
+    // ブロック単位のエフェクト適用をリアルタイム安全に行うための事前確保型ローカル分離バッファ
+    juce::AudioBuffer<float> transientBlockBuffer;
+    juce::AudioBuffer<float> tonalBlockBuffer;
 
     juce::AudioBuffer<float> rawInputBuffer;
     juce::AudioBuffer<float> inputBufferThread;

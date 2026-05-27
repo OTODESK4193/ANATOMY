@@ -1,10 +1,11 @@
 #pragma once
+
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include "../PluginProcessor.h"
 #include "WaveformComponent.h"
 
-class TransientBrowserPanel : public juce::Component, public juce::FileBrowserListener
+class TransientBrowserPanel final : public juce::Component, public juce::FileBrowserListener
 {
 public:
     TransientBrowserPanel(AnatomyAudioProcessor& p, WaveformComponent& w)
@@ -58,8 +59,8 @@ public:
         endOffsetSlider.setValue(500.0);
 
         auto onSliderChange = [this] {
-            float sVal = static_cast<float>(startOffsetSlider.getValue());
-            float eVal = static_cast<float>(endOffsetSlider.getValue());
+            float sVal = static_cast<float> (startOffsetSlider.getValue());
+            float eVal = static_cast<float> (endOffsetSlider.getValue());
             processor.customTransientReplacer.setStartOffsetMs(sVal);
             processor.customTransientReplacer.setEndOffsetMs(eVal);
             waveformDisplay.setOffsets(sVal, eVal, processor.customTransientReplacer.getSourceSampleRate());
@@ -80,7 +81,6 @@ public:
 
         area.removeFromTop(2);
 
-        // STARTノブとENDノブを横並びで配置
         auto knobArea = area;
         auto leftKnob = knobArea.removeFromLeft(knobArea.getWidth() / 2);
 
@@ -101,20 +101,19 @@ public:
         std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
         if (reader != nullptr)
         {
-            juce::AudioBuffer<float> buffer(1, static_cast<int>(reader->lengthInSamples));
-            reader->read(&buffer, 0, static_cast<int>(reader->lengthInSamples), 0, true, false);
+            juce::AudioBuffer<float> buffer(1, static_cast<int> (reader->lengthInSamples));
+            reader->read(&buffer, 0, static_cast<int> (reader->lengthInSamples), 0, true, false);
 
             processor.customTransientReplacer.loadSample(buffer, reader->sampleRate);
 
-            // 【自動追従】Wavの長さに合わせてノブの上限値を自動拡張
-            double durationMs = (static_cast<double>(reader->lengthInSamples) / reader->sampleRate) * 1000.0;
+            double durationMs = (static_cast<double> (reader->lengthInSamples) / reader->sampleRate) * 1000.0;
             startOffsetSlider.setRange(0.0, durationMs, 0.1);
             endOffsetSlider.setRange(0.0, durationMs, 0.1);
             startOffsetSlider.setValue(0.0);
             endOffsetSlider.setValue(durationMs);
 
             waveformDisplay.setBuffer(buffer);
-            waveformDisplay.setOffsets(0.0f, static_cast<float>(durationMs), reader->sampleRate);
+            waveformDisplay.setOffsets(0.0f, static_cast<float> (durationMs), reader->sampleRate);
 
             browseButton.setButtonText(file.getFileNameWithoutExtension().substring(0, 7));
         }
@@ -124,7 +123,7 @@ public:
     void browserRootChanged(const juce::File&) override {}
 
 private:
-    class BrowserDialog : public juce::DialogWindow
+    class BrowserDialog final : public juce::DialogWindow
     {
     public:
         BrowserDialog(const juce::String& name, juce::Colour bg, TransientBrowserPanel& panel)

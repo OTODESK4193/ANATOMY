@@ -31,8 +31,20 @@ AnatomyAudioProcessor::~AnatomyAudioProcessor()
     signalThreadShouldExit();
     stopThread(4000);
 
-    // メッセージスレッド側での遅延ゴミ箱の完全解放
-    cleanUpGarbageBin();
+    // 強制全解放（シャットダウン時は安全チェックをスキップして全消去）
+    for (auto* oldData : garbageBin)
+    {
+        if (oldData != nullptr)
+            delete oldData;
+    }
+    garbageBin.clear();
+
+    for (auto* oldFxSnapshot : fxGarbageBin)
+    {
+        if (oldFxSnapshot != nullptr)
+            delete oldFxSnapshot;
+    }
+    fxGarbageBin.clear();
 
     SharedSampleData* oldData = masterSampleData.exchange(nullptr, std::memory_order_acq_rel);
     if (oldData != nullptr)
@@ -54,12 +66,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
     return { params.begin(), params.end() };
 }
 
-void AnatomyAudioProcessor::prepareToPlay(double sampleRate, int /*samplesPerBlock*/)
+void AnatomyAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     currentSampleRate = sampleRate;
     separator.prepare(sampleRate);
 
-    float rampSamples = static_cast<float>(std::max(1.0, 0.0015 * sampleRate));
+    float rampSamples = static_cast<float> (std::max(1.0, 0.0015 * sampleRate));
     releaseFactor = std::exp(std::log(0.001f) / rampSamples);
 
     activeVoice.reallocateShifters(sampleRate);
@@ -67,6 +79,15 @@ void AnatomyAudioProcessor::prepareToPlay(double sampleRate, int /*samplesPerBlo
     {
         releasingVoices[i].reallocateShifters(sampleRate);
     }
+
+    // ホストの動的変更に対応する安全マージン最大確保
+    const int safetyBufferSize = std::max(4096, samplesPerBlock * 2);
+    transientBlockBuffer.setSize(2, safetyBufferSize, false, false, true);
+    tonalBlockBuffer.setSize(2, safetyBufferSize, false, false, true);
+
+    transientChain.prepare(sampleRate, safetyBufferSize);
+    tonalChain.prepare(sampleRate, safetyBufferSize);
+    fullMixChain.prepare(sampleRate, safetyBufferSize);
 }
 
 void AnatomyAudioProcessor::releaseResources() {}
@@ -75,9 +96,20 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 {
     juce::ScopedNoDenormals noDenormals;
     const int numSamples = buffer.getNumSamples();
-    buffer.clear();
+    const int numChannels = buffer.getNumChannels();
 
-    // 核心制約3：ブロックの原点において最新コンテナへの不変(Immutable)参照ポインタを取得
+    if (transientBlockBuffer.getNumSamples() < numSamples ||
+        transientBlockBuffer.getNumChannels() < numChannels ||
+        tonalBlockBuffer.getNumSamples() < numSamples ||
+        tonalBlockBuffer.getNumChannels() < numChannels)
+    {
+        return;
+    }
+
+    transientBlockBuffer.clear();
+    tonalBlockBuffer.clear();
+
+    // 核心制約3：ブロックの原点において最新コンテナへの不変参照ポインタを取得
     SharedSampleData* rawPtr = masterSampleData.load(std::memory_order_acquire);
     const SharedSampleData* currentDataSnapshot = rawPtr;
 
@@ -105,7 +137,6 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
                 releasingVoices[slotToUse].isActive = true;
                 releasingVoices[slotToUse].isReleasing = true;
 
-                // 核心制約4：連打（再トリガー）時は1.5msランプの高速固定ミュート状態へスワップ退避
                 releasingIsMuting[slotToUse] = true;
                 releasingMuteGain[slotToUse] = activeMuteGain;
 
@@ -132,23 +163,18 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
                 activeMuteGain = 1.0f;
 
                 activeVoice.resetProcessing();
-                customTonalReplacer.reset(); // 【接着剤】トリガーの絶対瞬間におけるグラニュラー位相強制アライメント
+                customTonalReplacer.reset();
             }
         }
         else if (msg.isNoteOff())
         {
             if (activeVoice.isActive && activeVoice.currentMidiNote == msg.getNoteNumber())
             {
-                // 通常のNote Off時は、ユーザー設定のリリースタイム(ms)による豊かな減衰を開始
                 activeVoice.isReleasing = true;
             }
         }
     }
 
-    float* outL = buffer.getWritePointer(0);
-    float* outR = buffer.getNumChannels() > 1 ? buffer.getWritePointer(1) : nullptr;
-
-    // 核心制約2：processBlock最先頭でのパラメータ一括アトミックロード（サンプルループ内負荷ゼロ化）
     float clickHold = apvts.getRawParameterValue("clickLength")->load();
     float clickCurve = apvts.getRawParameterValue("clickCurve")->load();
     float transPitchVal = apvts.getRawParameterValue("transPitch")->load();
@@ -158,25 +184,32 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     float transScale = std::pow(2.0f, transPitchVal / 12.0f);
     float tonalScale = std::pow(2.0f, tonalPitchVal / 12.0f);
 
-    float rampSamples = static_cast<float>((relMs / 1000.0f) * currentSampleRate);
+    float rampSamples = static_cast<float> ((relMs / 1000.0f) * currentSampleRate);
     float dynamicReleaseFactor = std::exp(std::log(0.001f) / std::max(1.0f, rampSamples));
 
-    // 核心制約4：1.5ms固定ミュート用の減衰ステップ係数
-    float muteRampSamples = static_cast<float>(0.0015 * currentSampleRate);
+    float muteRampSamples = static_cast<float> (0.0015 * currentSampleRate);
     float muteFactor = std::exp(std::log(0.001f) / std::max(1.0f, muteRampSamples));
+
+    float* transL = transientBlockBuffer.getWritePointer(0);
+    float* transR = numChannels > 1 ? transientBlockBuffer.getWritePointer(1) : nullptr;
+    float* tonalL = tonalBlockBuffer.getWritePointer(0);
+    float* tonalR = numChannels > 1 ? tonalBlockBuffer.getWritePointer(1) : nullptr;
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
-        float mixedL = 0.0f;
-        float mixedR = 0.0f;
+        float mixedTransL = 0.0f, mixedTransR = 0.0f;
+        float mixedTonalL = 0.0f, mixedTonalR = 0.0f;
 
         if (activeVoice.isActive)
         {
-            float vL = 0.0f, vR = 0.0f;
-            generateVoiceSample(activeVoice, vL, vR, clickHold, clickCurve, transScale, tonalScale);
+            float vTransL = 0.0f, vTransR = 0.0f;
+            float vTonalL = 0.0f, vTonalR = 0.0f;
+            generateVoiceSample(activeVoice, vTransL, vTransR, vTonalL, vTonalR, clickHold, clickCurve, transScale, tonalScale);
 
-            mixedL += vL * activeMuteGain;
-            mixedR += vR * activeMuteGain;
+            mixedTransL += vTransL * activeMuteGain;
+            mixedTransR += vTransR * activeMuteGain;
+            mixedTonalL += vTonalL * activeMuteGain;
+            mixedTonalR += vTonalR * activeMuteGain;
 
             if (activeVoice.isReleasing)
             {
@@ -199,11 +232,14 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
         {
             if (releasingVoices[i].isActive)
             {
-                float vL = 0.0f, vR = 0.0f;
-                generateVoiceSample(releasingVoices[i], vL, vR, clickHold, clickCurve, transScale, tonalScale);
+                float vTransL = 0.0f, vTransR = 0.0f;
+                float vTonalL = 0.0f, vTonalR = 0.0f;
+                generateVoiceSample(releasingVoices[i], vTransL, vTransR, vTonalL, vTonalR, clickHold, clickCurve, transScale, tonalScale);
 
-                mixedL += vL * releasingMuteGain[i];
-                mixedR += vR * releasingMuteGain[i];
+                mixedTransL += vTransL * releasingMuteGain[i];
+                mixedTransR += vTransR * releasingMuteGain[i];
+                mixedTonalL += vTonalL * releasingMuteGain[i];
+                mixedTonalR += vTonalR * releasingMuteGain[i];
 
                 if (releasingVoices[i].isReleasing)
                 {
@@ -223,17 +259,38 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
             }
         }
 
-        outL[sample] += mixedL;
-        if (outR != nullptr) outR[sample] += mixedR;
+        transL[sample] = mixedTransL;
+        if (transR != nullptr) transR[sample] = mixedTransR;
+        tonalL[sample] = mixedTonalL;
+        if (tonalR != nullptr) tonalR[sample] = mixedTonalR;
     }
+
+    transientChain.process(transientBlockBuffer);
+    tonalChain.process(tonalBlockBuffer);
+
+    float* outL = buffer.getWritePointer(0);
+    float* outR = numChannels > 1 ? buffer.getWritePointer(1) : nullptr;
+
+    for (int sample = 0; sample < numSamples; ++sample)
+    {
+        outL[sample] = transL[sample] + tonalL[sample];
+        if (outR != nullptr && transR != nullptr && tonalR != nullptr)
+        {
+            outR[sample] = transR[sample] + tonalR[sample];
+        }
+    }
+
+    fullMixChain.process(buffer);
 }
 
-void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice, float& outL, float& outR,
+void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
+    float& outTransL, float& outTransR,
+    float& outTonalL, float& outTonalR,
     float clickHold, float clickCurve,
     float transScale, float tonalScale) noexcept
 {
-    outL = 0.0f;
-    outR = 0.0f;
+    outTransL = 0.0f; outTransR = 0.0f;
+    outTonalL = 0.0f; outTonalR = 0.0f;
 
     if (voice.sampleData == nullptr) return;
 
@@ -245,8 +302,8 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice, float& outL, 
     float shiftedClick = 0.0f;
     float shiftedSustain = 0.0f;
 
-    int cIdx = static_cast<int>(voice.clickReadIndex);
-    int sIdx = static_cast<int>(voice.sustainReadIndex);
+    int cIdx = static_cast<int> (voice.clickReadIndex);
+    int sIdx = static_cast<int> (voice.sustainReadIndex);
 
     // --- TRANSIENT (CLICK) PROCESS ---
     if (customTransientReplacer.isLoaded())
@@ -282,11 +339,13 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice, float& outL, 
         voice.sustainReadIndex += voice.pitchRatio;
     }
 
-    float finalSample = (shiftedClick + shiftedSustain) * voice.triggerVelocity * voice.releaseGain;
-    finalSample *= 0.63f; // ステレオ音量相殺
+    float finalClick = shiftedClick * voice.triggerVelocity * voice.releaseGain * 0.63f;
+    float finalSustain = shiftedSustain * voice.triggerVelocity * voice.releaseGain * 0.63f;
 
-    outL = finalSample;
-    outR = finalSample;
+    outTransL = finalClick;
+    outTransR = finalClick;
+    outTonalL = finalSustain;
+    outTonalR = finalSustain;
 
     bool isCustomActive = customTransientReplacer.isLoaded() || customTonalReplacer.isLoaded();
 
@@ -299,8 +358,8 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice, float& outL, 
     }
     else
     {
-        bool clickFinished = (static_cast<int>(voice.clickReadIndex) >= clickLen);
-        bool sustainFinished = (static_cast<int>(voice.sustainReadIndex) >= sustainLen);
+        bool clickFinished = (static_cast<int> (voice.clickReadIndex) >= clickLen);
+        bool sustainFinished = (static_cast<int> (voice.sustainReadIndex) >= sustainLen);
 
         if (clickFinished && sustainFinished)
         {
@@ -316,7 +375,7 @@ void AnatomyAudioProcessor::parameterChanged(const juce::String&, float)
 
 void AnatomyAudioProcessor::startSeparation(const juce::AudioBuffer<float>& inputAudio, double sourceSampleRate)
 {
-    // 核心制約3：次回のファイルドロップ（新規解析開始）の瞬間に、メッセージスレッド側で過去の不要バッファを安全に回収して全破棄
+    // メッセージスレッド側での定期クリーンアップ
     cleanUpGarbageBin();
 
     if (isThreadRunning())
@@ -336,10 +395,15 @@ void AnatomyAudioProcessor::startSeparation(const juce::AudioBuffer<float>& inpu
 
 void AnatomyAudioProcessor::handleAsyncReanalysis()
 {
-    // HPSSバックグラウンドスレッドが解析完了した合図をメッセージスレッド側で安全に受信
     if (isAnalysisFinished.exchange(false, std::memory_order_acq_rel))
     {
         updateActiveSampleData();
+    }
+
+    // バックグラウンドスレッドが動いておらず、かつゴミ箱のクリーンアップ要求があれば定期処理を実行
+    if (!isThreadRunning())
+    {
+        cleanUpGarbageBin();
     }
 
     if (!needsReanalysis.load(std::memory_order_acquire)) return;
@@ -384,7 +448,6 @@ void AnatomyAudioProcessor::run()
         tonalBufferUI.makeCopyOf(localTonal);
     }
 
-    // 解析完了フラグを立てて、メッセージスレッド側での安全な直列データ交換を予約
     isAnalysisFinished.store(true, std::memory_order_release);
 }
 
@@ -399,9 +462,6 @@ void AnatomyAudioProcessor::setSoloMode(int mode)
 
 void AnatomyAudioProcessor::updateActiveSampleData()
 {
-    // 核心制約3：パラメータ変更・モード切替・再解析時にメッセージスレッド側でゴミ箱の古いバッファを安全に全破棄
-    cleanUpGarbageBin();
-
     const int numSamples = transBufferThread.getNumSamples();
     if (numSamples == 0) return;
 
@@ -426,24 +486,79 @@ void AnatomyAudioProcessor::updateActiveSampleData()
 
     SharedSampleData* newData = new SharedSampleData(std::move(activeClick), std::move(activeSustain), fileSampleRate);
 
-    // ロックフリー生ポインタ交換を実行
+    // アトミックポインタの交換
     SharedSampleData* oldData = masterSampleData.exchange(newData, std::memory_order_acq_rel);
     if (oldData != nullptr)
     {
-        // 瞬時deleteを完全バイパスし、安全なメッセージスレッド遅延回収コンテナへ退避
+        // 💥即deleteを完全バイパスし、ゴミ箱へ退避
         garbageBin.push_back(oldData);
     }
 }
 
+void AnatomyAudioProcessor::updateTransientChain(std::vector<std::unique_ptr<AudioEffect>>&& newEffects)
+{
+    transientChain.updateChain(std::move(newEffects), fxGarbageBin);
+}
+
+void AnatomyAudioProcessor::updateTonalChain(std::vector<std::unique_ptr<AudioEffect>>&& newEffects)
+{
+    tonalChain.updateChain(std::move(newEffects), fxGarbageBin);
+}
+
+void AnatomyAudioProcessor::updateFullMixChain(std::vector<std::unique_ptr<AudioEffect>>&& newEffects)
+{
+    fullMixChain.updateChain(std::move(newEffects), fxGarbageBin);
+}
+
 void AnatomyAudioProcessor::cleanUpGarbageBin()
 {
-    // メッセージスレッド（非オーディオスレッド）側で呼び出し
-    for (auto* oldData : garbageBin)
+    // ==============================================================================
+    // 💥【核心修正】ボイス参照追跡型ガベージコレクション
+    // メッセージスレッド側で実行され、オーディオスレッドの全ボイスの生存状況を直列監視します。
+    // ==============================================================================
+    auto it = garbageBin.begin();
+    while (it != garbageBin.end())
     {
-        if (oldData != nullptr)
-            delete oldData;
+        SharedSampleData* oldData = *it;
+        bool isStillReferencedByVoice = false;
+
+        // 1. 現在発音中のメインボイスのチェック
+        if (activeVoice.isActive && activeVoice.sampleData == oldData)
+        {
+            isStillReferencedByVoice = true;
+        }
+
+        // 2. クロスフェード退避中のリリーススロット全4ボイスのチェック
+        for (int i = 0; i < maxReleasingVoices; ++i)
+        {
+            if (releasingVoices[i].isActive && releasingVoices[i].sampleData == oldData)
+            {
+                isStillReferencedByVoice = true;
+            }
+        }
+
+        // どのボイスからも完全に手が離れている場合のみ安全に物理メモリを解体
+        if (!isStillReferencedByVoice)
+        {
+            if (oldData != nullptr)
+            {
+                delete oldData;
+            }
+            it = garbageBin.erase(it); // コンテナから削除してイテレータを進める
+        }
+        else
+        {
+            ++it; // まだオーディオスレッドで発音中のため、今回は解体をスキップして次回に持ち越し
+        }
     }
-    garbageBin.clear();
+
+    // エフェクト配列のスナップショット回収
+    for (auto* oldFxSnapshot : fxGarbageBin)
+    {
+        if (oldFxSnapshot != nullptr)
+            delete oldFxSnapshot;
+    }
+    fxGarbageBin.clear();
 }
 
 juce::AudioProcessorEditor* AnatomyAudioProcessor::createEditor() { return new AnatomyAudioProcessorEditor(*this); }

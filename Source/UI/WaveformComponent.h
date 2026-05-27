@@ -1,8 +1,15 @@
 #pragma once
+
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <algorithm>
 
-class WaveformComponent : public juce::Component
+/**
+ * WaveformComponent
+ * JUCE 8のDirect2D非同期描画スレッドとの衝突（データレース）を
+ * 内部CriticalSectionによって100%遮断した、鉄壁の波形ビジュアルクラス。
+ */
+class WaveformComponent final : public juce::Component
 {
 public:
     WaveformComponent() = default;
@@ -10,6 +17,9 @@ public:
 
     void paint(juce::Graphics& g) override
     {
+        // 💥JUCE 8 Direct2D描画スレッドからの非同期アクセスを完全にロック保護
+        const juce::ScopedLock sl(renderLock);
+
         g.fillAll(juce::Colours::black.withAlpha(0.3f));
 
         const int numSamples = internalBuffer.getNumSamples();
@@ -38,12 +48,11 @@ public:
         if (sampleRate <= 0.0) return;
 
         // --- START / END 位置の可視化とダブル遮光マスク描画 ---
-        double totalMs = (static_cast<double>(numSamples) / sampleRate) * 1000.0;
+        double totalMs = (static_cast<double> (numSamples) / sampleRate) * 1000.0;
         if (totalMs <= 0.0) return;
 
-        // 画面上のピクセル位置へ換算
-        float startX = (startOffsetMs / static_cast<float>(totalMs)) * w;
-        float endX = (endOffsetMs / static_cast<float>(totalMs)) * w;
+        float startX = (startOffsetMs / static_cast<float> (totalMs)) * w;
+        float endX = (endOffsetMs / static_cast<float> (totalMs)) * w;
 
         startX = juce::jlimit(0.0f, w, startX);
         endX = juce::jlimit(0.0f, w, endX);
@@ -57,21 +66,24 @@ public:
 
         // STARTライン（黄）
         g.setColour(juce::Colours::yellow.withAlpha(0.8f));
-        g.drawVerticalLine(static_cast<int>(startX), 0.0f, h);
+        g.drawVerticalLine(static_cast<int> (startX), 0.0f, h);
 
         // ENDライン（赤）
         g.setColour(juce::Colours::red.withAlpha(0.7f));
-        g.drawVerticalLine(static_cast<int>(endX), 0.0f, h);
+        g.drawVerticalLine(static_cast<int> (endX), 0.0f, h);
     }
 
     void setBuffer(const juce::AudioBuffer<float>& buffer)
     {
+        // 💥メッセージスレッド側（D&Dやタイマー）でのバッファ再確保を完全ロック保護
+        const juce::ScopedLock sl(renderLock);
         internalBuffer.makeCopyOf(buffer);
         repaint();
     }
 
     void setOffsets(float startMs, float endMs, double sr) noexcept
     {
+        const juce::ScopedLock sl(renderLock);
         startOffsetMs = startMs;
         endOffsetMs = endMs;
         sampleRate = sr;
@@ -79,6 +91,7 @@ public:
     }
 
 private:
+    juce::CriticalSection renderLock; // 描画レースコンディションを根絶する専用ミューテックス
     juce::AudioBuffer<float> internalBuffer;
     float startOffsetMs = 0.0f;
     float endOffsetMs = 0.0f;

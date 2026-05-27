@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <cmath>
 
 AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& p)
     : AudioProcessorEditor(&p), audioProcessor(p)
@@ -101,7 +102,6 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
 
 void AnatomyAudioProcessorEditor::timerCallback()
 {
-    // メッセージスレッド側で非同期HPSS解析スレッドの状態監視・完了同期を実行
     audioProcessor.handleAsyncReanalysis();
 
     bool isProcessing = audioProcessor.isCurrentlyProcessing();
@@ -159,7 +159,7 @@ void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
         g.fillRect(0, 155, getWidth(), getHeight() - 155);
 
         float progress = audioProcessor.getHpssProgress();
-        int percent = static_cast<int>(std::round(progress * 100.0f));
+        int percent = static_cast<int> (std::round(progress * 100.0f));
 
         g.setColour(juce::Colours::cyan);
         g.setFont(18.0f);

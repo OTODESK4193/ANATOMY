@@ -8,7 +8,7 @@
 #include "UI/TransientBrowserPanel.h"
 #include "UI/TonalBrowserPanel.h"
 
-class AnatomyAudioProcessorEditor : public juce::AudioProcessorEditor,
+class AnatomyAudioProcessorEditor final : public juce::AudioProcessorEditor,
     public juce::FileDragAndDropTarget,
     public juce::Timer
 {
