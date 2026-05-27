@@ -13,12 +13,7 @@
 #include "DSP/TonalReplacer.h"
 #include "DSP/Effects/EffectChain.h"
 
-/**
- * AnatomyAudioProcessor
- * エフェクトプロセッシングの「通過パイプ」に徹するコアプロセッサクラス。
- * リアルタイム安全性を100%死守しつつ、動的マルチエフェクトチェインを包含します。
- */
-class AnatomyAudioProcessor : public juce::AudioProcessor,
+class AnatomyAudioProcessor final : public juce::AudioProcessor,
     public juce::Thread,
     public juce::AudioProcessorValueTreeState::Listener
 {
@@ -68,9 +63,10 @@ public:
         tonalDest.makeCopyOf(tonalBufferUI);
     }
 
-    void updateTransientChain(std::vector<std::unique_ptr<AudioEffect>>&& newEffects);
-    void updateTonalChain(std::vector<std::unique_ptr<AudioEffect>>&& newEffects);
-    void updateFullMixChain(std::vector<std::unique_ptr<AudioEffect>>&& newEffects);
+    // 💥【修正】生ポインタ参照の安全な配列渡しへの変更
+    void updateTransientChain(const std::vector<AudioEffect*>& newEffects);
+    void updateTonalChain(const std::vector<AudioEffect*>& newEffects);
+    void updateFullMixChain(const std::vector<AudioEffect*>& newEffects);
 
     juce::AudioProcessorValueTreeState apvts;
 
@@ -114,11 +110,9 @@ private:
     bool releasingIsMuting[maxReleasingVoices];
     float releasingMuteGain[maxReleasingVoices];
 
-    // 非オーディオスレッド安全回収用の遅延ゴミ箱コンテナ
     std::vector<SharedSampleData*> garbageBin;
     std::vector<EffectChainSnapshot*> fxGarbageBin;
 
-    // ブロック単位のエフェクト適用をリアルタイム安全に行うための事前確保型ローカル分離バッファ
     juce::AudioBuffer<float> transientBlockBuffer;
     juce::AudioBuffer<float> tonalBlockBuffer;
 

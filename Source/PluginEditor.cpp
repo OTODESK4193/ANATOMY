@@ -7,12 +7,18 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
 {
     formatManager.registerBasicFormats();
 
+    // 子コンポーネントの登録
     addAndMakeVisible(waveDndFile);
     addAndMakeVisible(waveTransient);
     addAndMakeVisible(waveTonal);
     addAndMakeVisible(transientBrowserPanel);
     addAndMakeVisible(tonalBrowserPanel);
 
+    // エフェクトラックをリスナー登録し、可視化
+    effectRackPanel.addChangeListener(this);
+    addAndMakeVisible(effectRackPanel);
+
+    // ラジオグループ化による排他トグル仕様
     btnOriginal.setRadioGroupId(1);
     btnTransient.setRadioGroupId(1);
     btnTonal.setRadioGroupId(1);
@@ -62,18 +68,21 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     configureSlider(sliderTonalPitch, lblTonalPitch, "SUSTAIN PITCH (st)");
     configureSlider(sliderSustainRelease, lblSustainRelease, "SUSTAIN RELEASE (ms)");
 
+    // パラメータアタッチメントの同期
     attachClickLength = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "clickLength", sliderClickLength);
     attachClickCurve = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "clickCurve", sliderClickCurve);
     attachTransPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "transPitch", sliderTransPitch);
     attachTonalPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "tonalPitch", sliderTonalPitch);
     attachSustainRelease = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "sustainRelease", sliderSustainRelease);
 
-    setSize(800, 710);
+    // Slapスタイル横並びラックを統合するため、横幅を 1150px へと拡張
+    setSize(1150, 710);
     startTimer(40);
 }
 
 AnatomyAudioProcessorEditor::~AnatomyAudioProcessorEditor()
 {
+    effectRackPanel.removeChangeListener(this);
     stopTimer();
 }
 
@@ -128,6 +137,14 @@ void AnatomyAudioProcessorEditor::timerCallback()
     }
 }
 
+void AnatomyAudioProcessorEditor::changeListenerCallback(juce::ChangeBroadcaster* source)
+{
+    if (source == &effectRackPanel)
+    {
+        repaint();
+    }
+}
+
 void AnatomyAudioProcessorEditor::updateButtonToggleStates()
 {
     int mode = audioProcessor.getSoloMode();
@@ -138,25 +155,27 @@ void AnatomyAudioProcessorEditor::updateButtonToggleStates()
 
 void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
 {
+    // 💥タイポ修正完了: juce::Colours::black へ厳密アライメント
     g.fillAll(juce::Colours::black);
 
     g.setColour(juce::Colours::white.withAlpha(0.5f));
     g.setFont(12.0f);
 
     auto area = getLocalBounds();
+    area.removeFromRight(350);
     area.removeFromTop(155);
     auto h = area.getHeight() / 3;
 
-    g.drawText("1. Drag & Drop Raw File (Original Source)", 15, 155, getWidth(), 15, juce::Justification::left);
-    g.drawText("2. Extracted Transient Component (Click / Attack)", 15, 155 + h, getWidth(), 15, juce::Justification::left);
-    g.drawText("3. Extracted Sustain Component (Body / Harmonics)", 15, 155 + h * 2, getWidth(), 15, juce::Justification::left);
+    g.drawText("1. Drag & Drop Raw File (Original Source)", 15, 155, area.getWidth(), 15, juce::Justification::left);
+    g.drawText("2. Extracted Transient Component (Click / Attack)", 15, 155 + h, area.getWidth(), 15, juce::Justification::left);
+    g.drawText("3. Extracted Sustain Component (Body / Harmonics)", 15, 155 + h * 2, area.getWidth(), 15, juce::Justification::left);
 
     if (audioProcessor.isCurrentlyProcessing() &&
         !sliderClickLength.isMouseOverOrDragging() &&
         !sliderClickCurve.isMouseOverOrDragging())
     {
         g.setColour(juce::Colours::black.withAlpha(0.4f));
-        g.fillRect(0, 155, getWidth(), getHeight() - 155);
+        g.fillRect(0, 155, area.getWidth(), getHeight() - 155);
 
         float progress = audioProcessor.getHpssProgress();
         int percent = static_cast<int> (std::round(progress * 100.0f));
@@ -164,7 +183,7 @@ void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
         g.setColour(juce::Colours::cyan);
         g.setFont(18.0f);
         g.drawText("Splicing: " + juce::String(percent) + "%",
-            0, 155, getWidth(), getHeight() - 155,
+            0, 155, area.getWidth(), getHeight() - 155,
             juce::Justification::centred, true);
     }
 }
@@ -172,6 +191,9 @@ void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
 void AnatomyAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds();
+
+    auto rackArea = area.removeFromRight(350);
+    effectRackPanel.setBounds(rackArea.reduced(4));
 
     auto buttonArea = area.removeFromTop(35).reduced(5);
     auto btnWidth = buttonArea.getWidth() / 3;
