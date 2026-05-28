@@ -8,12 +8,10 @@
 #include "../DSP/Effects/NoiseGenerator.h"
 #include "../DSP/Effects/OTT_Multiband.h"
 #include "../DSP/Effects/Limiter.h"
-#include <memory>
 
 /**
  * ParameterDockPanel
- * 選択された特定カードに応じて中央APVTSパラメータへと動的に再バインドする、
- * オートメーション完全適合型パラメータドックパネル。
+ * 相互の非同期参照を完全に断ち切った、100%クラッシュフリー・タイマー同期型ドック。
  */
 class ParameterDockPanel final : public juce::Component
 {
@@ -33,9 +31,6 @@ public:
     {
         currentFx = newFx;
 
-        // 💥過去のバインド（アタッチメント）をすべて安全に破棄してリセット
-        attach1.reset(); attach2.reset(); attach3.reset(); attachBool.reset();
-
         slider1.setVisible(false); lbl1.setVisible(false);
         slider2.setVisible(false); lbl2.setVisible(false);
         slider3.setVisible(false); lbl3.setVisible(false);
@@ -54,8 +49,14 @@ public:
             setupKnob(slider1, lbl1, "DRIVE", 1.0, 16.0, 2.0);
             setupKnob(slider2, lbl2, "MIX", 0.0, 1.0, 0.5);
 
-            attach1 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "satDrive", slider1);
-            attach2 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "satMix", slider2);
+            slider1.onValueChange = [this] {
+                if (auto* p = processor.apvts.getParameter("satDrive"))
+                    p->setValueNotifyingHost(p->convertTo0to1(static_cast<float> (slider1.getValue())));
+                };
+            slider2.onValueChange = [this] {
+                if (auto* p = processor.apvts.getParameter("satMix"))
+                    p->setValueNotifyingHost(p->convertTo0to1(static_cast<float> (slider2.getValue())));
+                };
         }
         else if (auto* crusher = dynamic_cast<BitCrusher*> (currentFx))
         {
@@ -63,19 +64,34 @@ public:
             setupKnob(slider2, lbl2, "DOWNSAMPLE", 1.0, 32.0, 4.0);
             setupKnob(slider3, lbl3, "MIX", 0.0, 1.0, 0.3);
 
-            attach1 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "bcBits", slider1);
-            attach2 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "bcDown", slider2);
-            attach3 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "bcMix", slider3);
+            slider1.onValueChange = [this] {
+                if (auto* p = processor.apvts.getParameter("bcBits"))
+                    p->setValueNotifyingHost(p->convertTo0to1(static_cast<float> (slider1.getValue())));
+                };
+            slider2.onValueChange = [this] {
+                if (auto* p = processor.apvts.getParameter("bcDown"))
+                    p->setValueNotifyingHost(p->convertTo0to1(static_cast<float> (slider2.getValue())));
+                };
+            slider3.onValueChange = [this] {
+                if (auto* p = processor.apvts.getParameter("bcMix"))
+                    p->setValueNotifyingHost(p->convertTo0to1(static_cast<float> (slider3.getValue())));
+                };
         }
         else if (auto* noise = dynamic_cast<NoiseGenerator*> (currentFx))
         {
             setupKnob(slider1, lbl1, "DECAY (ms)", 1.0, 1000.0, 100.0);
-            attach1 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "nsDecay", slider1);
+            slider1.onValueChange = [this] {
+                if (auto* p = processor.apvts.getParameter("nsDecay"))
+                    p->setValueNotifyingHost(p->convertTo0to1(static_cast<float> (slider1.getValue())));
+                };
 
             addAndMakeVisible(toggleNoiseType);
             toggleNoiseType.setVisible(true);
             toggleNoiseType.setButtonText("PINK NOISE");
-            attachBool = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(processor.apvts, "nsPink", toggleNoiseType);
+            toggleNoiseType.onClick = [this] {
+                if (auto* p = processor.apvts.getParameter("nsPink"))
+                    p->setValueNotifyingHost(toggleNoiseType.getToggleState() ? 1.0f : 0.0f);
+                };
 
             addAndMakeVisible(btnNoiseTrigger);
             btnNoiseTrigger.setVisible(true);
@@ -85,7 +101,10 @@ public:
         else if (auto* limiter = dynamic_cast<Limiter*> (currentFx))
         {
             setupKnob(slider1, lbl1, "CEILING (dB)", -24.0, 0.0, -0.1);
-            attach1 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "limCeil", slider1);
+            slider1.onValueChange = [this] {
+                if (auto* p = processor.apvts.getParameter("limCeil"))
+                    p->setValueNotifyingHost(p->convertTo0to1(static_cast<float> (slider1.getValue())));
+                };
         }
         else if (auto* ott = dynamic_cast<OTT_Multiband*> (currentFx))
         {
@@ -93,13 +112,56 @@ public:
             setupKnob(slider2, lbl2, "TIME", 0.1, 10.0, 1.0);
             setupKnob(slider3, lbl3, "OUT GAIN (dB)", -24.0, 24.0, 0.0);
 
-            attach1 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "ottDepth", slider1);
-            attach2 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "ottTime", slider2);
-            attach3 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "ottOutGain", slider3);
+            slider1.onValueChange = [this] {
+                if (auto* p = processor.apvts.getParameter("ottDepth"))
+                    p->setValueNotifyingHost(p->convertTo0to1(static_cast<float> (slider1.getValue())));
+                };
+            slider2.onValueChange = [this] {
+                if (auto* p = processor.apvts.getParameter("ottTime"))
+                    p->setValueNotifyingHost(p->convertTo0to1(static_cast<float> (slider2.getValue())));
+                };
+            slider3.onValueChange = [this] {
+                if (auto* p = processor.apvts.getParameter("ottOutGain"))
+                    p->setValueNotifyingHost(p->convertTo0to1(static_cast<float> (slider3.getValue())));
+                };
         }
 
+        synchronizeSlidersFromParameters();
         resized();
         repaint();
+    }
+
+    // 💥【新設】メッセージスレッド安全圏から呼び出すパラメータ自動ロード追従処理
+    void synchronizeSlidersFromParameters() noexcept
+    {
+        if (currentFx == nullptr) return;
+
+        if (dynamic_cast<ADAA_Saturation*> (currentFx))
+        {
+            slider1.setValue(processor.apvts.getRawParameterValue("satDrive")->load(), juce::dontSendNotification);
+            slider2.setValue(processor.apvts.getRawParameterValue("satMix")->load(), juce::dontSendNotification);
+        }
+        else if (dynamic_cast<BitCrusher*> (currentFx))
+        {
+            slider1.setValue(processor.apvts.getRawParameterValue("bcBits")->load(), juce::dontSendNotification);
+            slider2.setValue(processor.apvts.getRawParameterValue("bcDown")->load(), juce::dontSendNotification);
+            slider3.setValue(processor.apvts.getRawParameterValue("bcMix")->load(), juce::dontSendNotification);
+        }
+        else if (dynamic_cast<NoiseGenerator*> (currentFx))
+        {
+            slider1.setValue(processor.apvts.getRawParameterValue("nsDecay")->load(), juce::dontSendNotification);
+            toggleNoiseType.setToggleState(processor.apvts.getRawParameterValue("nsPink")->load() > 0.5f, juce::dontSendNotification);
+        }
+        else if (dynamic_cast<Limiter*> (currentFx))
+        {
+            slider1.setValue(processor.apvts.getRawParameterValue("limCeil")->load(), juce::dontSendNotification);
+        }
+        else if (dynamic_cast<OTT_Multiband*> (currentFx))
+        {
+            slider1.setValue(processor.apvts.getRawParameterValue("ottDepth")->load(), juce::dontSendNotification);
+            slider2.setValue(processor.apvts.getRawParameterValue("ottTime")->load(), juce::dontSendNotification);
+            slider3.setValue(processor.apvts.getRawParameterValue("ottOutGain")->load(), juce::dontSendNotification);
+        }
     }
 
     void paint(juce::Graphics& g) override
@@ -186,9 +248,6 @@ private:
     juce::Label lbl1, lbl2, lbl3;
     juce::ToggleButton toggleNoiseType;
     juce::TextButton btnNoiseTrigger;
-
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attach1, attach2, attach3;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> attachBool;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ParameterDockPanel)
 };

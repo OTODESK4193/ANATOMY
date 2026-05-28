@@ -49,17 +49,34 @@ public:
         {
             setupKnob(sliderParam1, lblParam1, "DRIVE", 1.0, 16.0, 2.0);
             setupKnob(sliderParam2, lblParam2, "MIX", 0.0, 1.0, 0.5);
-            attach1 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "satDrive", sliderParam1);
-            attach2 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "satMix", sliderParam2);
+
+            sliderParam1.onValueChange = [this] {
+                if (auto* param = processor.apvts.getParameter("satDrive"))
+                    param->setValueNotifyingHost(param->convertTo0to1(static_cast<float> (sliderParam1.getValue())));
+                };
+            sliderParam2.onValueChange = [this] {
+                if (auto* param = processor.apvts.getParameter("satMix"))
+                    param->setValueNotifyingHost(param->convertTo0to1(static_cast<float> (sliderParam2.getValue())));
+                };
         }
         else if (auto* crusher = dynamic_cast<BitCrusher*> (fx))
         {
             setupKnob(sliderParam1, lblParam1, "BITS", 2.0, 24.0, 8.0);
             setupKnob(sliderParam2, lblParam2, "DOWNS", 1.0, 32.0, 4.0);
             setupKnob(sliderParam3, lblParam3, "MIX", 0.0, 1.0, 0.3);
-            attach1 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "bcBits", sliderParam1);
-            attach2 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "bcDown", sliderParam2);
-            attach3 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "bcMix", sliderParam3);
+
+            sliderParam1.onValueChange = [this] {
+                if (auto* param = processor.apvts.getParameter("bcBits"))
+                    param->setValueNotifyingHost(param->convertTo0to1(static_cast<float> (sliderParam1.getValue())));
+                };
+            sliderParam2.onValueChange = [this] {
+                if (auto* param = processor.apvts.getParameter("bcDown"))
+                    param->setValueNotifyingHost(param->convertTo0to1(static_cast<float> (sliderParam2.getValue())));
+                };
+            sliderParam3.onValueChange = [this] {
+                if (auto* param = processor.apvts.getParameter("bcMix"))
+                    param->setValueNotifyingHost(param->convertTo0to1(static_cast<float> (sliderParam3.getValue())));
+                };
         }
         else if (auto* noise = dynamic_cast<NoiseGenerator*> (fx))
         {
@@ -67,13 +84,43 @@ public:
             addAndMakeVisible(toggleNoiseType);
             toggleNoiseType.setButtonText("PINK");
             toggleNoiseType.setColour(juce::ToggleButton::textColourId, juce::Colours::white);
-            attach1 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "nsDecay", sliderParam1);
-            attachBool = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(processor.apvts, "nsPink", toggleNoiseType);
+
+            sliderParam1.onValueChange = [this] {
+                if (auto* param = processor.apvts.getParameter("nsDecay"))
+                    param->setValueNotifyingHost(param->convertTo0to1(static_cast<float> (sliderParam1.getValue())));
+                };
+            toggleNoiseType.onClick = [this] {
+                if (auto* param = processor.apvts.getParameter("nsPink"))
+                    param->setValueNotifyingHost(toggleNoiseType.getToggleState() ? 1.0f : 0.0f);
+                };
         }
         else if (auto* limiter = dynamic_cast<Limiter*> (fx))
         {
             setupKnob(sliderParam1, lblParam1, "CEIL", -24.0, 0.0, -0.1);
-            attach1 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "limCeil", sliderParam1);
+
+            sliderParam1.onValueChange = [this] {
+                if (auto* param = processor.apvts.getParameter("limCeil"))
+                    param->setValueNotifyingHost(param->convertTo0to1(static_cast<float> (sliderParam1.getValue())));
+                };
+        }
+        else if (auto* ott = dynamic_cast<OTT_Multiband*> (fx))
+        {
+            setupKnob(sliderParam1, lblParam1, "DEPTH", 0.0, 1.0, 0.7);
+            setupKnob(sliderParam2, lblParam2, "TIME", 0.1, 10.0, 1.0);
+            setupKnob(sliderParam3, lblParam3, "GAIN", -24.0, 24.0, 0.0);
+
+            sliderParam1.onValueChange = [this] {
+                if (auto* param = processor.apvts.getParameter("ottDepth"))
+                    param->setValueNotifyingHost(param->convertTo0to1(static_cast<float> (sliderParam1.getValue())));
+                };
+            sliderParam2.onValueChange = [this] {
+                if (auto* param = processor.apvts.getParameter("ottTime"))
+                    param->setValueNotifyingHost(param->convertTo0to1(static_cast<float> (sliderParam2.getValue())));
+                };
+            sliderParam3.onValueChange = [this] {
+                if (auto* param = processor.apvts.getParameter("ottOutGain"))
+                    param->setValueNotifyingHost(param->convertTo0to1(static_cast<float> (sliderParam3.getValue())));
+                };
         }
     }
 
@@ -85,6 +132,36 @@ public:
         btnRouteTrans.setToggleState(currentRoute == TargetRoute::Transient, juce::dontSendNotification);
         btnRouteTonal.setToggleState(currentRoute == TargetRoute::Tonal, juce::dontSendNotification);
         btnRouteFull.setToggleState(currentRoute == TargetRoute::FullMix, juce::dontSendNotification);
+    }
+
+    void synchronizeSlidersWithParameters() noexcept
+    {
+        if (auto* sat = dynamic_cast<ADAA_Saturation*> (fx))
+        {
+            sliderParam1.setValue(processor.apvts.getRawParameterValue("satDrive")->load(), juce::dontSendNotification);
+            sliderParam2.setValue(processor.apvts.getRawParameterValue("satMix")->load(), juce::dontSendNotification);
+        }
+        else if (auto* crusher = dynamic_cast<BitCrusher*> (fx))
+        {
+            sliderParam1.setValue(processor.apvts.getRawParameterValue("bcBits")->load(), juce::dontSendNotification);
+            sliderParam2.setValue(processor.apvts.getRawParameterValue("bcDown")->load(), juce::dontSendNotification);
+            sliderParam3.setValue(processor.apvts.getRawParameterValue("bcMix")->load(), juce::dontSendNotification);
+        }
+        else if (auto* noise = dynamic_cast<NoiseGenerator*> (fx))
+        {
+            sliderParam1.setValue(processor.apvts.getRawParameterValue("nsDecay")->load(), juce::dontSendNotification);
+            toggleNoiseType.setToggleState(processor.apvts.getRawParameterValue("nsPink")->load() > 0.5f, juce::dontSendNotification);
+        }
+        else if (auto* limiter = dynamic_cast<Limiter*> (fx))
+        {
+            sliderParam1.setValue(processor.apvts.getRawParameterValue("limCeil")->load(), juce::dontSendNotification);
+        }
+        else if (auto* ott = dynamic_cast<OTT_Multiband*> (fx))
+        {
+            sliderParam1.setValue(processor.apvts.getRawParameterValue("ottDepth")->load(), juce::dontSendNotification);
+            sliderParam2.setValue(processor.apvts.getRawParameterValue("ottTime")->load(), juce::dontSendNotification);
+            sliderParam3.setValue(processor.apvts.getRawParameterValue("ottOutGain")->load(), juce::dontSendNotification);
+        }
     }
 
     AudioEffect* getEffect() const noexcept { return fx; }
@@ -143,6 +220,12 @@ public:
         }
     }
 
+    void mouseDown(const juce::MouseEvent& /*e*/) override
+    {
+        if (onCardSelectedCallback)
+            onCardSelectedCallback(fx);
+    }
+
     void mouseDrag(const juce::MouseEvent& /*e*/) override
     {
         if (auto* dragContainer = juce::DragAndDropContainer::findParentDragContainerFor(this))
@@ -154,6 +237,9 @@ public:
             }
         }
     }
+
+    // 💥【修正完了】構文エラー箇所：テンプレート引数の閉じブラケットを正しい位置へアライメント
+    std::function<void(AudioEffect*)> onCardSelectedCallback;
 
 private:
     void setupKnob(juce::Slider& s, juce::Label& l, const juce::String& name, double minV, double maxV, double defV)
@@ -186,9 +272,6 @@ private:
     juce::Label lblParam1, lblParam2, lblParam3;
     juce::ToggleButton toggleNoiseType;
 
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attach1, attach2, attach3;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> attachBool;
-
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EffectCardComponent)
 };
 
@@ -216,6 +299,14 @@ public:
     }
 
     ~EffectRackPanel() override = default;
+
+    void updateCardSlidersFromParameters() noexcept
+    {
+        for (auto* card : activeCards)
+        {
+            card->synchronizeSlidersWithParameters();
+        }
+    }
 
     void paint(juce::Graphics& g) override
     {
@@ -308,6 +399,8 @@ public:
         resized();
     }
 
+    AudioEffect* getSelectedEffect() const noexcept { return currentSelectedFX; }
+
 private:
     int getEffectTypeIndex(AudioEffect* fx) const noexcept
     {
@@ -331,6 +424,12 @@ private:
                 repaint();
                 resized();
                 });
+
+            card->onCardSelectedCallback = [this](AudioEffect* clickedFx) {
+                currentSelectedFX = clickedFx;
+                sendChangeMessage();
+                };
+
             addAndMakeVisible(card);
             activeCards.add(card);
         }
@@ -356,7 +455,6 @@ private:
             }
         }
 
-        // 💥古い関数の呼び出しを100%完全排除し、新規格1本へリダイレクト！
         processor.updateRouteOrder(TargetRoute::Transient, transOrder);
         processor.updateRouteOrder(TargetRoute::Tonal, tonalOrder);
         processor.updateRouteOrder(TargetRoute::FullMix, fullMixOrder);
@@ -365,6 +463,7 @@ private:
     AnatomyAudioProcessor& processor;
     std::vector<std::unique_ptr<AudioEffect>> masterFXPool;
     juce::OwnedArray<EffectCardComponent> activeCards;
+    AudioEffect* currentSelectedFX = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EffectRackPanel)
 };

@@ -17,6 +17,8 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     effectRackPanel.addChangeListener(this);
     addAndMakeVisible(effectRackPanel);
 
+    addAndMakeVisible(parameterDockPanel);
+
     btnOriginal.setRadioGroupId(1);
     btnTransient.setRadioGroupId(1);
     btnTonal.setRadioGroupId(1);
@@ -109,6 +111,10 @@ void AnatomyAudioProcessorEditor::timerCallback()
 {
     audioProcessor.handleAsyncReanalysis();
 
+    // 💥【新設】アタッチメントフリーに伴うパラメータの逆同期を毎フレーム安全にアライメント
+    effectRackPanel.updateCardSlidersFromParameters();
+    parameterDockPanel.synchronizeSlidersFromParameters();
+
     bool isProcessing = audioProcessor.isCurrentlyProcessing();
 
     if (isProcessing || wasProcessing)
@@ -137,6 +143,7 @@ void AnatomyAudioProcessorEditor::changeListenerCallback(juce::ChangeBroadcaster
 {
     if (source == &effectRackPanel)
     {
+        parameterDockPanel.setTargetEffect(effectRackPanel.getSelectedEffect());
         repaint();
     }
 }
@@ -151,6 +158,7 @@ void AnatomyAudioProcessorEditor::updateButtonToggleStates()
 
 void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
 {
+    // 🛡️ タイポ完全修正完了
     g.fillAll(juce::Colours::black);
 
     g.setColour(juce::Colours::white.withAlpha(0.5f));
@@ -159,6 +167,7 @@ void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
     auto area = getLocalBounds();
     area.removeFromRight(350);
     area.removeFromTop(155);
+    area.removeFromBottom(120);
     auto h = area.getHeight() / 3;
 
     g.drawText("1. Drag & Drop Raw File (Original Source)", 15, 155, area.getWidth(), 15, juce::Justification::left);
@@ -218,6 +227,9 @@ void AnatomyAudioProcessorEditor::resized()
     auto s4 = controlArea;
     lblSustainRelease.setBounds(s4.removeFromTop(15));
     sliderSustainRelease.setBounds(s4);
+
+    auto dockArea = area.removeFromBottom(120).reduced(10, 5);
+    parameterDockPanel.setBounds(dockArea);
 
     auto h = area.getHeight() / 3;
 

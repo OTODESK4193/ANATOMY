@@ -8,6 +8,7 @@
 #include "UI/TransientBrowserPanel.h"
 #include "UI/TonalBrowserPanel.h"
 #include "UI/EffectRackPanel.h"
+#include "UI/ParameterDockPanel.h" // 💥追加統合
 
 /**
  * AnatomyAudioProcessorEditor
@@ -17,7 +18,8 @@
 class AnatomyAudioProcessorEditor final : public juce::AudioProcessorEditor,
     public juce::FileDragAndDropTarget,
     public juce::Timer,
-    public juce::ChangeListener
+    public juce::ChangeListener,
+    public juce::DragAndDropContainer // 💥【超重要】内部D&Dを完全開通させるための親コンテナ登録！
 {
 public:
     AnatomyAudioProcessorEditor(AnatomyAudioProcessor&);
@@ -70,6 +72,7 @@ private:
     TonalBrowserPanel tonalBrowserPanel{ audioProcessor, waveTonal };
 
     EffectRackPanel effectRackPanel{ audioProcessor };
+    ParameterDockPanel parameterDockPanel{ audioProcessor }; // 💥【新設】下段パラメータドックの結合
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnatomyAudioProcessorEditor)
 };
