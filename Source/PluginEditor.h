@@ -30,11 +30,6 @@ public:
     void filesDropped(const juce::StringArray& files, int x, int y) override;
 
     void timerCallback() override;
-
-    /**
-     * 💥基本設計方針：ChangeListenerによる非同期通知の処理実体。
-     * ラック側でのD&D並び替えやルート変更イベントを検知し、依存度ゼロでUIをリフレッシュします。
-     */
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
 
 private:
@@ -74,7 +69,6 @@ private:
     TransientBrowserPanel transientBrowserPanel{ audioProcessor, waveTransient };
     TonalBrowserPanel tonalBrowserPanel{ audioProcessor, waveTonal };
 
-    // 💥マルチエフェクトD&DコンテナラックUIの完全カプセル化インスタンス
     EffectRackPanel effectRackPanel{ audioProcessor };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnatomyAudioProcessorEditor)

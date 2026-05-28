@@ -1,24 +1,22 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include <cmath>
+#include <algorithm>
 
 AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& p)
     : AudioProcessorEditor(&p), audioProcessor(p)
 {
     formatManager.registerBasicFormats();
 
-    // 子コンポーネントの登録
     addAndMakeVisible(waveDndFile);
     addAndMakeVisible(waveTransient);
     addAndMakeVisible(waveTonal);
     addAndMakeVisible(transientBrowserPanel);
     addAndMakeVisible(tonalBrowserPanel);
 
-    // エフェクトラックをリスナー登録し、可視化
     effectRackPanel.addChangeListener(this);
     addAndMakeVisible(effectRackPanel);
 
-    // ラジオグループ化による排他トグル仕様
     btnOriginal.setRadioGroupId(1);
     btnTransient.setRadioGroupId(1);
     btnTonal.setRadioGroupId(1);
@@ -68,14 +66,12 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     configureSlider(sliderTonalPitch, lblTonalPitch, "SUSTAIN PITCH (st)");
     configureSlider(sliderSustainRelease, lblSustainRelease, "SUSTAIN RELEASE (ms)");
 
-    // パラメータアタッチメントの同期
     attachClickLength = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "clickLength", sliderClickLength);
     attachClickCurve = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "clickCurve", sliderClickCurve);
     attachTransPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "transPitch", sliderTransPitch);
     attachTonalPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "tonalPitch", sliderTonalPitch);
     attachSustainRelease = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "sustainRelease", sliderSustainRelease);
 
-    // Slapスタイル横並びラックを統合するため、横幅を 1150px へと拡張
     setSize(1150, 710);
     startTimer(40);
 }
@@ -155,7 +151,6 @@ void AnatomyAudioProcessorEditor::updateButtonToggleStates()
 
 void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    // 💥タイポ修正完了: juce::Colours::black へ厳密アライメント
     g.fillAll(juce::Colours::black);
 
     g.setColour(juce::Colours::white.withAlpha(0.5f));

@@ -1,5 +1,4 @@
 #pragma once
-
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_core/juce_core.h>
@@ -11,6 +10,7 @@
 #include "DSP/VoiceState.h"
 #include "DSP/TransientReplacer.h"
 #include "DSP/TonalReplacer.h"
+#include "DSP/Effects/AudioEffect.h"
 #include "DSP/Effects/EffectChain.h"
 
 class AnatomyAudioProcessor final : public juce::AudioProcessor,
@@ -63,10 +63,12 @@ public:
         tonalDest.makeCopyOf(tonalBufferUI);
     }
 
-    // 💥【修正】生ポインタ参照の安全な配列渡しへの変更
-    void updateTransientChain(const std::vector<AudioEffect*>& newEffects);
-    void updateTonalChain(const std::vector<AudioEffect*>& newEffects);
-    void updateFullMixChain(const std::vector<AudioEffect*>& newEffects);
+    /**
+     * 💥【構造案A-2＆カプセル化準拠】
+     * UI側（Rack）から、現在そのレーンに配置されているエフェクトの種類インデックス順（配列）のみを非同期受信するインターフェース。
+     * インデックス定義: 0=Saturation, 1=BitCrusher, 2=NoiseGenerator, 3=OTT_Multiband, 4=Limiter
+     */
+    void updateRouteOrder(TargetRoute route, const std::vector<int>& activeEffectIndices);
 
     juce::AudioProcessorValueTreeState apvts;
 
@@ -88,6 +90,7 @@ private:
 
     void updateActiveSampleData();
     void cleanUpGarbageBin();
+    void synchronizePoolParameters() noexcept;
 
     HpssSeparator separator{ 2048 };
     juce::CriticalSection lock;
@@ -125,6 +128,12 @@ private:
     juce::AudioBuffer<float> tonalBufferUI;
 
     int currentSoloMode = 0;
+
+    // 💥【A案：完全独立マルチインスタンス・プール】
+    // 3レーンに対して全具象エフェクトクラスを独立配置し、内部過去ログ（状態変数）を完全に隔離。
+    std::unique_ptr<AudioEffect> transientPool[5];
+    std::unique_ptr<AudioEffect> tonalPool[5];
+    std::unique_ptr<AudioEffect> fullMixPool[5];
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnatomyAudioProcessor)
 };

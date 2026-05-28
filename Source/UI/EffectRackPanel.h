@@ -16,8 +16,8 @@
 class EffectCardComponent final : public juce::Component
 {
 public:
-    EffectCardComponent(AudioEffect* fxInstance, std::function<void(TargetRoute)> onRouteChangedCallback)
-        : fx(fxInstance), onRouteChanged(onRouteChangedCallback)
+    EffectCardComponent(AnatomyAudioProcessor& p, AudioEffect* fxInstance, std::function<void(TargetRoute)> onRouteChangedCallback)
+        : processor(p), fx(fxInstance), onRouteChanged(onRouteChangedCallback)
     {
         jassert(fx != nullptr);
 
@@ -49,17 +49,17 @@ public:
         {
             setupKnob(sliderParam1, lblParam1, "DRIVE", 1.0, 16.0, 2.0);
             setupKnob(sliderParam2, lblParam2, "MIX", 0.0, 1.0, 0.5);
-            sliderParam1.onValueChange = [sat, this] { sat->setDrive(static_cast<float> (sliderParam1.getValue())); };
-            sliderParam2.onValueChange = [sat, this] { sat->setMix(static_cast<float> (sliderParam2.getValue())); };
+            attach1 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "satDrive", sliderParam1);
+            attach2 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "satMix", sliderParam2);
         }
         else if (auto* crusher = dynamic_cast<BitCrusher*> (fx))
         {
             setupKnob(sliderParam1, lblParam1, "BITS", 2.0, 24.0, 8.0);
             setupKnob(sliderParam2, lblParam2, "DOWNS", 1.0, 32.0, 4.0);
             setupKnob(sliderParam3, lblParam3, "MIX", 0.0, 1.0, 0.3);
-            sliderParam1.onValueChange = [crusher, this] { crusher->setBits(static_cast<float> (sliderParam1.getValue())); };
-            sliderParam2.onValueChange = [crusher, this] { crusher->setDownsample(static_cast<float> (sliderParam2.getValue())); };
-            sliderParam3.onValueChange = [crusher, this] { crusher->setMix(static_cast<float> (sliderParam3.getValue())); };
+            attach1 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "bcBits", sliderParam1);
+            attach2 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "bcDown", sliderParam2);
+            attach3 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "bcMix", sliderParam3);
         }
         else if (auto* noise = dynamic_cast<NoiseGenerator*> (fx))
         {
@@ -67,13 +67,13 @@ public:
             addAndMakeVisible(toggleNoiseType);
             toggleNoiseType.setButtonText("PINK");
             toggleNoiseType.setColour(juce::ToggleButton::textColourId, juce::Colours::white);
-            toggleNoiseType.onClick = [noise, this] { noise->setPink(toggleNoiseType.getToggleState()); };
-            sliderParam1.onValueChange = [noise, this] { noise->setDecay(static_cast<float> (sliderParam1.getValue())); };
+            attach1 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "nsDecay", sliderParam1);
+            attachBool = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(processor.apvts, "nsPink", toggleNoiseType);
         }
         else if (auto* limiter = dynamic_cast<Limiter*> (fx))
         {
             setupKnob(sliderParam1, lblParam1, "CEIL", -24.0, 0.0, -0.1);
-            sliderParam1.onValueChange = [limiter, this] { limiter->setCeiling(static_cast<float> (sliderParam1.getValue())); };
+            attach1 = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "limCeil", sliderParam1);
         }
     }
 
@@ -173,6 +173,7 @@ private:
         addAndMakeVisible(l);
     }
 
+    AnatomyAudioProcessor& processor;
     AudioEffect* fx;
     std::function<void(TargetRoute)> onRouteChanged;
 
@@ -185,6 +186,9 @@ private:
     juce::Label lblParam1, lblParam2, lblParam3;
     juce::ToggleButton toggleNoiseType;
 
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attach1, attach2, attach3;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> attachBool;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EffectCardComponent)
 };
 
@@ -195,7 +199,6 @@ class EffectRackPanel final : public juce::Component,
 public:
     EffectRackPanel(AnatomyAudioProcessor& p) : processor(p)
     {
-        // 💥【超重要修正】実体はここに永久アンカー固定。一生deleteされず生存します
         masterFXPool.push_back(std::make_unique<ADAA_Saturation>());
         masterFXPool.push_back(std::make_unique<BitCrusher>());
         masterFXPool.push_back(std::make_unique<NoiseGenerator>());
@@ -266,7 +269,8 @@ public:
 
     void itemDropped(const DragAndDropTarget::SourceDetails& dragSourceDetails) override
     {
-        juce::int64 ptrVal = dragSourceDetails.description;
+        juce::var ptrDescription = dragSourceDetails.description;
+        juce::int64 ptrVal = ptrDescription;
         auto* droppedCard = reinterpret_cast<EffectCardComponent*> (ptrVal);
         if (droppedCard == nullptr) return;
 
@@ -274,7 +278,7 @@ public:
         auto sectionHeight = getHeight() / 3;
 
         TargetRoute targetRoute = TargetRoute::FullMix;
-        if (dropY < sectionHeight)                 targetRoute = TargetRoute::Transient;
+        if (dropY < sectionHeight)         targetRoute = TargetRoute::Transient;
         else if (dropY < sectionHeight * 2)        targetRoute = TargetRoute::Tonal;
 
         auto* targetFx = droppedCard->getEffect();
@@ -305,12 +309,22 @@ public:
     }
 
 private:
+    int getEffectTypeIndex(AudioEffect* fx) const noexcept
+    {
+        if (dynamic_cast<ADAA_Saturation*> (fx))  return 0;
+        if (dynamic_cast<BitCrusher*> (fx))      return 1;
+        if (dynamic_cast<NoiseGenerator*> (fx))  return 2;
+        if (dynamic_cast<OTT_Multiband*> (fx))   return 3;
+        if (dynamic_cast<Limiter*> (fx))         return 4;
+        return -1;
+    }
+
     void rebuildCardComponents()
     {
         activeCards.clear();
         for (auto& fx : masterFXPool)
         {
-            auto* card = new EffectCardComponent(fx.get(), [this, fxPtr = fx.get()](TargetRoute newRoute) {
+            auto* card = new EffectCardComponent(processor, fx.get(), [this, fxPtr = fx.get()](TargetRoute newRoute) {
                 fxPtr->setTargetRoute(newRoute);
                 pushChainsToProcessor();
                 sendChangeMessage();
@@ -324,28 +338,32 @@ private:
 
     void pushChainsToProcessor()
     {
-        // 💥【超重要修正】実体unique_ptrの破壊的ムーブを永久に廃止！！！
-        // UI側で永久生存しているエフェクトへの「生ポインタの並び順」だけを安全に収集して送信
-        std::vector<AudioEffect*> transChainFX;
-        std::vector<AudioEffect*> tonalChainFX;
-        std::vector<AudioEffect*> fullMixChainFX;
+        std::vector<int> transOrder;
+        std::vector<int> tonalOrder;
+        std::vector<int> fullMixOrder;
 
         for (auto* card : activeCards)
         {
             auto* fx = card->getEffect();
             auto route = fx->getTargetRoute();
-            if (route == TargetRoute::Transient)     transChainFX.push_back(fx);
-            else if (route == TargetRoute::Tonal)    tonalChainFX.push_back(fx);
-            else if (route == TargetRoute::FullMix)  fullMixChainFX.push_back(fx);
+            int typeIdx = getEffectTypeIndex(fx);
+
+            if (typeIdx != -1)
+            {
+                if (route == TargetRoute::Transient)     transOrder.push_back(typeIdx);
+                else if (route == TargetRoute::Tonal)    tonalOrder.push_back(typeIdx);
+                else if (route == TargetRoute::FullMix)  fullMixOrder.push_back(typeIdx);
+            }
         }
 
-        processor.updateTransientChain(transChainFX);
-        processor.updateTonalChain(tonalChainFX);
-        processor.updateFullMixChain(fullMixChainFX);
+        // 💥古い関数の呼び出しを100%完全排除し、新規格1本へリダイレクト！
+        processor.updateRouteOrder(TargetRoute::Transient, transOrder);
+        processor.updateRouteOrder(TargetRoute::Tonal, tonalOrder);
+        processor.updateRouteOrder(TargetRoute::FullMix, fullMixOrder);
     }
 
     AnatomyAudioProcessor& processor;
-    std::vector<std::unique_ptr<AudioEffect>> masterFXPool; // 所有権を永久固定ホールドするマスタープール
+    std::vector<std::unique_ptr<AudioEffect>> masterFXPool;
     juce::OwnedArray<EffectCardComponent> activeCards;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EffectRackPanel)

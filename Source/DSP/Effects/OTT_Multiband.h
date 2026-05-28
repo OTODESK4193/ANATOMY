@@ -1,5 +1,4 @@
 #pragma once
-
 #include "AudioEffect.h"
 #include <juce_dsp/juce_dsp.h>
 #include <algorithm>
@@ -8,14 +7,13 @@
 /**
  * OTT_Multiband
  * ZDFクロスオーバーを用いた完全ゼロレイテンシー・3バンド・コンプレッサー。
- * オーディオスレッドでの動的メモリ確保を100%排除した事前展開バッファ構造。
+ * タイム・マルチプライヤー数理、およびアウトプット・ゲイン回路を完全内包。
  */
 class OTT_Multiband final : public AudioEffect
 {
 public:
     OTT_Multiband()
     {
-        // 帯域分割用ZDF（トポロジー保存）フィルターのタイプ設定
         filterLow.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
         filterHigh.setType(juce::dsp::StateVariableTPTFilterType::highpass);
     }
@@ -34,21 +32,18 @@ public:
         filterLow.prepare(spec);
         filterHigh.prepare(spec);
 
-        // クロスオーバー遮断周波数の初期設定
         filterLow.setCutoffFrequency(200.0f);
         filterHigh.setCutoffFrequency(2500.0f);
 
-        // 各帯域コンプレッサーの初期設定
         for (int i = 0; i < 3; ++i)
         {
             comps[i].prepare(spec);
             comps[i].setThreshold(-12.0f);
             comps[i].setRatio(4.0f);
-            comps[i].setAttack(10.0f);
-            comps[i].setRelease(100.0f);
         }
 
-        // 💥リアルタイム安全性を死守するため、一時分離バッファを事前最大サイズで確保
+        updateCrossoverAndDynamics();
+
         lowBuffer.setSize(2, maxBlockSize, false, false, true);
         midBuffer.setSize(2, maxBlockSize, false, false, true);
         highBuffer.setSize(2, maxBlockSize, false, false, true);
@@ -68,7 +63,6 @@ public:
 
         if (lowBuffer.getNumSamples() < numSamples) return;
 
-        // 各一時バッファへ入力を高速コピー
         lowBuffer.copyFrom(0, 0, buffer, 0, 0, numSamples);
         if (numChannels > 1) lowBuffer.copyFrom(1, 0, buffer, 1, 0, numSamples);
 
@@ -78,7 +72,6 @@ public:
         highBuffer.copyFrom(0, 0, buffer, 0, 0, numSamples);
         if (numChannels > 1) highBuffer.copyFrom(1, 0, buffer, 1, 0, numSamples);
 
-        // 💥【修正解決】AudioBlockとProcessContextReplacingを正しく段付け構築
         juce::dsp::AudioBlock<float> lowBlock(lowBuffer);
         juce::dsp::ProcessContextReplacing<float> lowContext(lowBlock);
         filterLow.process(lowContext);
@@ -87,7 +80,6 @@ public:
         juce::dsp::ProcessContextReplacing<float> highContext(highBlock);
         filterHigh.process(highContext);
 
-        // Mid = FullMix原音 - Low成分 - High成分 による完全再構築（Perfect Reconstruction）
         for (int ch = 0; ch < numChannels; ++ch)
         {
             const float* src = buffer.getReadPointer(ch);
@@ -101,7 +93,6 @@ public:
             }
         }
 
-        // 3帯域個別のダイナミクス・コンプレッション実行
         juce::dsp::ProcessContextReplacing<float> ctxLow(lowBlock);
         comps[0].process(ctxLow);
 
@@ -112,8 +103,9 @@ public:
         juce::dsp::ProcessContextReplacing<float> ctxHigh(highBlock);
         comps[2].process(ctxHigh);
 
-        // 帯域の再結合と深度ミックス（Depthブレンド）
         const float depth = depthParam;
+        const float outGainLinear = std::pow(10.0f, outGainDbParam / 20.0f);
+
         for (int ch = 0; ch < numChannels; ++ch)
         {
             float* dest = buffer.getWritePointer(ch);
@@ -123,7 +115,7 @@ public:
 
             for (int s = 0; s < numSamples; ++s)
             {
-                float wet = low[s] + mid[s] + high[s];
+                float wet = (low[s] + mid[s] + high[s]) * outGainLinear;
                 dest[s] = (dest[s] * (1.0f - depth)) + (wet * depth);
             }
         }
@@ -134,8 +126,29 @@ public:
     void setTargetRoute(TargetRoute r) noexcept override { route = r; }
 
     void setDepth(float d) noexcept { depthParam = juce::jlimit(0.0f, 1.0f, d); }
+    void setTimeMultiplier(float t) noexcept
+    {
+        float newT = juce::jlimit(0.1f, 10.0f, t);
+        if (std::abs(timeMultiplierParam - newT) > 1.0e-4f)
+        {
+            timeMultiplierParam = newT;
+            updateCrossoverAndDynamics();
+        }
+    }
+    void setOutGainDb(float gainDb) noexcept { outGainDbParam = juce::jlimit(-24.0f, 24.0f, gainDb); }
 
 private:
+    void updateCrossoverAndDynamics() noexcept
+    {
+        float att = 10.0f * timeMultiplierParam;
+        float rel = 100.0f * timeMultiplierParam;
+        for (auto& c : comps)
+        {
+            c.setAttack(att);
+            c.setRelease(rel);
+        }
+    }
+
     double currentSampleRate = 44100.0;
     juce::dsp::StateVariableTPTFilter<float> filterLow;
     juce::dsp::StateVariableTPTFilter<float> filterHigh;
@@ -146,6 +159,8 @@ private:
     juce::AudioBuffer<float> highBuffer;
 
     float depthParam = 0.7f;
+    float timeMultiplierParam = 1.0f;
+    float outGainDbParam = 0.0f;
     TargetRoute route = TargetRoute::FullMix;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OTT_Multiband)

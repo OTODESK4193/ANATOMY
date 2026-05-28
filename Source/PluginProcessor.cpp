@@ -1,5 +1,10 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "DSP/Effects/ADAA_Saturation.h"
+#include "DSP/Effects/BitCrusher.h"
+#include "DSP/Effects/NoiseGenerator.h"
+#include "DSP/Effects/OTT_Multiband.h"
+#include "DSP/Effects/Limiter.h"
 #include <cmath>
 #include <algorithm>
 
@@ -19,6 +24,20 @@ AnatomyAudioProcessor::AnatomyAudioProcessor()
         releasingMuteGain[i] = 1.0f;
     }
 
+    // 💥【A案：プールアロケーション】15個の完全独立インスタンスをメモリ上に永久固定生成
+    auto instantiatePool = [](std::unique_ptr<AudioEffect>* pool) {
+        pool[0] = std::make_unique<ADAA_Saturation>();
+        pool[1] = std::make_unique<BitCrusher>();
+        pool[2] = std::make_unique<NoiseGenerator>();
+        pool[3] = std::make_unique<OTT_Multiband>();
+        pool[4] = std::make_unique<Limiter>();
+        };
+
+    instantiatePool(transientPool);
+    instantiatePool(tonalPool);
+    instantiatePool(fullMixPool);
+
+    // パラメータリスナーのバインド
     apvts.addParameterListener("clickLength", this);
     apvts.addParameterListener("clickCurve", this);
 }
@@ -56,11 +75,29 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
+    // コア分離パラメータ
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("clickLength", 1), "Click Hold (ms)", 0.0f, 50.0f, 2.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("clickCurve", 1), "Sustain Fade-In (ms)", 1.0f, 100.0f, 15.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("transPitch", 1), "Transient Pitch (st)", -12.0f, 12.0f, 0.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("tonalPitch", 1), "Sustain Pitch (st)", -12.0f, 12.0f, 0.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("sustainRelease", 1), "Sustain Release (ms)", 10.0f, 5000.0f, 500.0f));
+
+    // 💥【構造案A-2：共有型可変エフェクトパラメータ群の静的完全展開】
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("satDrive", 1), "Saturation Drive", 1.0f, 16.0f, 2.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("satMix", 1), "Saturation Mix", 0.0f, 1.0f, 0.5f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("bcBits", 1), "Bitcrusher Bits", 2.0f, 24.0f, 8.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("bcDown", 1), "Bitcrusher Downsample", 1.0f, 32.0f, 4.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("bcMix", 1), "Bitcrusher Mix", 0.0f, 1.0f, 0.3f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("nsDecay", 1), "Noise Decay (ms)", 1.0f, 1000.0f, 100.0f));
+    params.push_back(std::make_unique<juce::AudioParameterBool>(juce::ParameterID("nsPink", 1), "Noise Type Pink", false));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("ottDepth", 1), "OTT Depth", 0.0f, 1.0f, 0.7f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("ottTime", 1), "OTT Time Multiplier", 0.1f, 10.0f, 1.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("ottOutGain", 1), "OTT OutGain (dB)", -24.0f, 24.0f, 0.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("limCeil", 1), "Limiter Ceiling (dB)", -24.0f, 0.0f, -0.1f));
 
     return { params.begin(), params.end() };
 }
@@ -83,12 +120,69 @@ void AnatomyAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     transientBlockBuffer.setSize(2, safetyBufferSize, false, false, true);
     tonalBlockBuffer.setSize(2, safetyBufferSize, false, false, true);
 
+    // 💥プール内の15個すべてのインスタンスを一斉事前準備（ゼロアロケーション）
+    for (int i = 0; i < 5; ++i)
+    {
+        transientPool[i]->prepare(sampleRate, safetyBufferSize);
+        tonalPool[i]->prepare(sampleRate, safetyBufferSize);
+        fullMixPool[i]->prepare(sampleRate, safetyBufferSize);
+    }
+
     transientChain.prepare(sampleRate, safetyBufferSize);
     tonalChain.prepare(sampleRate, safetyBufferSize);
     fullMixChain.prepare(sampleRate, safetyBufferSize);
 }
 
 void AnatomyAudioProcessor::releaseResources() {}
+
+void AnatomyAudioProcessor::synchronizePoolParameters() noexcept
+{
+    // APVTSから最新のノブ設定値を高速ロード
+    const float satDrive = apvts.getRawParameterValue("satDrive")->load();
+    const float satMix = apvts.getRawParameterValue("satMix")->load();
+    const float bcBits = apvts.getRawParameterValue("bcBits")->load();
+    const float bcDown = apvts.getRawParameterValue("bcDown")->load();
+    const float bcMix = apvts.getRawParameterValue("bcMix")->load();
+    const float nsDecay = apvts.getRawParameterValue("nsDecay")->load();
+    const bool nsPink = apvts.getRawParameterValue("nsPink")->load() > 0.5f;
+    const float ottDepth = apvts.getRawParameterValue("ottDepth")->load();
+    const float ottTime = apvts.getRawParameterValue("ottTime")->load();
+    const float ottOutGain = apvts.getRawParameterValue("ottOutGain")->load();
+    const float limCeil = apvts.getRawParameterValue("limCeil")->load();
+
+    // 💥【構造案A-2の真髄】1つのパラメータ設定を3ルートすべての隔離インスタンスへ一斉追従同期
+    auto syncInstance = [&](AudioEffect* fx) noexcept {
+        if (fx == nullptr) return;
+        if (auto* sat = dynamic_cast<ADAA_Saturation*> (fx)) {
+            sat->setDrive(satDrive);
+            sat->setMix(satMix);
+        }
+        else if (auto* bc = dynamic_cast<BitCrusher*> (fx)) {
+            bc->setBits(bcBits);
+            bc->setDownsample(bcDown);
+            bc->setMix(bcMix);
+        }
+        else if (auto* ns = dynamic_cast<NoiseGenerator*> (fx)) {
+            ns->setDecay(nsDecay);
+            ns->setPink(nsPink);
+        }
+        else if (auto* ott = dynamic_cast<OTT_Multiband*> (fx)) {
+            ott->setDepth(ottDepth);
+            ott->setTimeMultiplier(ottTime);
+            ott->setOutGainDb(ottOutGain);
+        }
+        else if (auto* lim = dynamic_cast<Limiter*> (fx)) {
+            lim->setCeiling(limCeil);
+        }
+        };
+
+    for (int i = 0; i < 5; ++i)
+    {
+        syncInstance(transientPool[i].get());
+        syncInstance(tonalPool[i].get());
+        syncInstance(fullMixPool[i].get());
+    }
+}
 
 void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
@@ -103,6 +197,15 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     {
         return;
     }
+
+    // 💥【安全レート自己防衛】音声再生中の突発的なサンプルレート変動にブロッキングなしでインライン対応
+    if (std::abs(getSampleRate() - currentSampleRate) > 0.001 && getSampleRate() > 0.0)
+    {
+        prepareToPlay(getSampleRate(), getBlockSize());
+    }
+
+    // 💥【構造案A-2】ブロック原点にて共有パラメータを全プールインスタンスへ瞬時に射影
+    synchronizePoolParameters();
 
     transientBlockBuffer.clear();
     tonalBlockBuffer.clear();
@@ -363,6 +466,27 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     }
 }
 
+void AnatomyAudioProcessor::updateRouteOrder(TargetRoute route, const std::vector<int>& activeEffectIndices)
+{
+    // UI側から送られてきたインデックス順序に基づき、該当ルートプール個体の生ポインタ配列を安全にアセンブル
+    std::vector<AudioEffect*> sortedFX;
+    sortedFX.reserve(activeEffectIndices.size());
+
+    for (const int idx : activeEffectIndices)
+    {
+        if (idx < 0 || idx >= 5) continue;
+
+        if (route == TargetRoute::Transient)     sortedFX.push_back(transientPool[idx].get());
+        else if (route == TargetRoute::Tonal)    sortedFX.push_back(tonalPool[idx].get());
+        else if (route == TargetRoute::FullMix)  sortedFX.push_back(fullMixPool[idx].get());
+    }
+
+    // ロックフリー・アトミックSnapshot交換システムへ完全リダイレクト
+    if (route == TargetRoute::Transient)     transientChain.updateChain(sortedFX, fxGarbageBin);
+    else if (route == TargetRoute::Tonal)    tonalChain.updateChain(sortedFX, fxGarbageBin);
+    else if (route == TargetRoute::FullMix)  fullMixChain.updateChain(sortedFX, fxGarbageBin);
+}
+
 void AnatomyAudioProcessor::parameterChanged(const juce::String&, float)
 {
     needsReanalysis.store(true, std::memory_order_release);
@@ -484,22 +608,6 @@ void AnatomyAudioProcessor::updateActiveSampleData()
     {
         garbageBin.push_back(oldData);
     }
-}
-
-// 💥【修正】生ポインタ配列のスナップショット適用への完全リダイレクト
-void AnatomyAudioProcessor::updateTransientChain(const std::vector<AudioEffect*>& newEffects)
-{
-    transientChain.updateChain(newEffects, fxGarbageBin);
-}
-
-void AnatomyAudioProcessor::updateTonalChain(const std::vector<AudioEffect*>& newEffects)
-{
-    tonalChain.updateChain(newEffects, fxGarbageBin);
-}
-
-void AnatomyAudioProcessor::updateFullMixChain(const std::vector<AudioEffect*>& newEffects)
-{
-    fullMixChain.updateChain(newEffects, fxGarbageBin);
 }
 
 void AnatomyAudioProcessor::cleanUpGarbageBin()
