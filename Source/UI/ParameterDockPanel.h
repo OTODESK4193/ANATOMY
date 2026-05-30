@@ -9,11 +9,13 @@
 #include "../DSP/Effects/NoiseGenerator.h"
 #include "../DSP/Effects/OTT_Multiband.h"
 #include "../DSP/Effects/Limiter.h"
+#include <vector>
+#include <memory>
 
 /**
  * ParameterDockPanel
- * 💥【15面展開独立IDに完全追従】クリックされたカードの所属レーン（Route）を自動判別し、
- * APVTS内の該当プレフィックスIDへノブを瞬時に動的再バインドする高精度パラメータドック。
+ * 15面展開独立パラメータに100%完全追従し、
+ * ノイズタイプ選択用の4連無線点灯式トグルボタン（Radio Group）を完全内包したドック。
  */
 class ParameterDockPanel final : public juce::Component
 {
@@ -25,6 +27,30 @@ public:
         lblInfo.setJustificationType(juce::Justification::centred);
         lblInfo.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.4f));
         addAndMakeVisible(lblInfo);
+
+        // 💥4つのスタイリッシュ点灯ボタンの生成とラジオグループ化（ID: 100）
+        juce::StringArray typeNames{ "WHITE", "PINK", "BROWN", "BLUE" };
+        for (int i = 0; i < 4; ++i)
+        {
+            auto btn = std::make_unique<juce::TextButton>(typeNames[i]);
+            btn->setClickingTogglesState(true);
+            btn->setRadioGroupId(100); // 💥同じIDをセットすることで、1つしか点灯しない相互排他仕様になる
+            btn->setColour(juce::TextButton::buttonOnColourId, juce::Colours::cyan);
+            btn->setColour(juce::TextButton::textColourOnId, juce::Colours::black);
+            btn->setColour(juce::TextButton::buttonColourId, juce::Colours::darkgrey.darker());
+            btn->setColour(juce::TextButton::textColourOffId, juce::Colours::white.withAlpha(0.5f));
+
+            btn->onClick = [this, i] {
+                if (currentFx != nullptr)
+                {
+                    if (auto* p = processor.apvts.getParameter(getResolvedID("NsType")))
+                        p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(i)));
+                }
+                };
+
+            addAndMakeVisible(*btn);
+            noiseTypeButtons.push_back(std::move(btn));
+        }
     }
 
     ~ParameterDockPanel() override = default;
@@ -38,8 +64,8 @@ public:
         slider3.setVisible(false); lbl3.setVisible(false);
         slider4.setVisible(false); lbl4.setVisible(false);
         sliderMix.setVisible(false); lblMix.setVisible(false);
-        toggleNoiseType.setVisible(false);
         lblInfo.setVisible(false);
+        for (auto& btn : noiseTypeButtons) btn->setVisible(false);
 
         if (currentFx == nullptr || !currentFx->isActive())
         {
@@ -48,7 +74,6 @@ public:
             return;
         }
 
-        // 💥所属レーンに応じた独立APVTSパラメータIDを動的に解決
         setupKnob(sliderMix, lblMix, "DRY / WET", 0.0, 1.0, static_cast<double>(currentFx->getMix()));
         sliderMix.onValueChange = [this] {
             if (auto* p = processor.apvts.getParameter(getResolvedID("Mix")))
@@ -99,7 +124,7 @@ public:
         else if (auto* noise = dynamic_cast<NoiseGenerator*>(currentFx))
         {
             setupKnob(slider1, lbl1, "ENV DECAY (ms)", 1.0, 1000.0, 100.0);
-            setupKnob(slider2, lbl2, "GAIN (dB)", -60.0, 0.0, 0.0); // 💥Noise専用独立音量ノブの完全敷設
+            setupKnob(slider2, lbl2, "GAIN (dB)", -60.0, 0.0, 0.0);
 
             slider1.onValueChange = [this] {
                 if (auto* p = processor.apvts.getParameter(getResolvedID("NsDecay")))
@@ -110,13 +135,7 @@ public:
                     p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(slider2.getValue())));
                 };
 
-            addAndMakeVisible(toggleNoiseType);
-            toggleNoiseType.setVisible(true);
-            toggleNoiseType.setButtonText("PINK NOISE");
-            toggleNoiseType.onClick = [this] {
-                if (auto* p = processor.apvts.getParameter(getResolvedID("NsPink")))
-                    p->setValueNotifyingHost(toggleNoiseType.getToggleState() ? 1.0f : 0.0f);
-                };
+            for (auto& btn : noiseTypeButtons) btn->setVisible(true);
 
             sliderMix.onValueChange = [this] {
                 if (auto* p = processor.apvts.getParameter(getResolvedID("NsMix")))
@@ -186,7 +205,13 @@ public:
             slider1.setValue(processor.apvts.getRawParameterValue(getResolvedID("NsDecay"))->load(), juce::dontSendNotification);
             sliderMix.setValue(processor.apvts.getRawParameterValue(getResolvedID("NsMix"))->load(), juce::dontSendNotification);
             slider2.setValue(processor.apvts.getRawParameterValue(getResolvedID("NsGain"))->load(), juce::dontSendNotification);
-            toggleNoiseType.setToggleState(processor.apvts.getRawParameterValue(getResolvedID("NsPink"))->load() > 0.5f, juce::dontSendNotification);
+
+            // 💥 内部の値（0〜3）を逆同期させて正しいボタンを点灯状態にする
+            int typeIdx = static_cast<int>(processor.apvts.getRawParameterValue(getResolvedID("NsType"))->load());
+            for (int i = 0; i < 4; ++i)
+            {
+                noiseTypeButtons[i]->setToggleState(i == typeIdx, juce::dontSendNotification);
+            }
         }
         else if (dynamic_cast<Limiter*>(currentFx))
         {
@@ -246,23 +271,33 @@ public:
             lbl2.setBounds(s.removeFromTop(15));
             slider2.setBounds(s);
         }
-        if (slider3.isVisible())
-        {
-            auto s = area.removeFromLeft(kw);
-            lbl3.setBounds(s.removeFromTop(15));
-            slider3.setBounds(s);
-        }
-        if (slider4.isVisible())
-        {
-            auto s = area.removeFromLeft(kw);
-            lbl4.setBounds(s.removeFromTop(15));
-            slider4.setBounds(s);
-        }
 
-        if (toggleNoiseType.isVisible())
+        // 💥 Noiseが有効な場合、空いたスペースに4連ラジオトグルボタンを2x2でタイトマウント
+        if (noiseTypeButtons[0]->isVisible())
         {
-            auto s = area.removeFromLeft(kw).reduced(5, 12);
-            toggleNoiseType.setBounds(s);
+            auto btnArea = area.removeFromLeft(kw * 2).reduced(5, 5);
+            auto hw = btnArea.getWidth() / 2;
+            auto hh = btnArea.getHeight() / 2;
+
+            noiseTypeButtons[0]->setBounds(btnArea.getX(), btnArea.getY(), hw - 2, hh - 2);
+            noiseTypeButtons[1]->setBounds(btnArea.getX() + hw, btnArea.getY(), hw - 2, hh - 2);
+            noiseTypeButtons[2]->setBounds(btnArea.getX(), btnArea.getY() + hh, hw - 2, hh - 2);
+            noiseTypeButtons[3]->setBounds(btnArea.getX() + hw, btnArea.getY() + hh, hw - 2, hh - 2);
+        }
+        else
+        {
+            if (slider3.isVisible())
+            {
+                auto s = area.removeFromLeft(kw);
+                lbl3.setBounds(s.removeFromTop(15));
+                slider3.setBounds(s);
+            }
+            if (slider4.isVisible())
+            {
+                auto s = area.removeFromLeft(kw);
+                lbl4.setBounds(s.removeFromTop(15));
+                slider4.setBounds(s);
+            }
         }
     }
 
@@ -301,7 +336,8 @@ private:
     juce::Label lblInfo;
     juce::Slider slider1, slider2, slider3, slider4, sliderMix;
     juce::Label lbl1, lbl2, lbl3, lbl4, lblMix;
-    juce::ToggleButton toggleNoiseType;
+
+    std::vector<std::unique_ptr<juce::TextButton>> noiseTypeButtons;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ParameterDockPanel)
 };

@@ -24,18 +24,22 @@ AnatomyAudioProcessor::AnatomyAudioProcessor()
         releasingMuteGain[i] = 1.0f;
     }
 
-    // 15個の完全独立インスタンスをメモリ上に永久固定生成（構造案A）
-    auto instantiatePool = [](std::unique_ptr<AudioEffect>* pool) {
+    // 💥【バグ根本修正】生成時に「レーンの名札（Route）」を各インスタンスへ鉄壁に叩き込むラムダ式
+    auto instantiatePool = [](std::unique_ptr<AudioEffect>* pool, TargetRoute route) {
         pool[0] = std::make_unique<ADAA_Saturation>();
         pool[1] = std::make_unique<BitCrusher>();
         pool[2] = std::make_unique<NoiseGenerator>();
         pool[3] = std::make_unique<OTT_Multiband>();
         pool[4] = std::make_unique<Limiter>();
+        for (int i = 0; i < 5; ++i)
+        {
+            pool[i]->setTargetRoute(route);
+        }
         };
 
-    instantiatePool(transientPool);
-    instantiatePool(tonalPool);
-    instantiatePool(fullMixPool);
+    instantiatePool(transientPool, TargetRoute::Transient);
+    instantiatePool(tonalPool, TargetRoute::Tonal);
+    instantiatePool(fullMixPool, TargetRoute::FullMix);
 
     apvts.addParameterListener("clickLength", this);
     apvts.addParameterListener("clickCurve", this);
@@ -83,7 +87,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalPitch", 1 }, "Sustain Pitch (st)", -12.0f, 12.0f, 0.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "sustainRelease", 1 }, "Sustain Release (ms)", 10.0f, 5000.0f, 500.0f));
 
-    // 波形ディスプレイ右側に配置されるコンポーネント個別最終ゲイン
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transMixGain", 1 }, "Transient Mix Gain (dB)", -60.0f, 6.0f, 0.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalMixGain", 1 }, "Tonal Mix Gain (dB)", -60.0f, 6.0f, 0.0f));
 
@@ -103,7 +106,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transNsDecay", 1 }, "Trans Noise Decay (ms)", 1.0f, 1000.0f, 100.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transNsMix", 1 }, "Trans Noise Mix", 0.0f, 1.0f, 0.3f));
-    params.push_back(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{ "transNsPink", 1 }, "Trans Noise Type Pink", false));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transNsType", 1 }, "Trans Noise Type", 0.0f, 3.0f, 0.0f)); // 💥4種対応
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transNsGain", 1 }, "Trans Noise Gain (dB)", -60.0f, 0.0f, 0.0f));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transOttDepth", 1 }, "Trans OTT Depth", 0.0f, 1.0f, 0.7f));
@@ -126,7 +129,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalNsDecay", 1 }, "Tonal Noise Decay (ms)", 1.0f, 1000.0f, 100.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalNsMix", 1 }, "Tonal Noise Mix", 0.0f, 1.0f, 0.3f));
-    params.push_back(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{ "tonalNsPink", 1 }, "Tonal Noise Type Pink", false));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalNsType", 1 }, "Tonal Noise Type", 0.0f, 3.0f, 0.0f)); // 💥4種対応
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalNsGain", 1 }, "Tonal Noise Gain (dB)", -60.0f, 0.0f, 0.0f));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalOttDepth", 1 }, "Tonal OTT Depth", 0.0f, 1.0f, 0.7f));
@@ -149,7 +152,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullNsDecay", 1 }, "Full Noise Decay (ms)", 1.0f, 1000.0f, 100.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullNsMix", 1 }, "Full Noise Mix", 0.0f, 1.0f, 0.3f));
-    params.push_back(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{ "fullNsPink", 1 }, "Full Noise Type Pink", false));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullNsType", 1 }, "Full Noise Type", 0.0f, 3.0f, 0.0f)); // 💥4種対応
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullNsGain", 1 }, "Full Noise Gain (dB)", -60.0f, 0.0f, 0.0f));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullOttDepth", 1 }, "Full OTT Depth", 0.0f, 1.0f, 0.7f));
@@ -197,6 +200,7 @@ void AnatomyAudioProcessor::releaseResources() {}
 
 void AnatomyAudioProcessor::synchronizePoolParameters() noexcept
 {
+    // 1. Transientレーン専用プールへの射影
     if (auto* sat = dynamic_cast<ADAA_Saturation*>(transientPool[0].get())) {
         sat->setDrive(apvts.getRawParameterValue("transSatDrive")->load());
         sat->setMix(apvts.getRawParameterValue("transSatMix")->load());
@@ -211,7 +215,7 @@ void AnatomyAudioProcessor::synchronizePoolParameters() noexcept
     if (auto* ns = dynamic_cast<NoiseGenerator*>(transientPool[2].get())) {
         ns->setDecay(apvts.getRawParameterValue("transNsDecay")->load());
         ns->setMix(apvts.getRawParameterValue("transNsMix")->load());
-        ns->setPink(apvts.getRawParameterValue("transNsPink")->load() > 0.5f);
+        ns->setNoiseType(static_cast<int>(apvts.getRawParameterValue("transNsType")->load())); // 💥連動
         ns->setGainDb(apvts.getRawParameterValue("transNsGain")->load());
     }
     if (auto* ott = dynamic_cast<OTT_Multiband*>(transientPool[3].get())) {
@@ -225,6 +229,7 @@ void AnatomyAudioProcessor::synchronizePoolParameters() noexcept
         lim->setMix(apvts.getRawParameterValue("transLimMix")->load());
     }
 
+    // 2. Tonalレーン専用プールへの射影
     if (auto* sat = dynamic_cast<ADAA_Saturation*>(tonalPool[0].get())) {
         sat->setDrive(apvts.getRawParameterValue("tonalSatDrive")->load());
         sat->setMix(apvts.getRawParameterValue("tonalSatMix")->load());
@@ -239,7 +244,7 @@ void AnatomyAudioProcessor::synchronizePoolParameters() noexcept
     if (auto* ns = dynamic_cast<NoiseGenerator*>(tonalPool[2].get())) {
         ns->setDecay(apvts.getRawParameterValue("tonalNsDecay")->load());
         ns->setMix(apvts.getRawParameterValue("tonalNsMix")->load());
-        ns->setPink(apvts.getRawParameterValue("tonalNsPink")->load() > 0.5f);
+        ns->setNoiseType(static_cast<int>(apvts.getRawParameterValue("tonalNsType")->load())); // 💥連動
         ns->setGainDb(apvts.getRawParameterValue("tonalNsGain")->load());
     }
     if (auto* ott = dynamic_cast<OTT_Multiband*>(tonalPool[3].get())) {
@@ -253,6 +258,7 @@ void AnatomyAudioProcessor::synchronizePoolParameters() noexcept
         lim->setMix(apvts.getRawParameterValue("tonalLimMix")->load());
     }
 
+    // 3. FullMixレーン専用プールへの射影
     if (auto* sat = dynamic_cast<ADAA_Saturation*>(fullMixPool[0].get())) {
         sat->setDrive(apvts.getRawParameterValue("fullSatDrive")->load());
         sat->setMix(apvts.getRawParameterValue("fullSatMix")->load());
@@ -267,7 +273,7 @@ void AnatomyAudioProcessor::synchronizePoolParameters() noexcept
     if (auto* ns = dynamic_cast<NoiseGenerator*>(fullMixPool[2].get())) {
         ns->setDecay(apvts.getRawParameterValue("fullNsDecay")->load());
         ns->setMix(apvts.getRawParameterValue("fullNsMix")->load());
-        ns->setPink(apvts.getRawParameterValue("fullNsPink")->load() > 0.5f);
+        ns->setNoiseType(static_cast<int>(apvts.getRawParameterValue("fullNsType")->load())); // 💥連動
         ns->setGainDb(apvts.getRawParameterValue("fullNsGain")->load());
     }
     if (auto* ott = dynamic_cast<OTT_Multiband*>(fullMixPool[3].get())) {

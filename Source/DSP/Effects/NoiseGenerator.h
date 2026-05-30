@@ -6,7 +6,8 @@
 
 /**
  * NoiseGenerator
- * 💥【高精度化：独立音量ノブ追加】オーバーライド指定不備を修正し、独立した Gain 制御数理を敷設。
+ * 4種類の高精度ノイズ（White, Pink, Brown, Blue）を内包し、
+ * 点灯式ラジオボタンUIと完全連動する打楽器特化型ノイズ発振器。
  */
 class NoiseGenerator final : public AudioEffect
 {
@@ -23,6 +24,8 @@ public:
     void reset() noexcept override
     {
         envelope = 0.0f;
+        lastWhiteSample = 0.0f;
+        brownAccumulator = 0.0f;
     }
 
     void process(juce::AudioBuffer<float>& buffer) noexcept override
@@ -31,7 +34,6 @@ public:
         const int numSamples = buffer.getNumSamples();
         const float mix = currentMix;
 
-        // 💥独立した出力ゲインのリニア変換（dB換算）
         const float gainLinear = std::pow(10.0f, currentGainDb / 20.0f);
         const float decayCoef = std::exp(-1.0f / (decayMs * 0.001f * static_cast<float>(currentSampleRate)));
 
@@ -45,9 +47,14 @@ public:
             for (int i = 0; i < numSamples; ++i)
             {
                 float input = data[i];
-                float noise = (isPink ? generatePink() : generateWhite());
 
-                // トリガーエンベロープと音量ゲインを重畳してノイズ成分を成形
+                // 💥 選択されたノイズタイプ（0=White, 1=Pink, 2=Brown, 3=Blue）に応じて数理動的切り替え
+                float noise = 0.0f;
+                if (currentNoiseType == 0)      noise = generateWhite();
+                else if (currentNoiseType == 1) noise = generatePink();
+                else if (currentNoiseType == 2) noise = generateBrown();
+                else if (currentNoiseType == 3) noise = generateBlue();
+
                 float wetNoise = noise * envState * gainLinear;
                 envState *= decayCoef;
 
@@ -59,7 +66,6 @@ public:
         }
     }
 
-    // 💥【修正完了】基底クラスの純粋仮想関数ではないため override キーワードを除去し完全開通
     void trigger() noexcept { envelope = 1.0f; }
 
     juce::String getName() const override { return "Noise Generator"; }
@@ -73,15 +79,15 @@ public:
     float getMix() const noexcept override { return currentMix; }
 
     void setDecay(float ms) noexcept { decayMs = std::max(1.0f, ms); }
-    void setPink(bool pink) noexcept { isPink = pink; }
-    void setGainDb(float gainDb) noexcept { currentGainDb = juce::jlimit(-60.0f, 0.0f, gainDb); } // 新設
+    void setNoiseType(int type) noexcept { currentNoiseType = juce::jlimit(0, 3, type); }
+    void setGainDb(float gainDb) noexcept { currentGainDb = juce::jlimit(-60.0f, 0.0f, gainDb); }
 
     void setIndexedParameter(int index, float value) noexcept override
     {
         if (index == 0)      setDecay(value);
         else if (index == 1) setMix(value);
-        else if (index == 2) setPink(value > 0.5f);
-        else if (index == 3) setGainDb(value); // 新設
+        else if (index == 2) setNoiseType(static_cast<int>(value));
+        else if (index == 3) setGainDb(value);
     }
 
 private:
@@ -101,6 +107,23 @@ private:
         return (b0 + b1 + b2 + white * 0.05362f) * 0.25f;
     }
 
+    float generateBrown()
+    {
+        float white = generateWhite();
+        // 1次リーキー積分による赤色化方程式
+        brownAccumulator = (brownAccumulator + (0.02f * white)) / 1.02f;
+        return brownAccumulator * 3.5f; // 聴感上の音量補正
+    }
+
+    float generateBlue()
+    {
+        float white = generateWhite();
+        // 1次差分による青色化方程式
+        float blue = white - lastWhiteSample;
+        lastWhiteSample = white;
+        return blue * 0.5f;
+    }
+
     double currentSampleRate = 44100.0;
     std::random_device rd;
     std::mt19937 gen;
@@ -111,8 +134,11 @@ private:
     float envelope = 0.0f;
     float decayMs = 100.0f;
     float currentMix = 0.3f;
-    float currentGainDb = 0.0f; // 新設
-    bool isPink = false;
+    float currentGainDb = 0.0f;
+    int currentNoiseType = 0;
+
+    float lastWhiteSample = 0.0f;
+    float brownAccumulator = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(NoiseGenerator)
 };
