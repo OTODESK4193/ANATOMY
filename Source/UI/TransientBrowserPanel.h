@@ -5,6 +5,11 @@
 #include "../PluginProcessor.h"
 #include "WaveformComponent.h"
 
+/**
+ * TransientBrowserPanel (タイポ完全治療版)
+ * FileFileBrowserComponentの構文エラーを修正し、
+ * プロセッサから復元された絶対全長を安全に直流同期するTransient置換サンプルブラウザパネル。
+ */
 class TransientBrowserPanel final : public juce::Component, public juce::FileBrowserListener
 {
 public:
@@ -23,15 +28,16 @@ public:
         clearButton.setColour(juce::TextButton::buttonColourId, juce::Colours::darkgrey.darker());
         clearButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
         clearButton.onClick = [this] {
-            processor.customTransientReplacer.clearSample();
+            processor.clearCustomSampleFromUI(true);
             browseButton.setButtonText("Browse");
 
-            startOffsetSlider.setRange(0.0, 500.0);
-            endOffsetSlider.setRange(0.0, 500.0);
+            float durationMs = processor.transEndOffsetMs;
+            startOffsetSlider.setRange(0.0, static_cast<double>(durationMs), 0.1);
+            endOffsetSlider.setRange(0.0, static_cast<double>(durationMs), 0.1);
             startOffsetSlider.setValue(0.0);
-            endOffsetSlider.setValue(500.0);
+            endOffsetSlider.setValue(static_cast<double>(durationMs));
 
-            waveformDisplay.setOffsets(0.0f, 0.0f, 44100.0);
+            waveformDisplay.setOffsets(0.0f, durationMs, processor.getFileSampleRate());
 
             juce::AudioBuffer<float> tempTrans, tempTonal;
             processor.getCallbackBuffersSecure(tempTrans, tempTonal);
@@ -48,7 +54,7 @@ public:
             addAndMakeVisible(s);
 
             l.setText(txt, juce::dontSendNotification);
-            l.setFont(juce::Font(9.0f, juce::Font::bold));
+            l.setFont(juce::Font(10.0f, juce::Font::bold));
             l.setJustificationType(juce::Justification::centred);
             l.setColour(juce::Label::textColourId, juce::Colours::cyan.withAlpha(0.7f));
             addAndMakeVisible(l);
@@ -59,17 +65,16 @@ public:
         endOffsetSlider.setValue(500.0);
 
         auto onSliderChange = [this] {
-            float sVal = static_cast<float> (startOffsetSlider.getValue());
-            float eVal = static_cast<float> (endOffsetSlider.getValue());
+            float sVal = static_cast<float>(startOffsetSlider.getValue());
+            float eVal = static_cast<float>(endOffsetSlider.getValue());
             processor.customTransientReplacer.setStartOffsetMs(sVal);
             processor.customTransientReplacer.setEndOffsetMs(eVal);
-            waveformDisplay.setOffsets(sVal, eVal, processor.customTransientReplacer.getSourceSampleRate());
+            waveformDisplay.setOffsets(sVal, eVal, processor.getFileSampleRate());
             };
 
         startOffsetSlider.onValueChange = onSliderChange;
         endOffsetSlider.onValueChange = onSliderChange;
 
-        // 💥【新設】波形ディスプレイ右側マウント用 Transient 個別最終ゲインノブの完全敷設
         gainSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
         gainSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 45, 12);
         gainSlider.setColour(juce::Slider::rotarySliderFillColourId, juce::Colours::cyan);
@@ -77,12 +82,11 @@ public:
         addAndMakeVisible(gainSlider);
 
         gainLabel.setText("GAIN", juce::dontSendNotification);
-        gainLabel.setFont(juce::Font(9.0f, juce::Font::bold));
+        gainLabel.setFont(juce::Font(10.0f, juce::Font::bold));
         gainLabel.setJustificationType(juce::Justification::centred);
         gainLabel.setColour(juce::Label::textColourId, juce::Colours::cyan.withAlpha(0.7f));
         addAndMakeVisible(gainLabel);
 
-        // APVTSへのアタッチメント完全バインド
         gainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "transMixGain", gainSlider);
     }
 
@@ -97,7 +101,6 @@ public:
 
         area.removeFromTop(2);
 
-        // 💥【幾何学レイアウト刷新】ノブ3つを等間隔で美しく横並び分割配置
         auto kw = area.getWidth() / 3;
 
         auto leftKnob = area.removeFromLeft(kw);
@@ -123,19 +126,20 @@ public:
         std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
         if (reader != nullptr)
         {
-            juce::AudioBuffer<float> buffer(1, static_cast<int> (reader->lengthInSamples));
-            reader->read(&buffer, 0, static_cast<int> (reader->lengthInSamples), 0, true, false);
+            juce::AudioBuffer<float> buffer(1, static_cast<int>(reader->lengthInSamples));
+            reader->read(&buffer, 0, static_cast<int>(reader->lengthInSamples), 0, true, false);
 
             processor.customTransientReplacer.loadSample(buffer, reader->sampleRate);
+            processor.storeCustomSampleFromUI(true, buffer, reader->sampleRate);
 
-            double durationMs = (static_cast<double> (reader->lengthInSamples) / reader->sampleRate) * 1000.0;
+            double durationMs = (static_cast<double>(reader->lengthInSamples) / reader->sampleRate) * 1000.0;
             startOffsetSlider.setRange(0.0, durationMs, 0.1);
             endOffsetSlider.setRange(0.0, durationMs, 0.1);
             startOffsetSlider.setValue(0.0);
             endOffsetSlider.setValue(durationMs);
 
             waveformDisplay.setBuffer(buffer);
-            waveformDisplay.setOffsets(0.0f, static_cast<float> (durationMs), reader->sampleRate);
+            waveformDisplay.setOffsets(0.0f, static_cast<float>(durationMs), reader->sampleRate);
 
             browseButton.setButtonText(file.getFileNameWithoutExtension().substring(0, 7));
         }
@@ -162,6 +166,7 @@ private:
     {
         if (browserWindow != nullptr) { browserWindow->toFront(true); return; }
 
+        // 💥【バグ修正】FileFileBrowserComponent の重複文字を、正しいクラス名である FileBrowserComponent へ治療完了
         auto chooserFlags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
         auto browser = std::make_unique<juce::FileBrowserComponent>(
             chooserFlags, juce::File::getSpecialLocation(juce::File::userHomeDirectory), nullptr, nullptr

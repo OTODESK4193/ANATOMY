@@ -1,9 +1,15 @@
 #pragma once
+
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <cmath>
 #include <algorithm>
 #include <atomic>
 
+/**
+ * TransientReplacer (インターフェース完全適合版)
+ * PluginProcessorからのreset()命令に完全同調するためのダミーreset関数を敷設した
+ * ワンショット過渡置換プロセッサー。
+ */
 class TransientReplacer
 {
 public:
@@ -35,6 +41,9 @@ public:
 
     void setStartOffsetMs(float offsetMs) noexcept { startOffsetMs.store(offsetMs, std::memory_order_relaxed); }
     void setEndOffsetMs(float offsetMs) noexcept { endOffsetMs.store(offsetMs, std::memory_order_relaxed); }
+
+    // 💥【新設】PluginProcessorからの呼び出しとインターフェースを統一するための安全なリセット関数
+    void reset() noexcept {}
 
     float processSample(double clickReadIndex, double originalPitchRatio, float transScale,
         float clickHoldMs, float clickCurveMs, double hostSampleRate, int soloMode) noexcept
