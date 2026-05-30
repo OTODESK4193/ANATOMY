@@ -92,6 +92,53 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     attachTransMixGain = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "transMixGain", sliderTransGain);
     attachTonalMixGain = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "tonalMixGain", sliderTonalGain);
 
+    // 💥【修正④・確定】DeleteボタンをJUCEコンポーネント構造からテキストベースで自動検出し、
+    // プロセッサの独立クリア関数（clearCustomSampleFromUI）と安全に直流フック結合
+    for (auto* child : transientBrowserPanel.getChildren())
+    {
+        if (auto* b = dynamic_cast<juce::TextButton*>(child))
+        {
+            juce::String txt = b->getButtonText().toLowerCase();
+            if (txt.contains("delete") || txt.contains("clear") || txt == "x" || txt.contains("remove") || txt.contains("reset"))
+            {
+                b->onClick = [this] {
+                    audioProcessor.clearCustomSampleFromUI(true);
+                    for (auto* c : transientBrowserPanel.getChildren()) {
+                        if (auto* btn = dynamic_cast<juce::TextButton*>(c)) {
+                            juce::String cTxt = btn->getButtonText().toLowerCase();
+                            // 隣のDelete/Resetボタン自体のテキストを破壊から完全シールドガード
+                            if (!cTxt.contains("delete") && !cTxt.contains("clear") && cTxt != "x" && !cTxt.contains("reset"))
+                                btn->setButtonText("Browse");
+                        }
+                    }
+                    repaint();
+                    };
+            }
+        }
+    }
+
+    for (auto* child : tonalBrowserPanel.getChildren())
+    {
+        if (auto* b = dynamic_cast<juce::TextButton*>(child))
+        {
+            juce::String txt = b->getButtonText().toLowerCase();
+            if (txt.contains("delete") || txt.contains("clear") || txt == "x" || txt.contains("remove") || txt.contains("reset"))
+            {
+                b->onClick = [this] {
+                    audioProcessor.clearCustomSampleFromUI(false);
+                    for (auto* c : tonalBrowserPanel.getChildren()) {
+                        if (auto* btn = dynamic_cast<juce::TextButton*>(c)) {
+                            juce::String cTxt = btn->getButtonText().toLowerCase();
+                            if (!cTxt.contains("delete") && !cTxt.contains("clear") && cTxt != "x" && !cTxt.contains("reset"))
+                                btn->setButtonText("Browse");
+                        }
+                    }
+                    repaint();
+                    };
+            }
+        }
+    }
+
     setSize(1150, 720);
     startTimer(40);
 }
@@ -127,8 +174,6 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
             wasProcessing = true;
         }
     }
-    // 💥【インポート波形不動バグ完全破壊】
-    // ドロップされた新サンプルの実体を、Replacerだけでなくプロセッサの処理バッファへも同時に直流転送流し込み命令！
     else if (waveTransient.getBounds().contains(dropPoint))
     {
         std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
@@ -142,12 +187,14 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
             double durationMs = (static_cast<double>(reader->lengthInSamples) / reader->sampleRate) * 1000.0;
             audioProcessor.setOffsetsFromUI(true, 0.0f, static_cast<float>(durationMs));
 
-            // プロセッサ内部の波形・合成元データをこの新サンプルバッファで完全同期上書き！
-            audioProcessor.loadCustomSampleFromUI(true, buffer, reader->sampleRate);
+            // プロセッサ側の独立カスタム常駐メモリへ安全コピー
+            audioProcessor.storeCustomSampleFromUI(true, buffer, reader->sampleRate);
 
+            // 💥【名称バグ修正】Deleteボタンを巻き込まず、Browseボタンのみをピンポイント狙撃置換
             for (auto* child : transientBrowserPanel.getChildren()) {
                 if (auto* b = dynamic_cast<juce::TextButton*>(child)) {
-                    if (b->getButtonText() == "Browse" || b->getButtonText().length() <= 7)
+                    juce::String bTxt = b->getButtonText().toLowerCase();
+                    if (bTxt == "browse" || bTxt == "load" || bTxt == "" || bTxt.contains("cf_"))
                         b->setButtonText(file.getFileNameWithoutExtension().substring(0, 7));
                 }
             }
@@ -166,12 +213,12 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
             double durationMs = (static_cast<double>(reader->lengthInSamples) / reader->sampleRate) * 1000.0;
             audioProcessor.setOffsetsFromUI(false, 0.0f, static_cast<float>(durationMs));
 
-            // プロセッサ内部の波形・合成元データをこの新サンプルバッファで完全同期上書き！
-            audioProcessor.loadCustomSampleFromUI(false, buffer, reader->sampleRate);
+            audioProcessor.storeCustomSampleFromUI(false, buffer, reader->sampleRate);
 
             for (auto* child : tonalBrowserPanel.getChildren()) {
                 if (auto* b = dynamic_cast<juce::TextButton*>(child)) {
-                    if (b->getButtonText() == "Browse" || b->getButtonText().length() <= 7)
+                    juce::String bTxt = b->getButtonText().toLowerCase();
+                    if (bTxt == "browse" || bTxt == "load" || bTxt == "" || bTxt.contains("cf_"))
                         b->setButtonText(file.getFileNameWithoutExtension().substring(0, 7));
                 }
             }
@@ -205,6 +252,7 @@ void AnatomyAudioProcessorEditor::timerCallback()
     juce::AudioBuffer<float> tempTrans, tempTonal, tempFullMix;
     std::vector<float> mixRatios;
 
+    // オフラインレンダラーから常時最新のFX適用後・全長バッファをキャッチ
     audioProcessor.offlineMixRenderer.getRenderedResults(tempFullMix, tempTrans, tempTonal, mixRatios);
 
     if (btnBefore.getToggleState())
@@ -217,6 +265,9 @@ void AnatomyAudioProcessorEditor::timerCallback()
         waveFullMix.setRatioData(mixRatios);
     }
 
+    // 💥【修正④・完全解決】
+    // 下段の波形コンポーネントへ加工完了後の最新バッファを直流伝送。
+    // Resetボタン押下時は内部で空（サイズ0）になるため、自動的に元の生ドラム波形がクッキリ100%美しく再描画復元される
     waveTransient.setBuffer(tempTrans);
     waveTonal.setBuffer(tempTonal);
 

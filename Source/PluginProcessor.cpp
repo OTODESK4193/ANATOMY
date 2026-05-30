@@ -259,12 +259,8 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
             if (currentDataSnapshot != nullptr)
             {
                 activeVoice.sampleData = currentDataSnapshot;
-
-                float transStartSamples = (transStartOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
-                float tonalStartSamples = (tonalStartOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
-
-                activeVoice.clickReadIndex = transStartSamples;
-                activeVoice.sustainReadIndex = tonalStartSamples;
+                activeVoice.clickReadIndex = 0.0;
+                activeVoice.sustainReadIndex = 0.0;
 
                 activeVoice.triggerVelocity = msg.getFloatVelocity();
                 activeVoice.isActive = true;
@@ -303,8 +299,6 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     float* tonalL = tonalBlockBuffer.getWritePointer(0);
     float* tonalR = numChannels > 1 ? tonalBlockBuffer.getWritePointer(1) : nullptr;
 
-    float transStartSamples = (transStartOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
-
     for (int sample = 0; sample < numSamples; ++sample)
     {
         float mixedTransL = 0.0f, mixedTransR = 0.0f;
@@ -312,7 +306,6 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
         float transEndSamples = (transEndOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
         float tonalEndSamples = (tonalEndOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
-
         float transHoldSamples = (clickHold / 1000.0f) * static_cast<float>(fileSampleRate);
 
         if (activeVoice.isActive)
@@ -326,15 +319,16 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
             if (activeVoice.isReleasing) activeVoice.releaseGain *= dynamicReleaseFactor;
             if (activeIsMuting) activeMuteGain *= muteFactor;
 
-            bool transReachEnd = activeVoice.clickReadIndex >= transEndSamples;
-            bool transTimeUp = (activeVoice.clickReadIndex - transStartSamples) >= transHoldSamples;
-            if (transTimeUp || transReachEnd)
+            // 💥【核心修正③】無音化バグ完全粉砕。相対経過時間（clickReadIndex）が純粋にHold上限に達したかでTransientゲートを切断
+            bool transTimeUp = (activeVoice.clickReadIndex >= transHoldSamples);
+            double exactClick = ((transStartOffsetMs / 1000.0f) * fileSampleRate) + activeVoice.clickReadIndex;
+            if (transTimeUp || exactClick >= transEndSamples)
             {
                 mixedTransL = 0.0f; mixedTransR = 0.0f;
             }
 
-            bool tonalReachEnd = activeVoice.sustainReadIndex >= tonalEndSamples;
-            if (tonalReachEnd || activeVoice.releaseGain <= 0.001f || activeMuteGain <= 0.001f)
+            double exactSustainIdx = ((tonalStartOffsetMs / 1000.0f) * fileSampleRate) + activeVoice.sustainReadIndex;
+            if (exactSustainIdx >= tonalEndSamples || activeVoice.releaseGain <= 0.001f || activeMuteGain <= 0.001f)
             {
                 activeVoice.reset(); activeIsMuting = false; activeMuteGain = 1.0f;
             }
@@ -353,15 +347,15 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
                 if (releasingVoices[i].isReleasing) releasingVoices[i].releaseGain *= dynamicReleaseFactor;
                 if (releasingIsMuting[i]) releasingMuteGain[i] *= muteFactor;
 
-                bool transReachEnd = releasingVoices[i].clickReadIndex >= transEndSamples;
-                bool transTimeUp = (releasingVoices[i].clickReadIndex - transStartSamples) >= transHoldSamples;
-                if (transTimeUp || transReachEnd)
+                bool transTimeUp = (releasingVoices[i].clickReadIndex >= transHoldSamples);
+                double exactClick = ((transStartOffsetMs / 1000.0f) * fileSampleRate) + releasingVoices[i].clickReadIndex;
+                if (transTimeUp || exactClick >= transEndSamples)
                 {
                     mixedTransL = 0.0f; mixedTransR = 0.0f;
                 }
 
-                bool tonalReachEnd = releasingVoices[i].sustainReadIndex >= tonalEndSamples;
-                if (tonalReachEnd || releasingVoices[i].releaseGain <= 0.001f || releasingMuteGain[i] <= 0.001f)
+                double exactSustainIdx = ((tonalStartOffsetMs / 1000.0f) * fileSampleRate) + releasingVoices[i].sustainReadIndex;
+                if (exactSustainIdx >= tonalEndSamples || releasingVoices[i].releaseGain <= 0.001f || releasingMuteGain[i] <= 0.001f)
                 {
                     releasingVoices[i].reset(); releasingIsMuting[i] = false; releasingMuteGain[i] = 1.0f;
                 }
@@ -394,7 +388,7 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
         outL[sample] = (transL[sample] * transLinearGain) + (tonalL[sample] * tonalLinearGain);
         if (outR != nullptr && transR != nullptr && tonalR != nullptr)
         {
-            outR[sample] = (transR[sample] * transLinearGain) + (tonalR[sample] * tonalLinearGain);
+            outR[sample] = (transL[sample] * transLinearGain) + (tonalR[sample] * tonalLinearGain);
         }
     }
 
@@ -408,52 +402,103 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     outTransL = 0.0f; outTransR = 0.0f; outTonalL = 0.0f; outTonalR = 0.0f;
     if (voice.sampleData == nullptr) return;
 
-    const auto& click = voice.sampleData->getClickBuffer();
-    const auto& sustain = voice.sampleData->getSustainBuffer();
-    const int clickLen = click.getNumSamples();
-    const int sustainLen = sustain.getNumSamples();
+    // 💥【核心修正①】BeforeバイパスON時はカスタムバッファを強制無視！大元の分離スレッド生波形を参照
+    bool isBefore = beforeAfterBypasser.julesIsBeforeBypassed();
+    const auto& click = (isBefore || customTransBuffer.getNumSamples() == 0) ? transBufferThread : customTransBuffer;
+    const auto& sustain = (isBefore || customTonalBuffer.getNumSamples() == 0) ? tonalBufferThread : customTonalBuffer;
 
-    float shiftedClick = 0.0f; float shiftedSustain = 0.0f;
-    int cIdx = static_cast<int> (voice.clickReadIndex);
-    int sIdx = static_cast<int> (voice.sustainReadIndex);
+    float transStartSamples = (transStartOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
+    float transEndSamples = (transEndOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
+    float transHoldSamples = (clickHold / 1000.0f) * static_cast<float>(fileSampleRate);
 
-    if (beforeAfterBypasser.julesIsBeforeBypassed())
+    float tonalStartSamples = (tonalStartOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
+    float tonalEndSamples = (tonalEndOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
+
+    double exactClickIdx = transStartSamples + voice.clickReadIndex;
+    double exactSustainIdx = tonalStartSamples + voice.sustainReadIndex;
+
+    int cIdx = static_cast<int>(exactClickIdx);
+    int sIdx = static_cast<int>(exactSustainIdx);
+
+    bool transGateOpen = (voice.clickReadIndex < transHoldSamples) && (exactClickIdx < transEndSamples);
+    bool tonalGateOpen = (exactSustainIdx < tonalEndSamples);
+
+    float shiftedClick = 0.0f;
+    float shiftedSustain = 0.0f;
+
+    if (isBefore)
     {
-        if (cIdx < clickLen) shiftedClick = click.getSample(0, cIdx);
-        if (sIdx < sustainLen) shiftedSustain = sustain.getSample(0, sIdx);
+        if (transGateOpen && cIdx < click.getNumSamples())   shiftedClick = click.getSample(0, cIdx);
+        if (tonalGateOpen && sIdx < sustain.getNumSamples()) shiftedSustain = sustain.getSample(0, sIdx);
         voice.clickReadIndex += voice.pitchRatio;
         voice.sustainReadIndex += voice.pitchRatio;
     }
     else
     {
-        if (customTransientReplacer.isLoaded())
+        if (transGateOpen)
         {
-            shiftedClick = customTransientReplacer.processSample(voice.clickReadIndex, voice.pitchRatio, transScale, clickHold, clickCurve, currentSampleRate, currentSoloMode);
-            voice.clickReadIndex += voice.pitchRatio;
+            if (customTransBuffer.getNumSamples() > 0)
+                shiftedClick = customTransientReplacer.processSample(exactClickIdx, voice.pitchRatio, transScale, clickHold, clickCurve, currentSampleRate, currentSoloMode);
+            else if (voice.transShifter && cIdx < click.getNumSamples() && currentSoloMode != 2)
+                shiftedClick = voice.transShifter->processSample(click, cIdx, transScale);
         }
-        else if (voice.transShifter && cIdx < clickLen)
-        {
-            if (currentSoloMode != 2) shiftedClick = voice.transShifter->processSample(click, cIdx, transScale);
-            voice.clickReadIndex += voice.pitchRatio;
-        }
+        voice.clickReadIndex += voice.pitchRatio;
 
-        if (customTonalReplacer.isLoaded())
+        if (tonalGateOpen)
         {
-            shiftedSustain = customTonalReplacer.processSample(voice.sustainReadIndex, voice.pitchRatio, tonalScale, clickHold, clickCurve, currentSampleRate, currentSoloMode);
-            voice.sustainReadIndex += voice.pitchRatio;
+            if (customTonalBuffer.getNumSamples() > 0)
+                shiftedSustain = customTonalReplacer.processSample(exactSustainIdx, voice.pitchRatio, tonalScale, clickHold, clickCurve, currentSampleRate, currentSoloMode);
+            else if (voice.tonalShifter && sIdx < sustain.getNumSamples() && currentSoloMode != 1)
+                shiftedSustain = voice.tonalShifter->processSample(sustain, sIdx, tonalScale);
         }
-        else if (voice.tonalShifter && sIdx < sustainLen)
-        {
-            if (currentSoloMode != 1) shiftedSustain = voice.tonalShifter->processSample(sustain, sIdx, tonalScale);
-            voice.sustainReadIndex += voice.pitchRatio;
-        }
+        voice.sustainReadIndex += voice.pitchRatio;
     }
 
-    float finalClick = shiftedClick * voice.triggerVelocity * voice.releaseGain * 0.63f;
-    float finalSustain = shiftedSustain * voice.triggerVelocity * voice.releaseGain * 0.63f;
+    // 💥【音響数理修正⑥：金属質コームフィルター音の完全消去】
+    // クロスフェード進捗を等熱量（Constant-Power）カーブへ刷新し、合算時の過渡期の熱量窪みを完全平坦化
+    float transFade = 1.0f;
+    float tonalFade = 1.0f;
+    float currentMs = (voice.sustainReadIndex / fileSampleRate) * 1000.0f;
+
+    if (currentMs < clickCurve && clickCurve > 0.0f)
+    {
+        float progress = currentMs / clickCurve;
+        float angle = progress * juce::MathConstants<float>::halfPi;
+        transFade = std::cos(angle);
+        tonalFade = std::sin(angle);
+    }
+
+    float finalClick = shiftedClick * voice.triggerVelocity * voice.releaseGain * transFade * 0.63f;
+    float finalSustain = shiftedSustain * voice.triggerVelocity * voice.releaseGain * tonalFade * 0.63f;
 
     outTransL = finalClick; outTransR = finalClick;
     outTonalL = finalSustain; outTonalR = finalSustain;
+}
+
+// 💥【ポップノイズ遮断数理⑦：ゼロクロス・自動シニカルスナップ探索】
+int AnatomyAudioProcessor::snapToZeroCrossing(const juce::AudioBuffer<float>& buffer, int targetSample) noexcept
+{
+    const int totalSamples = buffer.getNumSamples();
+    if (totalSamples <= 0 || buffer.getNumChannels() <= 0) return targetSample;
+
+    const float* data = buffer.getReadPointer(0);
+    int bestSample = targetSample;
+    float minAbsVal = 1e9f;
+    const int searchRange = 150; // 前後150サンプルの局所的な窓から絶対値最小（ゼロクロス）の特異点を発見
+
+    int startRange = std::max(0, targetSample - searchRange);
+    int endRange = std::min(totalSamples - 1, targetSample + searchRange);
+
+    for (int s = startRange; s <= endRange; ++s)
+    {
+        float absVal = std::abs(data[s]);
+        if (absVal < minAbsVal)
+        {
+            minAbsVal = absVal;
+            bestSample = s;
+        }
+    }
+    return bestSample;
 }
 
 void AnatomyAudioProcessor::parameterChanged(const juce::String&, float)
@@ -464,38 +509,54 @@ void AnatomyAudioProcessor::parameterChanged(const juce::String&, float)
 
 void AnatomyAudioProcessor::setOffsetsFromUI(bool isTransient, float startMs, float endMs) noexcept
 {
+    const juce::ScopedLock sl(lock);
+
+    // 現在アクティブなバッファから安全にゼロクロスを探索してノブと波形へ直流フィードバック
+    const juce::AudioBuffer<float>& activeTrans = (customTransBuffer.getNumSamples() > 0) ? customTransBuffer : transBufferThread;
+    const juce::AudioBuffer<float>& activeTonal = (customTonalBuffer.getNumSamples() > 0) ? customTonalBuffer : tonalBufferThread;
+
+    int startSmp = static_cast<int>((startMs / 1000.0f) * fileSampleRate);
+
     if (isTransient)
     {
-        transStartOffsetMs = startMs;
+        startSmp = snapToZeroCrossing(activeTrans, startSmp);
+        transStartOffsetMs = (static_cast<float>(startSmp) / fileSampleRate) * 1000.0f;
         transEndOffsetMs = endMs;
-        customTransientReplacer.setStartOffsetMs(startMs);
+        customTransientReplacer.setStartOffsetMs(transStartOffsetMs);
         customTransientReplacer.setEndOffsetMs(endMs);
     }
     else
     {
-        tonalStartOffsetMs = startMs;
+        startSmp = snapToZeroCrossing(activeTonal, startSmp);
+        tonalStartOffsetMs = (static_cast<float>(startSmp) / fileSampleRate) * 1000.0f;
         tonalEndOffsetMs = endMs;
-        customTonalReplacer.setStartOffsetMs(startMs);
+        customTonalReplacer.setStartOffsetMs(tonalStartOffsetMs);
         customTonalReplacer.setEndOffsetMs(endMs);
     }
     offlineMixRenderer.triggerRender();
 }
 
-void AnatomyAudioProcessor::loadCustomSampleFromUI(bool isTransient, const juce::AudioBuffer<float>& newBuffer, double sr) noexcept
+void AnatomyAudioProcessor::storeCustomSampleFromUI(bool isTransient, const juce::AudioBuffer<float>& newBuffer, double sr) noexcept
 {
     const juce::ScopedLock sl(lock);
+    if (isTransient) customTransBuffer.makeCopyOf(newBuffer);
+    else             customTonalBuffer.makeCopyOf(newBuffer);
     fileSampleRate = sr;
+    updateActiveSampleData();
+    offlineMixRenderer.triggerRender();
+}
 
-    if (isTransient)
-    {
-        transBufferThread.makeCopyOf(newBuffer);
-        transBufferUI.makeCopyOf(newBuffer);
-    }
-    else
-    {
-        tonalBufferThread.makeCopyOf(newBuffer);
-        tonalBufferUI.makeCopyOf(newBuffer);
-    }
+void AnatomyAudioProcessor::clearCustomSampleFromUI(bool isTransient) noexcept
+{
+    const juce::ScopedLock sl(lock);
+    if (isTransient) customTransBuffer.setSize(0, 0);
+    else             customTonalBuffer.setSize(0, 0);
+
+    const juce::AudioBuffer<float>& activeTrans = (customTransBuffer.getNumSamples() > 0) ? customTransBuffer : transBufferThread;
+    const juce::AudioBuffer<float>& activeTonal = (customTonalBuffer.getNumSamples() > 0) ? customTonalBuffer : tonalBufferThread;
+
+    if (isTransient) transEndOffsetMs = (static_cast<float>(activeTrans.getNumSamples()) / static_cast<float>(fileSampleRate)) * 1000.0f;
+    else             tonalEndOffsetMs = (static_cast<float>(activeTonal.getNumSamples()) / static_cast<float>(fileSampleRate)) * 1000.0f;
 
     updateActiveSampleData();
     offlineMixRenderer.triggerRender();
@@ -510,6 +571,8 @@ void AnatomyAudioProcessor::startSeparation(const juce::AudioBuffer<float>& inpu
         if (&rawInputBuffer != &inputAudio) rawInputBuffer.makeCopyOf(inputAudio);
         inputBufferThread.makeCopyOf(inputAudio);
         fileSampleRate = sourceSampleRate;
+        customTransBuffer.setSize(0, 0);
+        customTonalBuffer.setSize(0, 0);
     }
     needsReanalysis.store(true, std::memory_order_release);
 }
@@ -573,8 +636,11 @@ void AnatomyAudioProcessor::setSoloMode(int mode)
 
 void AnatomyAudioProcessor::updateActiveSampleData()
 {
-    const int transSamples = transBufferThread.getNumSamples();
-    const int tonalSamples = tonalBufferThread.getNumSamples();
+    const juce::AudioBuffer<float>& transSrc = (customTransBuffer.getNumSamples() > 0) ? customTransBuffer : transBufferThread;
+    const juce::AudioBuffer<float>& tonalSrc = (customTonalBuffer.getNumSamples() > 0) ? customTonalBuffer : tonalBufferThread;
+
+    const int transSamples = transSrc.getNumSamples();
+    const int tonalSamples = tonalSrc.getNumSamples();
     const int maxSamples = std::max(transSamples, tonalSamples);
 
     if (maxSamples == 0) return;
@@ -585,16 +651,16 @@ void AnatomyAudioProcessor::updateActiveSampleData()
 
     if (currentSoloMode == 0)
     {
-        if (transSamples > 0) activeClick.copyFrom(0, 0, transBufferThread, 0, 0, transSamples);
-        if (tonalSamples > 0) activeSustain.copyFrom(0, 0, tonalBufferThread, 0, 0, tonalSamples);
+        if (transSamples > 0) activeClick.copyFrom(0, 0, transSrc, 0, 0, transSamples);
+        if (tonalSamples > 0) activeSustain.copyFrom(0, 0, tonalSrc, 0, 0, tonalSamples);
     }
     else if (currentSoloMode == 1)
     {
-        if (transSamples > 0) activeClick.copyFrom(0, 0, transBufferThread, 0, 0, transSamples);
+        if (transSamples > 0) activeClick.copyFrom(0, 0, transSrc, 0, 0, transSamples);
     }
     else if (currentSoloMode == 2)
     {
-        if (tonalSamples > 0) activeSustain.copyFrom(0, 0, tonalBufferThread, 0, 0, tonalSamples);
+        if (tonalSamples > 0) activeSustain.copyFrom(0, 0, tonalSrc, 0, 0, tonalSamples);
     }
 
     SharedSampleData* newData = new SharedSampleData(std::move(activeClick), std::move(activeSustain), fileSampleRate);
@@ -627,8 +693,8 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
     double sr = 44100.0;
     {
         const juce::ScopedLock sl(lock);
-        localTrans.makeCopyOf(transBufferThread);
-        localTonal.makeCopyOf(tonalBufferThread);
+        localTrans.makeCopyOf(customTransBuffer.getNumSamples() > 0 ? customTransBuffer : transBufferThread);
+        localTonal.makeCopyOf(customTonalBuffer.getNumSamples() > 0 ? customTonalBuffer : tonalBufferThread);
         sr = fileSampleRate;
     }
 
@@ -641,15 +707,34 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
     juce::AudioBuffer<float> workTonal(2, maxSamples);
     workTrans.clear(); workTonal.clear();
 
-    if (localTrans.getNumChannels() > 0 && transSamples > 0)
+    float transStart = transStartOffsetMs;
+    float transEnd = transEndOffsetMs;
+    float tonalStart = tonalStartOffsetMs;
+    float tonalEnd = tonalEndOffsetMs;
+    float clickHold = apvts.getRawParameterValue("clickLength")->load();
+
+    int tStartSmp = static_cast<int>((transStart / 1000.0) * sr);
+    int tEndSmp = static_cast<int>((transEnd / 1000.0) * sr);
+    int tHoldSmp = static_cast<int>((clickHold / 1000.0) * sr);
+    int oStartSmp = static_cast<int>((tonalStart / 1000.0) * sr);
+    int oEndSmp = static_cast<int>((tonalEnd / 1000.0) * sr);
+
+    // 💥【エクスポート同期】0ms地点からの頭出しシークレイヤー合算
+    for (int s = 0; s < maxSamples; ++s)
     {
-        for (int ch = 0; ch < 2; ++ch)
-            workTrans.copyFrom(ch, 0, localTrans, std::min(ch, localTrans.getNumChannels() - 1), 0, transSamples);
-    }
-    if (localTonal.getNumChannels() > 0 && tonalSamples > 0)
-    {
-        for (int ch = 0; ch < 2; ++ch)
-            workTonal.copyFrom(ch, 0, localTonal, std::min(ch, localTonal.getNumChannels() - 1), 0, tonalSamples);
+        int exactClick = tStartSmp + s;
+        int exactSustain = oStartSmp + s;
+
+        if (s < tHoldSmp && exactClick < tEndSmp && exactClick < transSamples && transSamples > 0)
+        {
+            for (int ch = 0; ch < 2; ++ch)
+                workTrans.setSample(ch, s, localTrans.getSample(std::min(ch, localTrans.getNumChannels() - 1), exactClick));
+        }
+        if (exactSustain < oEndSmp && exactSustain < tonalSamples && tonalSamples > 0)
+        {
+            for (int ch = 0; ch < 2; ++ch)
+                workTonal.setSample(ch, s, localTonal.getSample(std::min(ch, localTonal.getNumChannels() - 1), exactSustain));
+        }
     }
 
     float transPitch = apvts.getRawParameterValue("transPitch")->load();
@@ -679,7 +764,6 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
     workTrans.applyGain(transGain);
     workTonal.applyGain(tonalGain);
 
-    // 💥【名称完全統一】タイポによる LNK/コンパイルの破綻を完全防止
     juce::AudioBuffer<float> finalBufferToTrim;
     if (laneIndex == 1)
     {
@@ -699,19 +783,16 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
         fullMixChain.process(finalBufferToTrim);
     }
 
-    float startMs = (laneIndex == 1) ? transStartOffsetMs : ((laneIndex == 2) ? tonalStartOffsetMs : 0.0f);
-    float endMs = (laneIndex == 1) ? transEndOffsetMs : ((laneIndex == 2) ? tonalEndOffsetMs : (maxSamples / sr) * 1000.0f);
+    int exportSamples = maxSamples;
+    if (laneIndex == 1)      exportSamples = std::min(maxSamples, tHoldSmp);
+    else if (laneIndex == 2) exportSamples = std::max(0, oEndSmp - oStartSmp);
 
-    int startSmp = juce::jlimit(0, maxSamples, static_cast<int>((startMs / 1000.0f) * sr));
-    int endSmp = juce::jlimit(0, maxSamples, static_cast<int>((endMs / 1000.0f) * sr));
-    int exportSamples = std::max(0, endSmp - startSmp);
-
-    if (exportSamples == 0) return {};
+    exportSamples = juce::jlimit(1, maxSamples, exportSamples);
 
     juce::AudioBuffer<float> trimmedBuffer(finalBufferToTrim.getNumChannels(), exportSamples);
     for (int ch = 0; ch < trimmedBuffer.getNumChannels(); ++ch)
     {
-        trimmedBuffer.copyFrom(ch, 0, finalBufferToTrim, ch, startSmp, exportSamples);
+        trimmedBuffer.copyFrom(ch, 0, finalBufferToTrim, ch, 0, exportSamples);
     }
 
     juce::WavAudioFormat wavFormat;
@@ -728,6 +809,7 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
     return {};
 }
 
+// 💥【大改造核心数理：1段目のみのゲート頭出し合算 ＆ 下段全容表示のOfflineMixRenderer】
 void OfflineMixRenderer::executeRender()
 {
     juce::AudioBuffer<float> localTrans, localTonal;
@@ -735,8 +817,8 @@ void OfflineMixRenderer::executeRender()
 
     {
         const juce::ScopedLock sl(processor.lock);
-        localTrans.makeCopyOf(processor.transBufferThread);
-        localTonal.makeCopyOf(processor.tonalBufferThread);
+        localTrans.makeCopyOf(processor.customTransBuffer.getNumSamples() > 0 ? processor.customTransBuffer : processor.transBufferThread);
+        localTonal.makeCopyOf(processor.customTonalBuffer.getNumSamples() > 0 ? processor.customTonalBuffer : processor.tonalBufferThread);
         sr = processor.fileSampleRate;
     }
 
@@ -751,15 +833,11 @@ void OfflineMixRenderer::executeRender()
     juce::AudioBuffer<float> workTonal(2, maxSamples);
     workTrans.clear(); workTonal.clear();
 
+    // 💥【検証③・解決】下の2枚のディスプレイ用ワークには「全長の生波形」を100%一切削らずにストレート転送！
     for (int ch = 0; ch < 2; ++ch)
     {
-        int srcCh = std::min(ch, localTrans.getNumChannels() - 1);
-        if (transSamples > 0)
-            workTrans.copyFrom(ch, 0, localTrans, srcCh, 0, transSamples);
-
-        int srcTonalCh = std::min(ch, localTonal.getNumChannels() - 1);
-        if (tonalSamples > 0)
-            workTonal.copyFrom(ch, 0, localTonal, srcTonalCh, 0, tonalSamples);
+        if (transSamples > 0) workTrans.copyFrom(ch, 0, localTrans, std::min(ch, localTrans.getNumChannels() - 1), 0, transSamples);
+        if (tonalSamples > 0) workTonal.copyFrom(ch, 0, localTonal, std::min(ch, localTonal.getNumChannels() - 1), 0, tonalSamples);
     }
 
     float transPitch = processor.apvts.getRawParameterValue("transPitch")->load();
@@ -794,12 +872,37 @@ void OfflineMixRenderer::executeRender()
     juce::AudioBuffer<float> outputMix(2, maxSamples);
     std::vector<float> ratios(maxSamples, 0.5f);
 
+    float transStart = processor.transStartOffsetMs;
+    float transEnd = processor.transEndOffsetMs;
+    float tonalStart = processor.tonalStartOffsetMs;
+    float tonalEnd = processor.tonalEndOffsetMs;
+    float clickHold = processor.apvts.getRawParameterValue("clickLength")->load();
+
+    int tStartSmp = static_cast<int>((transStart / 1000.0) * sr);
+    int tEndSmp = static_cast<int>((transEnd / 1000.0) * sr);
+    int tHoldSmp = static_cast<int>((clickHold / 1000.0) * sr);
+    int oStartSmp = static_cast<int>((tonalStart / 1000.0) * sr);
+    int oEndSmp = static_cast<int>((tonalEnd / 1000.0) * sr);
+
+    // 💥【核心マウント：1段目FullMixのみ、0ms地点から時間軸を完全レイヤー合算！】
     for (int s = 0; s < maxSamples; ++s)
     {
-        float tL = workTrans.getSample(0, s) * transGain;
-        float tR = workTrans.getSample(1, s) * transGain;
-        float oL = workTonal.getSample(0, s) * tonalGain;
-        float oR = workTonal.getSample(1, s) * tonalGain;
+        float tL = 0.0f, tR = 0.0f;
+        float oL = 0.0f, oR = 0.0f;
+
+        int exactClick = tStartSmp + s;
+        int exactSustain = oStartSmp + s;
+
+        if (s < tHoldSmp && exactClick < tEndSmp && exactClick < transSamples)
+        {
+            tL = workTrans.getSample(0, exactClick) * transGain;
+            tR = workTrans.getSample(1, exactClick) * transGain;
+        }
+        if (exactSustain < oEndSmp && exactSustain < tonalSamples)
+        {
+            oL = workTonal.getSample(0, exactSustain) * tonalGain;
+            oR = workTonal.getSample(1, exactSustain) * tonalGain;
+        }
 
         outputMix.setSample(0, s, tL + oL);
         outputMix.setSample(1, s, tR + oR);
@@ -828,7 +931,11 @@ void OfflineMixRenderer::executeRender()
         });
 }
 
-juce::AudioProcessorEditor* AnatomyAudioProcessor::createEditor() { return new AnatomyAudioProcessorEditor(*this); }
+juce::AudioProcessorEditor* AnatomyAudioProcessor::createEditor()
+{
+    return new AnatomyAudioProcessorEditor(*this);
+}
+
 bool AnatomyAudioProcessor::hasEditor() const { return true; }
 const juce::String AnatomyAudioProcessor::getName() const { return "ANATOMY"; }
 bool AnatomyAudioProcessor::acceptsMidi() const { return true; }
@@ -853,9 +960,6 @@ void AnatomyAudioProcessor::setStateInformation(const void* data, int sizeInByte
         apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
 }
 
-// ==============================================================================
-// 💥【完全調律完了】クラススコープや関数ネストの壁を100%粉砕したグローバルおまじない
-// ==============================================================================
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new AnatomyAudioProcessor();

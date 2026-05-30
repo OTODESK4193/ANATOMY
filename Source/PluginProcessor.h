@@ -18,8 +18,8 @@
 
 /**
  * AnatomyAudioProcessor
- * フェーズ2〜4の全音響数理、バックグラウンドレンダリング、Before/Afterバイパス、
- * およびDAWエクスポート用のファイルオンデマンドジェネレーターを完全一元管理するコアクラス。
+ * フェーズ2〜4の全音響数理、独立カスタムサンプラー、等熱量フェード、ゼロクロス・スナップ、
+ * バックグラウンドレンダリング、Beforeバイパス、およびDAWエクスポートを完全一元管理するコアクラス。
  */
 class AnatomyAudioProcessor final : public juce::AudioProcessor,
     public juce::Thread,
@@ -67,8 +67,12 @@ public:
     void getCallbackBuffersSecure(juce::AudioBuffer<float>& transDest, juce::AudioBuffer<float>& tonalDest)
     {
         const juce::ScopedLock sl(lock);
-        transDest.makeCopyOf(transBufferUI);
-        tonalDest.makeCopyOf(tonalBufferUI);
+        // UI波形表示用バッファ判定（カスタム常駐時はカスタム、Reset後はドラム生波形を安全逆同期）
+        if (customTransBuffer.getNumSamples() > 0) transDest.makeCopyOf(customTransBuffer);
+        else                                       transDest.makeCopyOf(transBufferUI);
+
+        if (customTonalBuffer.getNumSamples() > 0) tonalDest.makeCopyOf(customTonalBuffer);
+        else                                       tonalDest.makeCopyOf(tonalBufferUI);
     }
 
     void updateRouteOrder(TargetRoute route, const std::vector<int>& activeEffectIndices);
@@ -88,8 +92,12 @@ public:
     juce::File createTemporaryWavForExport(int laneIndex);
     void setOffsetsFromUI(bool isTransient, float startMs, float endMs) noexcept;
 
-    // 💥【新設フェーズ4】個別サンプルインポート時に、内部バッファを一撃で差し替え波形更新させる直通関数
-    void loadCustomSampleFromUI(bool isTransient, const juce::AudioBuffer<float>& newBuffer, double sr) noexcept;
+    // 💥【安全設計】大元の分離波形を物理破壊せず、独立して差し替えWavを常駐・消去させるためのサンプラー制御回路
+    void storeCustomSampleFromUI(bool isTransient, const juce::AudioBuffer<float>& newBuffer, double sr) noexcept;
+    void clearCustomSampleFromUI(bool isTransient) noexcept;
+
+    // 💥【ポップノイズ撲滅】トリミングノブ変更時やドラッグ時に、波形が0を跨ぐ位置を瞬時に探すスナップ数理ヘルパー
+    int snapToZeroCrossing(const juce::AudioBuffer<float>& buffer, int targetSample) noexcept;
 
     juce::AudioProcessorValueTreeState apvts;
 
@@ -102,6 +110,12 @@ public:
 
     juce::AudioBuffer<float>& getRawInputBufferForUI() noexcept { return rawInputBuffer; }
     double getFileSampleRate() const noexcept { return fileSampleRate; }
+
+    // 💥【UI同期用】エディタ側からカスタム常駐サンプルの有無を安全確認するための判定関数
+    bool isCustomSampleLoaded(bool isTransient) const noexcept
+    {
+        return isTransient ? (customTransBuffer.getNumSamples() > 0) : (customTonalBuffer.getNumSamples() > 0);
+    }
 
 private:
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -149,6 +163,9 @@ private:
     juce::AudioBuffer<float> inputBufferThread;
     juce::AudioBuffer<float> transBufferThread;
     juce::AudioBuffer<float> tonalBufferThread;
+
+    juce::AudioBuffer<float> customTransBuffer;
+    juce::AudioBuffer<float> customTonalBuffer;
 
     juce::AudioBuffer<float> transBufferUI;
     juce::AudioBuffer<float> tonalBufferUI;
