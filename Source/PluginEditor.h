@@ -11,9 +11,8 @@
 #include "UI/ParameterDockPanel.h"
 
 /**
- * AnatomyAudioProcessorEditor
- * 3連ノブに拡張された左右パネルの幾何学アライメント、および
- * 15面展開独立パラメータの毎フレーム逆同期アライメントを統括するメインエディタクラス。
+ * AnatomyAudioProcessorEditor (Phase 2-4 Ultimate Edition)
+ * 5段積み超統合レイアウト、左右コアエリア分割、およびBefore/Afterのスマートトグルを統括。
  */
 class AnatomyAudioProcessorEditor final : public juce::AudioProcessorEditor,
     public juce::FileDragAndDropTarget,
@@ -38,39 +37,52 @@ private:
     void updateButtonToggleStates();
 
     AnatomyAudioProcessor& audioProcessor;
-
     juce::AudioFormatManager formatManager;
     bool wasProcessing = false;
 
-    WaveformComponent waveDndFile;
+    // 5段積み専用：3枚の特製ハイパー波形ビジュアルパネル
+    WaveformComponent waveFullMix;
     WaveformComponent waveTransient;
     WaveformComponent waveTonal;
 
+    // 1段目操作部
     juce::TextButton btnOriginal{ "Full Mix" };
     juce::TextButton btnTransient{ "Transient Solo" };
-    juce::TextButton btnTonal{ "Sustain Solo" };
+    juce::TextButton btnTonal{ "Tonal Solo" };     // SustainからTonalへ名称変更
+    juce::TextButton btnBefore{ "BEFORE" };        // 💥案A：スマートON/OFFトグルボタン
 
+    // 2段目左右引き裂き用 Transientコアパラメータ
     juce::Slider sliderClickLength;
-    juce::Slider sliderClickCurve;
     juce::Slider sliderTransPitch;
-    juce::Slider sliderTonalPitch;
-    juce::Slider sliderSustainRelease;
-
+    juce::Slider sliderTransGain; // 1段目から引っ越しマウント
     juce::Label lblClickLength;
-    juce::Label lblClickCurve;
     juce::Label lblTransPitch;
+    juce::Label lblTransGain;
+
+    // 2段目左右引き裂き用 Tonalコアパラメータ
+    juce::Slider sliderClickCurve;
+    juce::Slider sliderTonalPitch; // SustainからTonalへ名称変更
+    juce::Slider sliderTonalGain;  // 1段目から引っ越しマウント
+    juce::Slider sliderSustainRelease;
+    juce::Label lblClickCurve;
     juce::Label lblTonalPitch;
+    juce::Label lblTonalGain;
     juce::Label lblSustainRelease;
 
+    // 鉄壁の初期化アタッチメント
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachClickLength;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachClickCurve;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTransPitch;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTonalPitch;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachSustainRelease;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTransMixGain;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTonalMixGain;
 
+    // 各レーンブラウザ
     TransientBrowserPanel transientBrowserPanel{ audioProcessor, waveTransient };
     TonalBrowserPanel tonalBrowserPanel{ audioProcessor, waveTonal };
 
+    // 各エフェクトラックと最下段フル幅パラメータドック
     EffectRackPanel effectRackPanel{ audioProcessor };
     ParameterDockPanel parameterDockPanel{ audioProcessor };
 

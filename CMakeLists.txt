@@ -62,7 +62,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     "Source/UI/WaveformComponent.cpp"
     
     
-  "Source/DSP/SharedSampleData.h"    "Source/DSP/VoiceState.h" "Source/DSP/TransientReplacer.h" "Source/UI/TransientBrowserPanel.h"  "Source/DSP/TonalReplacer.h" "Source/UI/TonalBrowserPanel.h" "Source/DSP/Effects/AudioEffect.h" "Source/DSP/Effects/EffectChain.h" "Source/DSP/Effects/ADAA_Saturation.h" "Source/DSP/Effects/BitCrusher.h" "Source/DSP/Effects/NoiseGenerator.h" "Source/DSP/Effects/OTT_Multiband.h" "Source/DSP/Effects/Limiter.h" "Source/UI/EffectRackPanel.h" "Source/UI/EffectCardComponent.h")
+  "Source/DSP/SharedSampleData.h"    "Source/DSP/VoiceState.h" "Source/DSP/TransientReplacer.h" "Source/UI/TransientBrowserPanel.h"  "Source/DSP/TonalReplacer.h" "Source/UI/TonalBrowserPanel.h" "Source/DSP/Effects/AudioEffect.h" "Source/DSP/Effects/EffectChain.h" "Source/DSP/Effects/ADAA_Saturation.h" "Source/DSP/Effects/BitCrusher.h" "Source/DSP/Effects/NoiseGenerator.h" "Source/DSP/Effects/OTT_Multiband.h" "Source/DSP/Effects/Limiter.h" "Source/UI/EffectRackPanel.h" "Source/UI/EffectCardComponent.h" "Source/DSP/BeforeAfterBypasser.h" "Source/DSP/OfflineMixRenderer.h")
 
 # ==============================================================================
 # JUCEモジュールのリンク

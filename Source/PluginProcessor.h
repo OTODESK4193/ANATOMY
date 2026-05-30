@@ -6,7 +6,6 @@
 #include <memory>
 #include <atomic>
 #include <vector>
-
 #include "DSP/HpssSeparator.h"
 #include "DSP/SharedSampleData.h"
 #include "DSP/VoiceState.h"
@@ -14,11 +13,13 @@
 #include "DSP/TonalReplacer.h"
 #include "DSP/Effects/AudioEffect.h"
 #include "DSP/Effects/EffectChain.h"
+#include "DSP/BeforeAfterBypasser.h"
+#include "DSP/OfflineMixRenderer.h"
 
 /**
  * AnatomyAudioProcessor
- * 構造案A（15個の完全独立インスタンス・プール）を完全に内包し、
- * メッセージスレッドからの順序変更をインデックス配列経由で安全に非同期処理するコアクラス。
+ * フェーズ2〜4の全音響数理、バックグラウンドレンダリング、Before/Afterバイパス、
+ * およびDAWエクスポート用のファイルオンデマンドジェネレーターを完全一元管理するコアクラス。
  */
 class AnatomyAudioProcessor final : public juce::AudioProcessor,
     public juce::Thread,
@@ -70,17 +71,24 @@ public:
         tonalDest.makeCopyOf(tonalBufferUI);
     }
 
-    /**
-     * 💥【構造案A-2＆カプセル化準拠】
-     * UI側（Rack）から、現在そのレーンに配置されているエフェクトの種類インデックス順（配列）のみを非同期受信するインターフェース。
-     * インデックス定義: 0=Saturation, 1=BitCrusher, 2=NoiseGenerator, 3=OTT_Multiband, 4=Limiter
-     */
     void updateRouteOrder(TargetRoute route, const std::vector<int>& activeEffectIndices);
 
-    // 💥【新設】UI側（EffectRackPanel）から3レーン独立プール個体を安全に参照するためのインラインアクセサ群
     AudioEffect* getTransientPoolInstance(int idx) const noexcept { return (idx >= 0 && idx < 5) ? transientPool[idx].get() : nullptr; }
     AudioEffect* getTonalPoolInstance(int idx) const noexcept { return (idx >= 0 && idx < 5) ? tonalPool[idx].get() : nullptr; }
     AudioEffect* getFullMixPoolInstance(int idx) const noexcept { return (idx >= 0 && idx < 5) ? fullMixPool[idx].get() : nullptr; }
+
+    // フェーズ2〜4：バックグラウンドレンダリング・バイパスシステムの実体定義
+    BeforeAfterBypasser beforeAfterBypasser;
+    OfflineMixRenderer offlineMixRenderer;
+
+    // オフラインレンダリングおよびUI同期用のパブリック Start/End ミリ秒キャッシュ配列
+    float transStartOffsetMs = 0.0f;
+    float transEndOffsetMs = 0.0f;
+    float tonalStartOffsetMs = 0.0f;
+    float tonalEndOffsetMs = 0.0f;
+
+    juce::File createTemporaryWavForExport(int laneIndex);
+    void setOffsetsFromUI(bool isTransient, float startMs, float endMs) noexcept;
 
     juce::AudioProcessorValueTreeState apvts;
 
@@ -90,6 +98,9 @@ public:
     EffectChain transientChain;
     EffectChain tonalChain;
     EffectChain fullMixChain;
+
+    juce::AudioBuffer<float>& getRawInputBufferForUI() noexcept { return rawInputBuffer; }
+    double getFileSampleRate() const noexcept { return fileSampleRate; }
 
 private:
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -103,6 +114,8 @@ private:
     void updateActiveSampleData();
     void cleanUpGarbageBin();
     void synchronizePoolParameters() noexcept;
+
+    friend class OfflineMixRenderer;
 
     HpssSeparator separator{ 2048 };
     juce::CriticalSection lock;
@@ -141,8 +154,6 @@ private:
 
     int currentSoloMode = 0;
 
-    // 💥【A案：完全独立マルチインスタンス・プール】
-    // 3レーンに対して全具象エフェクトクラスを独立配置し、内部過去ログ（状態変数）を完全に隔離。
     std::unique_ptr<AudioEffect> transientPool[5];
     std::unique_ptr<AudioEffect> tonalPool[5];
     std::unique_ptr<AudioEffect> fullMixPool[5];
