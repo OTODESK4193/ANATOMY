@@ -1,4 +1,5 @@
 #pragma once
+
 #include "AudioEffect.h"
 #include <juce_dsp/juce_dsp.h>
 #include <algorithm>
@@ -6,8 +7,7 @@
 
 /**
  * OTT_Multiband
- * ZDFクロスオーバーを用いた完全ゼロレイテンシー・3バンド・コンプレッサー。
- * タイム・マルチプライヤー数理、およびアウトプット・ゲイン回路を完全内包。
+ * 分岐帯域をピンポイントシフトできる X-Over Freq パラメータを追加。
  */
 class OTT_Multiband final : public AudioEffect
 {
@@ -26,14 +26,11 @@ public:
 
         juce::dsp::ProcessSpec spec;
         spec.sampleRate = sampleRate;
-        spec.maximumBlockSize = static_cast<juce::uint32> (maxBlockSize);
+        spec.maximumBlockSize = static_cast<juce::uint32>(maxBlockSize);
         spec.numChannels = 2;
 
         filterLow.prepare(spec);
         filterHigh.prepare(spec);
-
-        filterLow.setCutoffFrequency(200.0f);
-        filterHigh.setCutoffFrequency(2500.0f);
 
         for (int i = 0; i < 3; ++i)
         {
@@ -103,7 +100,7 @@ public:
         juce::dsp::ProcessContextReplacing<float> ctxHigh(highBlock);
         comps[2].process(ctxHigh);
 
-        const float depth = depthParam;
+        const float mix = currentMix;
         const float outGainLinear = std::pow(10.0f, outGainDbParam / 20.0f);
 
         for (int ch = 0; ch < numChannels; ++ch)
@@ -116,7 +113,7 @@ public:
             for (int s = 0; s < numSamples; ++s)
             {
                 float wet = (low[s] + mid[s] + high[s]) * outGainLinear;
-                dest[s] = (dest[s] * (1.0f - depth)) + (wet * depth);
+                dest[s] = (dest[s] * (1.0f - mix)) + (wet * mix);
             }
         }
     }
@@ -125,7 +122,12 @@ public:
     TargetRoute getTargetRoute() const noexcept override { return route; }
     void setTargetRoute(TargetRoute r) noexcept override { route = r; }
 
-    void setDepth(float d) noexcept { depthParam = juce::jlimit(0.0f, 1.0f, d); }
+    bool isActive() const noexcept override { return activeState; }
+    void setActive(bool shouldBeActive) noexcept override { activeState = shouldBeActive; }
+
+    void setMix(float newMix) noexcept override { currentMix = juce::jlimit(0.0f, 1.0f, newMix); }
+    float getMix() const noexcept override { return currentMix; }
+
     void setTimeMultiplier(float t) noexcept
     {
         float newT = juce::jlimit(0.1f, 10.0f, t);
@@ -135,11 +137,34 @@ public:
             updateCrossoverAndDynamics();
         }
     }
+
     void setOutGainDb(float gainDb) noexcept { outGainDbParam = juce::jlimit(-24.0f, 24.0f, gainDb); }
+
+    void setCrossoverFreq(float freqHz) noexcept
+    {
+        float newFreq = juce::jlimit(100.0f, 1000.0f, freqHz);
+        if (std::abs(crossoverFreqParam - newFreq) > 1.0e-2f)
+        {
+            crossoverFreqParam = newFreq;
+            updateCrossoverAndDynamics();
+        }
+    }
+
+    void setIndexedParameter(int index, float value) noexcept override
+    {
+        if (index == 0)      setMix(value); // Depth/Mixの共通統合
+        else if (index == 1) setTimeMultiplier(value);
+        else if (index == 2) setOutGainDb(value);
+        else if (index == 3) setCrossoverFreq(value);
+    }
 
 private:
     void updateCrossoverAndDynamics() noexcept
     {
+        // 💥【高精度化：X-Over Freq】ドラムのキャラクターに応じてクロスオーバーを動的アライメント
+        filterLow.setCutoffFrequency(crossoverFreqParam);
+        filterHigh.setCutoffFrequency(crossoverFreqParam * 12.5f); // ロー準拠でハイを相関シフト
+
         float att = 10.0f * timeMultiplierParam;
         float rel = 100.0f * timeMultiplierParam;
         for (auto& c : comps)
@@ -158,10 +183,13 @@ private:
     juce::AudioBuffer<float> midBuffer;
     juce::AudioBuffer<float> highBuffer;
 
-    float depthParam = 0.7f;
+    float currentMix = 0.7f;
     float timeMultiplierParam = 1.0f;
     float outGainDbParam = 0.0f;
+    float crossoverFreqParam = 200.0f;
+
     TargetRoute route = TargetRoute::FullMix;
+    bool activeState = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OTT_Multiband)
 };

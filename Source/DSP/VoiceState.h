@@ -1,8 +1,14 @@
 #pragma once
+
 #include "SharedSampleData.h"
 #include "GranularPitchShifter.h"
 #include <memory>
 
+/**
+ * VoiceState
+ * 核心制約1に完全適合した、純粋なタイムドメイン発音ステートマシン。
+ * 構造案Aに準拠し、個別のエフェクト履歴を持たず軽量に発音位置のみをトラッキングします。
+ */
 struct VoiceState
 {
     const SharedSampleData* sampleData = nullptr;

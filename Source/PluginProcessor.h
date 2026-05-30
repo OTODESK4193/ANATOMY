@@ -1,10 +1,12 @@
 #pragma once
+
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_core/juce_core.h>
 #include <memory>
 #include <atomic>
 #include <vector>
+
 #include "DSP/HpssSeparator.h"
 #include "DSP/SharedSampleData.h"
 #include "DSP/VoiceState.h"
@@ -13,6 +15,11 @@
 #include "DSP/Effects/AudioEffect.h"
 #include "DSP/Effects/EffectChain.h"
 
+/**
+ * AnatomyAudioProcessor
+ * 構造案A（15個の完全独立インスタンス・プール）を完全に内包し、
+ * メッセージスレッドからの順序変更をインデックス配列経由で安全に非同期処理するコアクラス。
+ */
 class AnatomyAudioProcessor final : public juce::AudioProcessor,
     public juce::Thread,
     public juce::AudioProcessorValueTreeState::Listener
@@ -69,6 +76,11 @@ public:
      * インデックス定義: 0=Saturation, 1=BitCrusher, 2=NoiseGenerator, 3=OTT_Multiband, 4=Limiter
      */
     void updateRouteOrder(TargetRoute route, const std::vector<int>& activeEffectIndices);
+
+    // 💥【新設】UI側（EffectRackPanel）から3レーン独立プール個体を安全に参照するためのインラインアクセサ群
+    AudioEffect* getTransientPoolInstance(int idx) const noexcept { return (idx >= 0 && idx < 5) ? transientPool[idx].get() : nullptr; }
+    AudioEffect* getTonalPoolInstance(int idx) const noexcept { return (idx >= 0 && idx < 5) ? tonalPool[idx].get() : nullptr; }
+    AudioEffect* getFullMixPoolInstance(int idx) const noexcept { return (idx >= 0 && idx < 5) ? fullMixPool[idx].get() : nullptr; }
 
     juce::AudioProcessorValueTreeState apvts;
 

@@ -3,6 +3,7 @@
 #include "AudioEffect.h"
 #include <cmath>
 #include <algorithm>
+#include <random>
 
 /**
  * BitCrusher
@@ -12,7 +13,7 @@
 class BitCrusher final : public AudioEffect
 {
 public:
-    BitCrusher() = default;
+    BitCrusher() : rd(), gen(rd()), dis(-1.0f, 1.0f) {}
     ~BitCrusher() override = default;
 
     void prepare(double sampleRate, int /*maxBlockSize*/) override
@@ -35,11 +36,10 @@ public:
         const int numSamples = buffer.getNumSamples();
 
         const float bits = currentBits;
-        const int downsampleFactor = std::max(1, static_cast<int> (currentDownsample));
+        const float baseDownsample = currentDownsample;
+        const float jitter = currentJitter;
         const float mix = currentMix;
 
-        // クオンタイズ用の解像度スケールを事前算出
-        // 例: 8bit なら 2^7 = 128
         const float quantScale = std::pow(2.0f, bits - 1.0f);
 
         for (int ch = 0; ch < numChannels; ++ch)
@@ -55,10 +55,11 @@ public:
                 float input = channelData[s];
                 float processed = input;
 
-                // 1. サンプルレート・リダクション（ダウンサンプリング・ホールド）
-                if (count % downsampleFactor == 0)
+                float noiseComponent = dis(gen) * jitter * (baseDownsample * 0.5f);
+                int dynamicFactor = std::max(1, static_cast<int>(std::round(baseDownsample + noiseComponent)));
+
+                if (count % dynamicFactor == 0)
                 {
-                    // 2. ビット深度リダクション（振幅の階段状クオンタイズ）
                     if (bits < 24.0f)
                     {
                         processed = std::round(processed * quantScale) / quantScale;
@@ -72,34 +73,52 @@ public:
 
                 count++;
 
-                // ドライ/ウェットの線形クロスフェード
                 channelData[s] = (input * (1.0f - mix)) + (processed * mix);
             }
 
             lastSample[ch] = lastSmp;
-            holdCounter[ch] = count % 96000; // カウンターのオーバーフロー防止マージン
+            holdCounter[ch] = count % 96000;
         }
     }
 
     juce::String getName() const override { return "Bitcrusher"; }
-
     TargetRoute getTargetRoute() const noexcept override { return route; }
     void setTargetRoute(TargetRoute newRoute) noexcept override { route = newRoute; }
 
+    bool isActive() const noexcept override { return activeState; }
+    void setActive(bool shouldBeActive) noexcept override { activeState = shouldBeActive; }
+
+    void setMix(float newMix) noexcept override { currentMix = juce::jlimit(0.0f, 1.0f, newMix); }
+    float getMix() const noexcept override { return currentMix; }
+
     void setBits(float newBits) noexcept { currentBits = juce::jlimit(2.0f, 24.0f, newBits); }
     void setDownsample(float newDownsample) noexcept { currentDownsample = juce::jlimit(1.0f, 32.0f, newDownsample); }
-    void setMix(float newMix) noexcept { currentMix = juce::jlimit(0.0f, 1.0f, newMix); }
+    void setJitter(float newJitter) noexcept { currentJitter = juce::jlimit(0.0f, 1.0f, newJitter); }
+
+    void setIndexedParameter(int index, float value) noexcept override
+    {
+        if (index == 0)      setBits(value);
+        else if (index == 1) setDownsample(value);
+        else if (index == 2) setMix(value);
+        else if (index == 3) setJitter(value);
+    }
 
 private:
     double currentSampleRate = 44100.0;
     TargetRoute route = TargetRoute::FullMix;
+    bool activeState = false;
 
     float lastSample[2] = { 0.0f, 0.0f };
     int holdCounter[2] = { 0, 0 };
 
+    std::random_device rd;
+    std::mt19937 gen;
+    std::uniform_real_distribution<float> dis;
+
     float currentBits = 8.0f;
     float currentDownsample = 4.0f;
     float currentMix = 0.3f;
+    float currentJitter = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BitCrusher)
 };

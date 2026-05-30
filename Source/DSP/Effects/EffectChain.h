@@ -6,11 +6,6 @@
 #include <memory>
 #include <atomic>
 
-/**
- * EffectChainSnapshot
- * オーディオスレッドから不変データとして参照される、生ポインタの順序配列コンテナ。
- * 実体の所有権は持たないため、どれだけ激しく差し替えても実体が消滅することはありません。
- */
 class EffectChainSnapshot final : public juce::ReferenceCountedObject
 {
 public:
@@ -19,7 +14,6 @@ public:
     EffectChainSnapshot() = default;
     ~EffectChainSnapshot() override = default;
 
-    // オーディオスレッドが安全にループ処理するための生ポインタ順序配列
     std::vector<AudioEffect*> activeEffects;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EffectChainSnapshot)
@@ -73,17 +67,13 @@ public:
 
         for (auto* fx : snapshot->activeEffects)
         {
-            if (fx != nullptr)
+            if (fx != nullptr && fx->isActive())
             {
                 fx->process(buffer);
             }
         }
     }
 
-    /**
-     * UI側の永続エフェクトから生成された最新の生ポインタ配列を受け取り、
-     * アトミックにスナップショットを交換します。
-     */
     void updateChain(const std::vector<AudioEffect*>& newEffects,
         std::vector<EffectChainSnapshot*>& garbageBin)
     {
@@ -93,7 +83,6 @@ public:
         auto* oldSnapshot = currentSnapshot.exchange(newSnapshot, std::memory_order_acq_rel);
         if (oldSnapshot != nullptr)
         {
-            // 旧インデックスコンテナを安全にゴミ箱へ退避
             garbageBin.push_back(oldSnapshot);
         }
     }

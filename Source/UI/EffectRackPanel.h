@@ -4,20 +4,26 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "../PluginProcessor.h"
 #include "../DSP/Effects/AudioEffect.h"
-#include "../DSP/Effects/ADAA_Saturation.h"
-#include "../DSP/Effects/BitCrusher.h"
-#include "../DSP/Effects/NoiseGenerator.h"
-#include "../DSP/Effects/OTT_Multiband.h"
-#include "../DSP/Effects/Limiter.h"
 #include <vector>
 #include <memory>
 #include <algorithm>
+#include <functional>
 
+/**
+ * EffectCardComponent
+ * 縦幅半分（26px）にスリム化され、名称、On/Off、格納（X）ボタンのみで構成された
+ * 依存関係のない純粋なラックカードUI。
+ */
 class EffectCardComponent final : public juce::Component
 {
 public:
-    EffectCardComponent(AnatomyAudioProcessor& p, AudioEffect* fxInstance, std::function<void(TargetRoute)> onRouteChangedCallback)
-        : processor(p), fx(fxInstance), onRouteChanged(onRouteChangedCallback)
+    EffectCardComponent(AudioEffect* fxInstance,
+        int typeIdx,
+        TargetRoute r,
+        std::function<void()> onToggleCallback,
+        std::function<void()> onRemoveCallback)
+        : fx(fxInstance), effectTypeIndex(typeIdx), currentRoute(r),
+        onToggle(onToggleCallback), onRemove(onRemoveCallback)
     {
         jassert(fx != nullptr);
 
@@ -27,202 +33,78 @@ public:
         lblTitle.setColour(juce::Label::textColourId, juce::Colours::cyan);
         addAndMakeVisible(lblTitle);
 
-        auto configureRouteButton = [this](juce::TextButton& b, const juce::String& text, int id) {
-            b.setButtonText(text);
-            b.setRadioGroupId(99);
-            b.setClickingTogglesState(true);
-            b.setColour(juce::TextButton::buttonOnColourId, juce::Colours::cyan);
-            b.setColour(juce::TextButton::textColourOnId, juce::Colours::black);
-            b.setColour(juce::TextButton::buttonColourId, juce::Colours::darkgrey.darker());
-            b.setColour(juce::TextButton::textColourOffId, juce::Colours::white.withAlpha(0.6f));
-            b.onClick = [this, id] { if (onRouteChanged) onRouteChanged(static_cast<TargetRoute> (id)); };
-            addAndMakeVisible(b);
+        btnActive.setButtonText("ON");
+        btnActive.setClickingTogglesState(true);
+        btnActive.setToggleState(fx->isActive(), juce::dontSendNotification);
+        btnActive.setColour(juce::TextButton::buttonOnColourId, juce::Colours::cyan);
+        btnActive.setColour(juce::TextButton::textColourOnId, juce::Colours::black);
+        btnActive.setColour(juce::TextButton::buttonColourId, juce::Colours::darkgrey.darker());
+        btnActive.setColour(juce::TextButton::textColourOffId, juce::Colours::white.withAlpha(0.4f));
+        btnActive.onClick = [this] {
+            if (fx != nullptr)
+            {
+                fx->setActive(btnActive.getToggleState());
+                if (onToggle) onToggle();
+            }
             };
+        addAndMakeVisible(btnActive);
 
-        configureRouteButton(btnRouteTrans, "TRANS", 0);
-        configureRouteButton(btnRouteTonal, "TONAL", 1);
-        configureRouteButton(btnRouteFull, "FULL", 2);
-
-        updateRouteButtonStates();
-
-        if (auto* sat = dynamic_cast<ADAA_Saturation*> (fx))
-        {
-            setupKnob(sliderParam1, lblParam1, "DRIVE", 1.0, 16.0, 2.0);
-            setupKnob(sliderParam2, lblParam2, "MIX", 0.0, 1.0, 0.5);
-
-            sliderParam1.onValueChange = [this] {
-                if (auto* param = processor.apvts.getParameter("satDrive"))
-                    param->setValueNotifyingHost(param->convertTo0to1(static_cast<float> (sliderParam1.getValue())));
-                };
-            sliderParam2.onValueChange = [this] {
-                if (auto* param = processor.apvts.getParameter("satMix"))
-                    param->setValueNotifyingHost(param->convertTo0to1(static_cast<float> (sliderParam2.getValue())));
-                };
-        }
-        else if (auto* crusher = dynamic_cast<BitCrusher*> (fx))
-        {
-            setupKnob(sliderParam1, lblParam1, "BITS", 2.0, 24.0, 8.0);
-            setupKnob(sliderParam2, lblParam2, "DOWNS", 1.0, 32.0, 4.0);
-            setupKnob(sliderParam3, lblParam3, "MIX", 0.0, 1.0, 0.3);
-
-            sliderParam1.onValueChange = [this] {
-                if (auto* param = processor.apvts.getParameter("bcBits"))
-                    param->setValueNotifyingHost(param->convertTo0to1(static_cast<float> (sliderParam1.getValue())));
-                };
-            sliderParam2.onValueChange = [this] {
-                if (auto* param = processor.apvts.getParameter("bcDown"))
-                    param->setValueNotifyingHost(param->convertTo0to1(static_cast<float> (sliderParam2.getValue())));
-                };
-            sliderParam3.onValueChange = [this] {
-                if (auto* param = processor.apvts.getParameter("bcMix"))
-                    param->setValueNotifyingHost(param->convertTo0to1(static_cast<float> (sliderParam3.getValue())));
-                };
-        }
-        else if (auto* noise = dynamic_cast<NoiseGenerator*> (fx))
-        {
-            setupKnob(sliderParam1, lblParam1, "DECAY", 1.0, 1000.0, 100.0);
-            addAndMakeVisible(toggleNoiseType);
-            toggleNoiseType.setButtonText("PINK");
-            toggleNoiseType.setColour(juce::ToggleButton::textColourId, juce::Colours::white);
-
-            sliderParam1.onValueChange = [this] {
-                if (auto* param = processor.apvts.getParameter("nsDecay"))
-                    param->setValueNotifyingHost(param->convertTo0to1(static_cast<float> (sliderParam1.getValue())));
-                };
-            toggleNoiseType.onClick = [this] {
-                if (auto* param = processor.apvts.getParameter("nsPink"))
-                    param->setValueNotifyingHost(toggleNoiseType.getToggleState() ? 1.0f : 0.0f);
-                };
-        }
-        else if (auto* limiter = dynamic_cast<Limiter*> (fx))
-        {
-            setupKnob(sliderParam1, lblParam1, "CEIL", -24.0, 0.0, -0.1);
-
-            sliderParam1.onValueChange = [this] {
-                if (auto* param = processor.apvts.getParameter("limCeil"))
-                    param->setValueNotifyingHost(param->convertTo0to1(static_cast<float> (sliderParam1.getValue())));
-                };
-        }
-        else if (auto* ott = dynamic_cast<OTT_Multiband*> (fx))
-        {
-            setupKnob(sliderParam1, lblParam1, "DEPTH", 0.0, 1.0, 0.7);
-            setupKnob(sliderParam2, lblParam2, "TIME", 0.1, 10.0, 1.0);
-            setupKnob(sliderParam3, lblParam3, "GAIN", -24.0, 24.0, 0.0);
-
-            sliderParam1.onValueChange = [this] {
-                if (auto* param = processor.apvts.getParameter("ottDepth"))
-                    param->setValueNotifyingHost(param->convertTo0to1(static_cast<float> (sliderParam1.getValue())));
-                };
-            sliderParam2.onValueChange = [this] {
-                if (auto* param = processor.apvts.getParameter("ottTime"))
-                    param->setValueNotifyingHost(param->convertTo0to1(static_cast<float> (sliderParam2.getValue())));
-                };
-            sliderParam3.onValueChange = [this] {
-                if (auto* param = processor.apvts.getParameter("ottOutGain"))
-                    param->setValueNotifyingHost(param->convertTo0to1(static_cast<float> (sliderParam3.getValue())));
-                };
-        }
+        btnRemove.setButtonText("X");
+        btnRemove.setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+        btnRemove.setColour(juce::TextButton::textColourOffId, juce::Colours::red.withAlpha(0.6f));
+        btnRemove.setColour(juce::TextButton::textColourOnId, juce::Colours::red);
+        btnRemove.onClick = [this] {
+            if (onRemove) onRemove();
+            };
+        addAndMakeVisible(btnRemove);
     }
 
     ~EffectCardComponent() override = default;
 
-    void updateRouteButtonStates()
+    void updateActiveStates() noexcept
     {
-        const auto currentRoute = fx->getTargetRoute();
-        btnRouteTrans.setToggleState(currentRoute == TargetRoute::Transient, juce::dontSendNotification);
-        btnRouteTonal.setToggleState(currentRoute == TargetRoute::Tonal, juce::dontSendNotification);
-        btnRouteFull.setToggleState(currentRoute == TargetRoute::FullMix, juce::dontSendNotification);
-    }
-
-    void synchronizeSlidersWithParameters() noexcept
-    {
-        if (auto* sat = dynamic_cast<ADAA_Saturation*> (fx))
+        if (fx != nullptr)
         {
-            sliderParam1.setValue(processor.apvts.getRawParameterValue("satDrive")->load(), juce::dontSendNotification);
-            sliderParam2.setValue(processor.apvts.getRawParameterValue("satMix")->load(), juce::dontSendNotification);
-        }
-        else if (auto* crusher = dynamic_cast<BitCrusher*> (fx))
-        {
-            sliderParam1.setValue(processor.apvts.getRawParameterValue("bcBits")->load(), juce::dontSendNotification);
-            sliderParam2.setValue(processor.apvts.getRawParameterValue("bcDown")->load(), juce::dontSendNotification);
-            sliderParam3.setValue(processor.apvts.getRawParameterValue("bcMix")->load(), juce::dontSendNotification);
-        }
-        else if (auto* noise = dynamic_cast<NoiseGenerator*> (fx))
-        {
-            sliderParam1.setValue(processor.apvts.getRawParameterValue("nsDecay")->load(), juce::dontSendNotification);
-            toggleNoiseType.setToggleState(processor.apvts.getRawParameterValue("nsPink")->load() > 0.5f, juce::dontSendNotification);
-        }
-        else if (auto* limiter = dynamic_cast<Limiter*> (fx))
-        {
-            sliderParam1.setValue(processor.apvts.getRawParameterValue("limCeil")->load(), juce::dontSendNotification);
-        }
-        else if (auto* ott = dynamic_cast<OTT_Multiband*> (fx))
-        {
-            sliderParam1.setValue(processor.apvts.getRawParameterValue("ottDepth")->load(), juce::dontSendNotification);
-            sliderParam2.setValue(processor.apvts.getRawParameterValue("ottTime")->load(), juce::dontSendNotification);
-            sliderParam3.setValue(processor.apvts.getRawParameterValue("ottOutGain")->load(), juce::dontSendNotification);
+            btnActive.setToggleState(fx->isActive(), juce::dontSendNotification);
         }
     }
 
     AudioEffect* getEffect() const noexcept { return fx; }
+    int getTypeIndex() const noexcept { return effectTypeIndex; }
+    TargetRoute getRoute() const noexcept { return currentRoute; }
 
     void paint(juce::Graphics& g) override
     {
         g.fillAll(juce::Colours::darkgrey.darker().darker());
-        g.setColour(juce::Colours::cyan.withAlpha(0.4f));
+        g.setColour(juce::Colours::cyan.withAlpha(0.3f));
         g.drawRect(getLocalBounds(), 1);
 
-        g.setColour(juce::Colours::cyan.withAlpha(0.2f));
-        g.fillRect(0, 0, 15, getHeight());
+        g.setColour(juce::Colours::white.withAlpha(0.15f));
+        g.fillRect(0, 0, 12, getHeight());
         g.setColour(juce::Colours::white.withAlpha(0.3f));
-        for (int i = 4; i < getHeight(); i += 6)
+        for (int i = 4; i < getHeight() - 2; i += 4)
         {
-            g.fillEllipse(5, i, 2, 2);
-            g.fillEllipse(9, i, 2, 2);
+            g.fillEllipse(3, i, 2, 2);
+            g.fillEllipse(6, i, 2, 2);
         }
     }
 
     void resized() override
     {
         auto area = getLocalBounds();
-        area.removeFromLeft(20);
+        area.removeFromLeft(16);
 
-        auto topArea = area.removeFromTop(24);
-        lblTitle.setBounds(topArea.removeFromLeft(120));
+        btnRemove.setBounds(area.removeFromRight(18).reduced(1));
+        area.removeFromRight(4);
+        btnActive.setBounds(area.removeFromRight(36).reduced(1));
 
-        auto routeArea = topArea.removeFromRight(150);
-        auto w = routeArea.getWidth() / 3;
-        btnRouteTrans.setBounds(routeArea.removeFromLeft(w).reduced(1));
-        btnRouteTonal.setBounds(routeArea.removeFromLeft(w).reduced(1));
-        btnRouteFull.setBounds(routeArea.reduced(1));
-
-        area.removeFromTop(4);
-
-        auto knobArea = area;
-        const int numKnobs = 5;
-        auto kw = knobArea.getWidth() / numKnobs;
-
-        auto s1 = knobArea.removeFromLeft(kw);
-        lblParam1.setBounds(s1.removeFromTop(12));
-        sliderParam1.setBounds(s1);
-
-        auto s2 = knobArea.removeFromLeft(kw);
-        lblParam2.setBounds(s2.removeFromTop(12));
-        sliderParam2.setBounds(s2);
-
-        auto s3 = knobArea.removeFromLeft(kw);
-        lblParam3.setBounds(s3.removeFromTop(12));
-        sliderParam3.setBounds(s3);
-
-        if (toggleNoiseType.isVisible())
-        {
-            toggleNoiseType.setBounds(knobArea.removeFromLeft(kw).reduced(2));
-        }
+        area.removeFromRight(8);
+        lblTitle.setBounds(area);
     }
 
     void mouseDown(const juce::MouseEvent& /*e*/) override
     {
-        if (onCardSelectedCallback)
+        if (onCardSelectedCallback && fx != nullptr)
             onCardSelectedCallback(fx);
     }
 
@@ -232,49 +114,33 @@ public:
         {
             if (!dragContainer->isDragAndDropActive())
             {
-                auto ptrValue = reinterpret_cast<juce::int64> (this);
+                auto ptrValue = reinterpret_cast<juce::int64>(this);
                 dragContainer->startDragging(juce::var(ptrValue), this);
             }
         }
     }
 
-    // 💥【修正完了】構文エラー箇所：テンプレート引数の閉じブラケットを正しい位置へアライメント
     std::function<void(AudioEffect*)> onCardSelectedCallback;
 
 private:
-    void setupKnob(juce::Slider& s, juce::Label& l, const juce::String& name, double minV, double maxV, double defV)
-    {
-        s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 40, 12);
-        s.setRange(minV, maxV, 0.01);
-        s.setValue(defV, juce::dontSendNotification);
-        s.setColour(juce::Slider::rotarySliderFillColourId, juce::Colours::cyan);
-        s.setColour(juce::Slider::thumbColourId, juce::Colours::white);
-        addAndMakeVisible(s);
-
-        l.setText(name, juce::dontSendNotification);
-        l.setFont(juce::Font(8.0f, juce::Font::bold));
-        l.setJustificationType(juce::Justification::centred);
-        l.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.5f));
-        addAndMakeVisible(l);
-    }
-
-    AnatomyAudioProcessor& processor;
     AudioEffect* fx;
-    std::function<void(TargetRoute)> onRouteChanged;
+    int effectTypeIndex;
+    TargetRoute currentRoute;
+    std::function<void()> onToggle;
+    std::function<void()> onRemove;
 
     juce::Label lblTitle;
-    juce::TextButton btnRouteTrans;
-    juce::TextButton btnRouteTonal;
-    juce::TextButton btnRouteFull;
-
-    juce::Slider sliderParam1, sliderParam2, sliderParam3;
-    juce::Label lblParam1, lblParam2, lblParam3;
-    juce::ToggleButton toggleNoiseType;
+    juce::TextButton btnActive;
+    juce::TextButton btnRemove;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EffectCardComponent)
 };
 
+/**
+ * EffectRackPanel
+ * 各エリアの出現・格納インデックス配列、および追加コンボボックスを統括し、
+ * 重複配置および縦幅半分ソートロジックを完全駆動させるメインコンテナクラス。
+ */
 class EffectRackPanel final : public juce::Component,
     public juce::DragAndDropTarget,
     public juce::ChangeBroadcaster
@@ -282,20 +148,67 @@ class EffectRackPanel final : public juce::Component,
 public:
     EffectRackPanel(AnatomyAudioProcessor& p) : processor(p)
     {
-        masterFXPool.push_back(std::make_unique<ADAA_Saturation>());
-        masterFXPool.push_back(std::make_unique<BitCrusher>());
-        masterFXPool.push_back(std::make_unique<NoiseGenerator>());
-        masterFXPool.push_back(std::make_unique<OTT_Multiband>());
-        masterFXPool.push_back(std::make_unique<Limiter>());
+        auto setupCombo = [](juce::ComboBox& c) {
+            c.addItem("+ Saturation", 1);
+            c.addItem("+ Bitcrusher", 2);
+            c.addItem("+ Noise Gen", 3);
+            c.addItem("+ OTT", 4);
+            c.addItem("+ Limiter", 5);
+            c.setText("[ + Add FX ]", juce::dontSendNotification);
+            c.setColour(juce::ComboBox::backgroundColourId, juce::Colours::darkgrey.darker());
+            c.setColour(juce::ComboBox::outlineColourId, juce::Colours::cyan.withAlpha(0.3f));
+            c.setColour(juce::ComboBox::textColourId, juce::Colours::cyan);
+            };
 
-        for (auto& fx : masterFXPool)
-        {
-            fx->prepare(processor.getSampleRate(), processor.getBlockSize());
-            fx->setTargetRoute(TargetRoute::FullMix);
-        }
+        addAndMakeVisible(transAddCombo);
+        setupCombo(transAddCombo);
+        transAddCombo.onChange = [this] {
+            int id = transAddCombo.getSelectedId();
+            if (id > 0) {
+                int idx = id - 1;
+                if (std::find(transActiveIndices.begin(), transActiveIndices.end(), idx) == transActiveIndices.end()) {
+                    transActiveIndices.push_back(idx);
+                    processor.updateRouteOrder(TargetRoute::Transient, transActiveIndices);
+                    rebuildCardComponents();
+                    sendChangeMessage();
+                }
+                transAddCombo.setText("[ + Add FX ]", juce::dontSendNotification);
+            }
+            };
+
+        addAndMakeVisible(tonalAddCombo);
+        setupCombo(tonalAddCombo);
+        tonalAddCombo.onChange = [this] {
+            int id = tonalAddCombo.getSelectedId();
+            if (id > 0) {
+                int idx = id - 1;
+                if (std::find(tonalActiveIndices.begin(), tonalActiveIndices.end(), idx) == tonalActiveIndices.end()) {
+                    tonalActiveIndices.push_back(idx);
+                    processor.updateRouteOrder(TargetRoute::Tonal, tonalActiveIndices);
+                    rebuildCardComponents();
+                    sendChangeMessage();
+                }
+                tonalAddCombo.setText("[ + Add FX ]", juce::dontSendNotification);
+            }
+            };
+
+        addAndMakeVisible(fullMixAddCombo);
+        setupCombo(fullMixAddCombo);
+        fullMixAddCombo.onChange = [this] {
+            int id = fullMixAddCombo.getSelectedId();
+            if (id > 0) {
+                int idx = id - 1;
+                if (std::find(fullMixActiveIndices.begin(), fullMixActiveIndices.end(), idx) == fullMixActiveIndices.end()) {
+                    fullMixActiveIndices.push_back(idx);
+                    processor.updateRouteOrder(TargetRoute::FullMix, fullMixActiveIndices);
+                    rebuildCardComponents();
+                    sendChangeMessage();
+                }
+                fullMixAddCombo.setText("[ + Add FX ]", juce::dontSendNotification);
+            }
+            };
 
         rebuildCardComponents();
-        pushChainsToProcessor();
     }
 
     ~EffectRackPanel() override = default;
@@ -304,7 +217,7 @@ public:
     {
         for (auto* card : activeCards)
         {
-            card->synchronizeSlidersWithParameters();
+            card->updateActiveStates();
         }
     }
 
@@ -312,42 +225,47 @@ public:
     {
         g.fillAll(juce::Colours::black.withAlpha(0.5f));
 
-        auto area = getLocalBounds();
         auto sectionHeight = getHeight() / 3;
 
         g.setColour(juce::Colours::white.withAlpha(0.1f));
-        g.drawHorizontalLine(sectionHeight, 0.0f, static_cast<float> (getWidth()));
-        g.drawHorizontalLine(sectionHeight * 2, 0.0f, static_cast<float> (getWidth()));
+        g.drawHorizontalLine(sectionHeight, 0.0f, static_cast<float>(getWidth()));
+        g.drawHorizontalLine(sectionHeight * 2, 0.0f, static_cast<float>(getWidth()));
 
-        g.setFont(12.0f);
+        g.setFont(11.0f);
         g.setColour(juce::Colours::white.withAlpha(0.4f));
-        g.drawText("TRANSIENT FX SLOT (D&D REORDERABLE)", 15, 5, getWidth(), 15, juce::Justification::left);
-        g.drawText("SUSTAIN TONAL FX SLOT (D&D REORDERABLE)", 15, sectionHeight + 5, getWidth(), 15, juce::Justification::left);
-        g.drawText("FULL MIX MASTER FX SLOT (D&D REORDERABLE)", 15, (sectionHeight * 2) + 5, getWidth(), 15, juce::Justification::left);
+        g.drawText("TRANSIENT FX SLOT (D&D REORDERABLE)", 10, 5, getWidth(), 15, juce::Justification::left);
+        g.drawText("SUSTAIN TONAL FX SLOT (D&D REORDERABLE)", 10, sectionHeight + 5, getWidth(), 15, juce::Justification::left);
+        g.drawText("FULL MIX MASTER FX SLOT (D&D REORDERABLE)", 10, (sectionHeight * 2) + 5, getWidth(), 15, juce::Justification::left);
     }
 
     void resized() override
     {
         auto sectionHeight = getHeight() / 3;
+        const int cardH = 26;
+        const int padding = 2;
+
+        transAddCombo.setBounds(getWidth() - 95, 3, 85, 16);
+        tonalAddCombo.setBounds(getWidth() - 95, sectionHeight + 3, 85, 16);
+        fullMixAddCombo.setBounds(getWidth() - 95, (sectionHeight * 2) + 3, 85, 16);
+
         int transCount = 0; int tonalCount = 0; int fullCount = 0;
-        const int cardH = 55;
 
         for (auto* card : activeCards)
         {
-            const auto route = card->getEffect()->getTargetRoute();
+            const auto route = card->getRoute();
             if (route == TargetRoute::Transient)
             {
-                card->setBounds(10, 22 + (transCount * (cardH + 4)), getWidth() - 20, cardH);
+                card->setBounds(10, 22 + (transCount * (cardH + padding)), getWidth() - 20, cardH);
                 transCount++;
             }
             else if (route == TargetRoute::Tonal)
             {
-                card->setBounds(10, sectionHeight + 22 + (tonalCount * (cardH + 4)), getWidth() - 20, cardH);
+                card->setBounds(10, sectionHeight + 22 + (tonalCount * (cardH + padding)), getWidth() - 20, cardH);
                 tonalCount++;
             }
             else if (route == TargetRoute::FullMix)
             {
-                card->setBounds(10, (sectionHeight * 2) + 22 + (fullCount * (cardH + 4)), getWidth() - 20, cardH);
+                card->setBounds(10, (sectionHeight * 2) + 22 + (fullCount * (cardH + padding)), getWidth() - 20, cardH);
                 fullCount++;
             }
         }
@@ -362,67 +280,94 @@ public:
     {
         juce::var ptrDescription = dragSourceDetails.description;
         juce::int64 ptrVal = ptrDescription;
-        auto* droppedCard = reinterpret_cast<EffectCardComponent*> (ptrVal);
+        auto* droppedCard = reinterpret_cast<EffectCardComponent*>(ptrVal);
         if (droppedCard == nullptr) return;
 
         auto dropY = dragSourceDetails.localPosition.getY();
         auto sectionHeight = getHeight() / 3;
 
         TargetRoute targetRoute = TargetRoute::FullMix;
-        if (dropY < sectionHeight)         targetRoute = TargetRoute::Transient;
-        else if (dropY < sectionHeight * 2)        targetRoute = TargetRoute::Tonal;
+        std::vector<int>* targetIndices = &fullMixActiveIndices;
 
-        auto* targetFx = droppedCard->getEffect();
-        targetFx->setTargetRoute(targetRoute);
-
-        activeCards.removeObject(droppedCard, false);
-
-        int insertIndex = activeCards.size();
-        for (int i = 0; i < activeCards.size(); ++i)
+        if (dropY < sectionHeight)
         {
-            if (activeCards[i]->getEffect()->getTargetRoute() == targetRoute)
+            targetRoute = TargetRoute::Transient;
+            targetIndices = &transActiveIndices;
+        }
+        else if (dropY < sectionHeight * 2)
+        {
+            targetRoute = TargetRoute::Tonal;
+            targetIndices = &tonalActiveIndices;
+        }
+
+        int typeIdx = droppedCard->getTypeIndex();
+        TargetRoute oldRoute = droppedCard->getRoute();
+
+        if (oldRoute == TargetRoute::Transient)
+            transActiveIndices.erase(std::remove(transActiveIndices.begin(), transActiveIndices.end(), typeIdx), transActiveIndices.end());
+        else if (oldRoute == TargetRoute::Tonal)
+            tonalActiveIndices.erase(std::remove(tonalActiveIndices.begin(), tonalActiveIndices.end(), typeIdx), tonalActiveIndices.end());
+        else if (oldRoute == TargetRoute::FullMix)
+            fullMixActiveIndices.erase(std::remove(fullMixActiveIndices.begin(), fullMixActiveIndices.end(), typeIdx), fullMixActiveIndices.end());
+
+        int insertIndex = 0;
+        for (auto* card : activeCards)
+        {
+            if (card->getRoute() == targetRoute)
             {
-                auto cardCenterY = activeCards[i]->getY() + (activeCards[i]->getHeight() / 2);
-                if (dropY < cardCenterY) { insertIndex = i; break; }
+                auto cardCenterY = card->getY() + (card->getHeight() / 2);
+                if (dropY > cardCenterY)
+                {
+                    insertIndex++;
+                }
             }
         }
 
-        if (insertIndex >= activeCards.size()) activeCards.add(droppedCard);
-        else                                   activeCards.insert(insertIndex, droppedCard);
+        if (insertIndex > static_cast<int>(targetIndices->size()))
+            insertIndex = static_cast<int>(targetIndices->size());
 
-        droppedCard->updateRouteButtonStates();
+        targetIndices->insert(targetIndices->begin() + insertIndex, typeIdx);
 
-        pushChainsToProcessor();
+        processor.updateRouteOrder(TargetRoute::Transient, transActiveIndices);
+        processor.updateRouteOrder(TargetRoute::Tonal, tonalActiveIndices);
+        processor.updateRouteOrder(TargetRoute::FullMix, fullMixActiveIndices);
+
+        rebuildCardComponents();
         sendChangeMessage();
-
-        repaint();
-        resized();
     }
 
     AudioEffect* getSelectedEffect() const noexcept { return currentSelectedFX; }
 
 private:
-    int getEffectTypeIndex(AudioEffect* fx) const noexcept
-    {
-        if (dynamic_cast<ADAA_Saturation*> (fx))  return 0;
-        if (dynamic_cast<BitCrusher*> (fx))      return 1;
-        if (dynamic_cast<NoiseGenerator*> (fx))  return 2;
-        if (dynamic_cast<OTT_Multiband*> (fx))   return 3;
-        if (dynamic_cast<Limiter*> (fx))         return 4;
-        return -1;
-    }
-
     void rebuildCardComponents()
     {
         activeCards.clear();
-        for (auto& fx : masterFXPool)
-        {
-            auto* card = new EffectCardComponent(processor, fx.get(), [this, fxPtr = fx.get()](TargetRoute newRoute) {
-                fxPtr->setTargetRoute(newRoute);
-                pushChainsToProcessor();
-                sendChangeMessage();
-                repaint();
-                resized();
+        currentSelectedFX = nullptr;
+
+        auto createCardInLane = [this](int typeIdx, TargetRoute route) {
+            AudioEffect* fxPtr = nullptr;
+            if (route == TargetRoute::Transient)     fxPtr = processor.getTransientPoolInstance(typeIdx);
+            else if (route == TargetRoute::Tonal)    fxPtr = processor.getTonalPoolInstance(typeIdx);
+            else if (route == TargetRoute::FullMix)  fxPtr = processor.getFullMixPoolInstance(typeIdx);
+
+            if (fxPtr == nullptr) return;
+
+            auto* card = new EffectCardComponent(fxPtr, typeIdx, route,
+                [this] { sendChangeMessage(); },
+                [this, typeIdx, route] {
+                    if (route == TargetRoute::Transient)
+                        transActiveIndices.erase(std::remove(transActiveIndices.begin(), transActiveIndices.end(), typeIdx), transActiveIndices.end());
+                    else if (route == TargetRoute::Tonal)
+                        tonalActiveIndices.erase(std::remove(tonalActiveIndices.begin(), tonalActiveIndices.end(), typeIdx), tonalActiveIndices.end());
+                    else if (route == TargetRoute::FullMix)
+                        fullMixActiveIndices.erase(std::remove(fullMixActiveIndices.begin(), fullMixActiveIndices.end(), typeIdx), fullMixActiveIndices.end());
+
+                    processor.updateRouteOrder(TargetRoute::Transient, transActiveIndices);
+                    processor.updateRouteOrder(TargetRoute::Tonal, tonalActiveIndices);
+                    processor.updateRouteOrder(TargetRoute::FullMix, fullMixActiveIndices);
+
+                    rebuildCardComponents();
+                    sendChangeMessage();
                 });
 
             card->onCardSelectedCallback = [this](AudioEffect* clickedFx) {
@@ -432,38 +377,27 @@ private:
 
             addAndMakeVisible(card);
             activeCards.add(card);
-        }
-    }
+            };
 
-    void pushChainsToProcessor()
-    {
-        std::vector<int> transOrder;
-        std::vector<int> tonalOrder;
-        std::vector<int> fullMixOrder;
+        for (int idx : transActiveIndices)   createCardInLane(idx, TargetRoute::Transient);
+        for (int idx : tonalActiveIndices)   createCardInLane(idx, TargetRoute::Tonal);
+        for (int idx : fullMixActiveIndices) createCardInLane(idx, TargetRoute::FullMix);
 
-        for (auto* card : activeCards)
-        {
-            auto* fx = card->getEffect();
-            auto route = fx->getTargetRoute();
-            int typeIdx = getEffectTypeIndex(fx);
-
-            if (typeIdx != -1)
-            {
-                if (route == TargetRoute::Transient)     transOrder.push_back(typeIdx);
-                else if (route == TargetRoute::Tonal)    tonalOrder.push_back(typeIdx);
-                else if (route == TargetRoute::FullMix)  fullMixOrder.push_back(typeIdx);
-            }
-        }
-
-        processor.updateRouteOrder(TargetRoute::Transient, transOrder);
-        processor.updateRouteOrder(TargetRoute::Tonal, tonalOrder);
-        processor.updateRouteOrder(TargetRoute::FullMix, fullMixOrder);
+        resized();
+        repaint();
     }
 
     AnatomyAudioProcessor& processor;
-    std::vector<std::unique_ptr<AudioEffect>> masterFXPool;
     juce::OwnedArray<EffectCardComponent> activeCards;
     AudioEffect* currentSelectedFX = nullptr;
+
+    juce::ComboBox transAddCombo;
+    juce::ComboBox tonalAddCombo;
+    juce::ComboBox fullMixAddCombo;
+
+    std::vector<int> transActiveIndices;
+    std::vector<int> tonalActiveIndices;
+    std::vector<int> fullMixActiveIndices;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EffectRackPanel)
 };

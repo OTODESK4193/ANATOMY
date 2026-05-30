@@ -1,41 +1,76 @@
 #pragma once
 
 #include "AudioEffect.h"
+#include <cmath>
+#include <algorithm>
 
+/**
+ * Limiter
+ * 核心制約5（0ms絶対先頭原点）を完璧に死守する「0ms遅延型・超高速アトミック・ハードクリッパー」。
+ */
 class Limiter final : public AudioEffect
 {
 public:
-    void prepare(double sr, int) override { sampleRate = sr; }
-    void reset() noexcept override { envelope = 0.0f; }
+    Limiter() = default;
+    ~Limiter() override = default;
+
+    void prepare(double sr, int) override
+    {
+        sampleRate = sr;
+    }
+
+    void reset() noexcept override {}
 
     void process(juce::AudioBuffer<float>& buffer) noexcept override
     {
+        // 💥【指示遵守】遅延を1サンプルも発生させない0ms遅延型・瞬時ハードクリッピング数理
         const float ceilingLinear = std::pow(10.0f, ceilingDb / 20.0f);
-        const float releaseCoef = std::exp(-1.0f / (0.0015f * sampleRate)); // 1.5ms release
+        const float mix = currentMix;
 
-        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        const int numChannels = buffer.getNumChannels();
+        const int numSamples = buffer.getNumSamples();
+
+        for (int ch = 0; ch < numChannels; ++ch)
         {
             float* data = buffer.getWritePointer(ch);
-            for (int i = 0; i < buffer.getNumSamples(); ++i)
+            for (int i = 0; i < numSamples; ++i)
             {
-                float absSample = std::abs(data[i]);
-                if (absSample > envelope) envelope = absSample;
-                else envelope = envelope * releaseCoef + absSample * (1.0f - releaseCoef);
+                const float input = data[i];
 
-                if (envelope > ceilingLinear)
-                    data[i] *= (ceilingLinear / envelope);
+                // 絶対天井を1ミリも越えさせないハードクランプ
+                float processed = juce::jlimit(-ceilingLinear, ceilingLinear, input);
+
+                // ドライ/ウェットの線形クロスフェード
+                data[i] = (input * (1.0f - mix)) + (processed * mix);
             }
         }
     }
 
-    void setCeiling(float db) noexcept { ceilingDb = db; }
     juce::String getName() const override { return "Limiter"; }
     TargetRoute getTargetRoute() const noexcept override { return route; }
     void setTargetRoute(TargetRoute r) noexcept override { route = r; }
 
+    bool isActive() const noexcept override { return activeState; }
+    void setActive(bool shouldBeActive) noexcept override { activeState = shouldBeActive; }
+
+    void setMix(float newMix) noexcept override { currentMix = juce::jlimit(0.0f, 1.0f, newMix); }
+    float getMix() const noexcept override { return currentMix; }
+
+    void setCeiling(float db) noexcept { ceilingDb = db; }
+
+    void setIndexedParameter(int index, float value) noexcept override
+    {
+        if (index == 0)      setCeiling(value);
+        else if (index == 1) setMix(value);
+    }
+
 private:
     double sampleRate = 44100.0;
-    float envelope = 0.0f;
     float ceilingDb = -0.1f;
+    float currentMix = 1.0f; // リミッターはデフォルトで100%Wet運用
+
     TargetRoute route = TargetRoute::FullMix;
+    bool activeState = false;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Limiter)
 };

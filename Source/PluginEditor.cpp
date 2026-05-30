@@ -8,17 +8,21 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
 {
     formatManager.registerBasicFormats();
 
+    // 各波形表示コンポーネントの可視化
     addAndMakeVisible(waveDndFile);
     addAndMakeVisible(waveTransient);
     addAndMakeVisible(waveTonal);
     addAndMakeVisible(transientBrowserPanel);
     addAndMakeVisible(tonalBrowserPanel);
 
+    // スリムラックパネルのリスナー登録および可視化
     effectRackPanel.addChangeListener(this);
     addAndMakeVisible(effectRackPanel);
 
+    // 下段パラメータドックの可視化
     addAndMakeVisible(parameterDockPanel);
 
+    // ソロモード切り替えボタンのラジオグループおよびトグルのバインド
     btnOriginal.setRadioGroupId(1);
     btnTransient.setRadioGroupId(1);
     btnTonal.setRadioGroupId(1);
@@ -48,6 +52,7 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     btnTransient.onClick = [this] { audioProcessor.setSoloMode(1); };
     btnTonal.onClick = [this] { audioProcessor.setSoloMode(2); };
 
+    // 各コアノブスライダーの共通初期化設定
     auto configureSlider = [this](juce::Slider& s, juce::Label& l, const juce::String& name) {
         s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
         s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
@@ -68,13 +73,17 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     configureSlider(sliderTonalPitch, lblTonalPitch, "SUSTAIN PITCH (st)");
     configureSlider(sliderSustainRelease, lblSustainRelease, "SUSTAIN RELEASE (ms)");
 
+    // APVTSへの双方向アタッチメントバインド
     attachClickLength = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "clickLength", sliderClickLength);
     attachClickCurve = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "clickCurve", sliderClickCurve);
     attachTransPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "transPitch", sliderTransPitch);
     attachTonalPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "tonalPitch", sliderTonalPitch);
     attachSustainRelease = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "sustainRelease", sliderSustainRelease);
 
+    // エディタウィンドウの初期サイズ決定
     setSize(1150, 710);
+
+    // タイマーの始動 (40ms周期 = 約25fpsでの非同期描画アライメント)
     startTimer(40);
 }
 
@@ -83,7 +92,6 @@ AnatomyAudioProcessorEditor::~AnatomyAudioProcessorEditor()
     effectRackPanel.removeChangeListener(this);
     stopTimer();
 }
-
 bool AnatomyAudioProcessorEditor::isInterestedInFileDrag(const juce::StringArray&)
 {
     return true;
@@ -158,7 +166,7 @@ void AnatomyAudioProcessorEditor::updateButtonToggleStates()
 
 void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    // 🛡️ タイポ完全修正完了
+    // 🛡️ タイポおよび描画衝突の完全修正完了
     g.fillAll(juce::Colours::black);
 
     g.setColour(juce::Colours::white.withAlpha(0.5f));
