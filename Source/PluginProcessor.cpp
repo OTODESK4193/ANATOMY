@@ -566,8 +566,24 @@ void AnatomyAudioProcessor::setOffsetsFromUI(bool isTransient, float startMs, fl
 void AnatomyAudioProcessor::storeCustomSampleFromUI(bool isTransient, const juce::AudioBuffer<float>& newBuffer, double sr) noexcept
 {
     const juce::ScopedLock sl(lock);
-    if (isTransient) customTransBuffer.makeCopyOf(newBuffer);
-    else             customTonalBuffer.makeCopyOf(newBuffer);
+    if (isTransient)
+    {
+        customTransBuffer.makeCopyOf(newBuffer);
+        float durationMs = (static_cast<float>(newBuffer.getNumSamples()) / static_cast<float>(sr)) * 1000.0f;
+        transStartOffsetMs = 0.0f;
+        transEndOffsetMs = durationMs;
+        customTransientReplacer.setStartOffsetMs(0.0f);
+        customTransientReplacer.setEndOffsetMs(durationMs);
+    }
+    else
+    {
+        customTonalBuffer.makeCopyOf(newBuffer);
+        float durationMs = (static_cast<float>(newBuffer.getNumSamples()) / static_cast<float>(sr)) * 1000.0f;
+        tonalStartOffsetMs = 0.0f;
+        tonalEndOffsetMs = durationMs;
+        customTonalReplacer.setStartOffsetMs(0.0f);
+        customTonalReplacer.setEndOffsetMs(durationMs);
+    }
     fileSampleRate = sr;
     updateActiveSampleData();
     offlineMixRenderer.triggerRender();
@@ -612,6 +628,11 @@ void AnatomyAudioProcessor::startSeparation(const juce::AudioBuffer<float>& inpu
         fileSampleRate = sourceSampleRate;
         customTransBuffer.setSize(0, 0);
         customTonalBuffer.setSize(0, 0);
+
+        transStartOffsetMs = 0.0f;
+        transEndOffsetMs = 0.0f;
+        tonalStartOffsetMs = 0.0f;
+        tonalEndOffsetMs = 0.0f;
     }
     needsReanalysis.store(true, std::memory_order_release);
 }
@@ -651,14 +672,21 @@ void AnatomyAudioProcessor::run()
         tonalBufferThread.makeCopyOf(localTonal);
         transBufferUI.makeCopyOf(localTrans);
         tonalBufferUI.makeCopyOf(localTonal);
+
+        double durationMs = (static_cast<double>(transBufferThread.getNumSamples()) / fileSampleRate) * 1000.0;
+
+        if (transEndOffsetMs <= 0.0f)
+        {
+            transStartOffsetMs = 0.0f;
+            transEndOffsetMs = static_cast<float>(durationMs);
+        }
+        if (tonalEndOffsetMs <= 0.0f)
+        {
+            tonalStartOffsetMs = 0.0f;
+            tonalEndOffsetMs = static_cast<float>(durationMs);
+        }
     }
     isAnalysisFinished.store(true, std::memory_order_release);
-
-    double durationMs = (static_cast<double>(transBufferThread.getNumSamples()) / fileSampleRate) * 1000.0;
-    transStartOffsetMs = 0.0f;
-    transEndOffsetMs = static_cast<float>(durationMs);
-    tonalStartOffsetMs = 0.0f;
-    tonalEndOffsetMs = static_cast<float>(durationMs);
 
     offlineMixRenderer.triggerRender();
 }

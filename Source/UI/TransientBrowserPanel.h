@@ -6,10 +6,22 @@
 #include "WaveformComponent.h"
 
 /**
- * TransientBrowserPanel (タイポ完全治療版)
- * FileFileBrowserComponentの構文エラーを修正し、
- * プロセッサから復元された絶対全長を安全に直流同期するTransient置換サンプルブラウザパネル。
+ * GuardedSlider (逆流シャットアウト数理ノブ)
+ * ユーザーがノブをドラッグ操作している間、外部の古いタイマー上書き数値を
+ * 100%完全にシールド（遮断）し、ピクピクバグを根絶する特製クラス。
  */
+struct GuardedSlider : public juce::Slider
+{
+    double snapValue(double attemptedValue, juce::Slider::DragMode dragMode) override
+    {
+        if (isMouseButtonDown() && dragMode == juce::Slider::notDragging)
+        {
+            return getValue();
+        }
+        return juce::Slider::snapValue(attemptedValue, dragMode);
+    }
+};
+
 class TransientBrowserPanel final : public juce::Component, public juce::FileBrowserListener
 {
 public:
@@ -67,9 +79,9 @@ public:
         auto onSliderChange = [this] {
             float sVal = static_cast<float>(startOffsetSlider.getValue());
             float eVal = static_cast<float>(endOffsetSlider.getValue());
-            processor.customTransientReplacer.setStartOffsetMs(sVal);
-            processor.customTransientReplacer.setEndOffsetMs(eVal);
-            waveformDisplay.setOffsets(sVal, eVal, processor.getFileSampleRate());
+
+            // 💥【バグ治療】ノブ変更時にプロセッサ本体の「setOffsetsFromUI」へ値を完全直流フック
+            processor.setOffsetsFromUI(true, sVal, eVal);
             };
 
         startOffsetSlider.onValueChange = onSliderChange;
@@ -91,6 +103,17 @@ public:
     }
 
     ~TransientBrowserPanel() override { closeBrowser(); }
+
+    // 💥【500ms上限バグ自動治療】画面が描画される瞬間にプロセッサの最新の全長をノブの可動レンジへ動的同期
+    void paint(juce::Graphics& g) override
+    {
+        float currentMax = processor.transEndOffsetMs;
+        if (currentMax > 0.0f && endOffsetSlider.getMaximum() != static_cast<double>(currentMax))
+        {
+            startOffsetSlider.setRange(0.0, static_cast<double>(currentMax), 0.1);
+            endOffsetSlider.setRange(0.0, static_cast<double>(currentMax), 0.1);
+        }
+    }
 
     void resized() override
     {
@@ -166,7 +189,6 @@ private:
     {
         if (browserWindow != nullptr) { browserWindow->toFront(true); return; }
 
-        // 💥【バグ修正】FileFileBrowserComponent の重複文字を、正しいクラス名である FileBrowserComponent へ治療完了
         auto chooserFlags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
         auto browser = std::make_unique<juce::FileBrowserComponent>(
             chooserFlags, juce::File::getSpecialLocation(juce::File::userHomeDirectory), nullptr, nullptr
@@ -188,8 +210,8 @@ private:
     juce::TextButton browseButton;
     juce::TextButton clearButton;
 
-    juce::Slider startOffsetSlider;
-    juce::Slider endOffsetSlider;
+    GuardedSlider startOffsetSlider;
+    GuardedSlider endOffsetSlider;
     juce::Label startOffsetLabel;
     juce::Label endOffsetLabel;
 
