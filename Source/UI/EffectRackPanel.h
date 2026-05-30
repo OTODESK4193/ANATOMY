@@ -11,8 +11,7 @@
 
 /**
  * EffectCardComponent
- * 縦幅半分（26px）にスリム化され、名称、On/Off、格納（X）ボタンのみで構成された
- * 依存関係のない純粋なラックカードUI。
+ * 縦幅半分（26px）にスリム化され、名称、On/Off、格納（X）ボタンのみで構成されたラックカードUI。
  */
 class EffectCardComponent final : public juce::Component
 {
@@ -102,10 +101,11 @@ public:
         lblTitle.setBounds(area);
     }
 
+    void paradoxicalTriggerSelection() { if (onCardSelectedCallback && fx != nullptr) onCardSelectedCallback(fx); }
+
     void mouseDown(const juce::MouseEvent& /*e*/) override
     {
-        if (onCardSelectedCallback && fx != nullptr)
-            onCardSelectedCallback(fx);
+        paradoxicalTriggerSelection();
     }
 
     void mouseDrag(const juce::MouseEvent& /*e*/) override
@@ -138,8 +138,8 @@ private:
 
 /**
  * EffectRackPanel
- * 各エリアの出現・格納インデックス配列、および追加コンボボックスを統括し、
- * 重複配置および縦幅半分ソートロジックを完全駆動させるメインコンテナクラス。
+ * 💥【コンボボックス完全撤廃 ➡ 各レーン5連スタイリッシュトグルボタン配置】
+ * 格納（X）ボタンやD&D順序入れ替えとトグル状態が双方向に完全自動アライメント同期するラック。
  */
 class EffectRackPanel final : public juce::Component,
     public juce::DragAndDropTarget,
@@ -148,65 +148,33 @@ class EffectRackPanel final : public juce::Component,
 public:
     EffectRackPanel(AnatomyAudioProcessor& p) : processor(p)
     {
-        auto setupCombo = [](juce::ComboBox& c) {
-            c.addItem("+ Saturation", 1);
-            c.addItem("+ Bitcrusher", 2);
-            c.addItem("+ Noise Gen", 3);
-            c.addItem("+ OTT", 4);
-            c.addItem("+ Limiter", 5);
-            c.setText("[ + Add FX ]", juce::dontSendNotification);
-            c.setColour(juce::ComboBox::backgroundColourId, juce::Colours::darkgrey.darker());
-            c.setColour(juce::ComboBox::outlineColourId, juce::Colours::cyan.withAlpha(0.3f));
-            c.setColour(juce::ComboBox::textColourId, juce::Colours::cyan);
-            };
-
-        addAndMakeVisible(transAddCombo);
-        setupCombo(transAddCombo);
-        transAddCombo.onChange = [this] {
-            int id = transAddCombo.getSelectedId();
-            if (id > 0) {
-                int idx = id - 1;
-                if (std::find(transActiveIndices.begin(), transActiveIndices.end(), idx) == transActiveIndices.end()) {
-                    transActiveIndices.push_back(idx);
-                    processor.updateRouteOrder(TargetRoute::Transient, transActiveIndices);
-                    rebuildCardComponents();
-                    sendChangeMessage();
-                }
-                transAddCombo.setText("[ + Add FX ]", juce::dontSendNotification);
+        // 💥5連スタイリッシュトグルボタンの初期化配置
+        auto setupToggleButtons = [this](std::vector<std::unique_ptr<juce::TextButton>>& btns, const juce::StringArray& names) {
+            for (int i = 0; i < 5; ++i)
+            {
+                auto b = std::make_unique<juce::TextButton>(names[i]);
+                b->setClickingTogglesState(true);
+                b->setColour(juce::TextButton::buttonOnColourId, juce::Colours::cyan);
+                b->setColour(juce::TextButton::textColourOnId, juce::Colours::black);
+                b->setColour(juce::TextButton::buttonColourId, juce::Colours::darkgrey.darker());
+                b->setColour(juce::TextButton::textColourOffId, juce::Colours::white.withAlpha(0.6f));
+                addAndMakeVisible(*b);
+                btns.push_back(std::move(b));
             }
             };
 
-        addAndMakeVisible(tonalAddCombo);
-        setupCombo(tonalAddCombo);
-        tonalAddCombo.onChange = [this] {
-            int id = tonalAddCombo.getSelectedId();
-            if (id > 0) {
-                int idx = id - 1;
-                if (std::find(tonalActiveIndices.begin(), tonalActiveIndices.end(), idx) == tonalActiveIndices.end()) {
-                    tonalActiveIndices.push_back(idx);
-                    processor.updateRouteOrder(TargetRoute::Tonal, tonalActiveIndices);
-                    rebuildCardComponents();
-                    sendChangeMessage();
-                }
-                tonalAddCombo.setText("[ + Add FX ]", juce::dontSendNotification);
-            }
-            };
+        juce::StringArray fxNames{ "Satu", "Crush", "Noise", "OTT", "Limit" };
+        setupToggleButtons(transToggleButtons, fxNames);
+        setupToggleButtons(tonalToggleButtons, fxNames);
+        setupToggleButtons(fullMixToggleButtons, fxNames);
 
-        addAndMakeVisible(fullMixAddCombo);
-        setupCombo(fullMixAddCombo);
-        fullMixAddCombo.onChange = [this] {
-            int id = fullMixAddCombo.getSelectedId();
-            if (id > 0) {
-                int idx = id - 1;
-                if (std::find(fullMixActiveIndices.begin(), fullMixActiveIndices.end(), idx) == fullMixActiveIndices.end()) {
-                    fullMixActiveIndices.push_back(idx);
-                    processor.updateRouteOrder(TargetRoute::FullMix, fullMixActiveIndices);
-                    rebuildCardComponents();
-                    sendChangeMessage();
-                }
-                fullMixAddCombo.setText("[ + Add FX ]", juce::dontSendNotification);
-            }
-            };
+        // 💥各トグルボタン押下時の動的出没トポロジーロジックの敷設
+        for (int i = 0; i < 5; ++i)
+        {
+            transToggleButtons[i]->onClick = [this, i] { handleToggleClick(TargetRoute::Transient, i, transToggleButtons[i]->getToggleState()); };
+            tonalToggleButtons[i]->onClick = [this, i] { handleToggleClick(TargetRoute::Tonal, i, tonalToggleButtons[i]->getToggleState()); };
+            fullMixToggleButtons[i]->onClick = [this, i] { handleToggleClick(TargetRoute::FullMix, i, fullMixToggleButtons[i]->getToggleState()); };
+        }
 
         rebuildCardComponents();
     }
@@ -219,12 +187,23 @@ public:
         {
             card->updateActiveStates();
         }
+
+        // 💥外部からの削除(Xボタン)等に追従して5連ヘッダートグルの点灯状態を逆アライメント同期
+        auto updateHeaderToggles = [](std::vector<std::unique_ptr<juce::TextButton>>& btns, const std::vector<int>& activeIndices) {
+            for (int i = 0; i < 5; ++i)
+            {
+                bool isActive = (std::find(activeIndices.begin(), activeIndices.end(), i) != activeIndices.end());
+                btns[i]->setToggleState(isActive, juce::dontSendNotification);
+            }
+            };
+        updateHeaderToggles(transToggleButtons, transActiveIndices);
+        updateHeaderToggles(tonalToggleButtons, tonalActiveIndices);
+        updateHeaderToggles(fullMixToggleButtons, fullMixActiveIndices);
     }
 
     void paint(juce::Graphics& g) override
     {
         g.fillAll(juce::Colours::black.withAlpha(0.5f));
-
         auto sectionHeight = getHeight() / 3;
 
         g.setColour(juce::Colours::white.withAlpha(0.1f));
@@ -243,10 +222,21 @@ public:
         auto sectionHeight = getHeight() / 3;
         const int cardH = 26;
         const int padding = 2;
+        const int btnW = 42;
+        const int btnH = 16;
 
-        transAddCombo.setBounds(getWidth() - 95, 3, 85, 16);
-        tonalAddCombo.setBounds(getWidth() - 95, sectionHeight + 3, 85, 16);
-        fullMixAddCombo.setBounds(getWidth() - 95, (sectionHeight * 2) + 3, 85, 16);
+        // 💥5連ボタンをセクション右上に極めてタイトかつ美しく幾何学整列
+        auto positionHeaderButtons = [this, btnW, btnH](std::vector<std::unique_ptr<juce::TextButton>>& btns, int startY) {
+            int startX = getWidth() - (btnW * 5) - 10;
+            for (int i = 0; i < 5; ++i)
+            {
+                btns[i]->setBounds(startX + (i * btnW), startY, btnW - 1, btnH);
+            }
+            };
+
+        positionHeaderButtons(transToggleButtons, 4);
+        positionHeaderButtons(tonalToggleButtons, sectionHeight + 4);
+        positionHeaderButtons(fullMixToggleButtons, (sectionHeight * 2) + 4);
 
         int transCount = 0; int tonalCount = 0; int fullCount = 0;
 
@@ -255,17 +245,17 @@ public:
             const auto route = card->getRoute();
             if (route == TargetRoute::Transient)
             {
-                card->setBounds(10, 22 + (transCount * (cardH + padding)), getWidth() - 20, cardH);
+                card->setBounds(10, 24 + (transCount * (cardH + padding)), getWidth() - 20, cardH);
                 transCount++;
             }
             else if (route == TargetRoute::Tonal)
             {
-                card->setBounds(10, sectionHeight + 22 + (tonalCount * (cardH + padding)), getWidth() - 20, cardH);
+                card->setBounds(10, sectionHeight + 24 + (tonalCount * (cardH + padding)), getWidth() - 20, cardH);
                 tonalCount++;
             }
             else if (route == TargetRoute::FullMix)
             {
-                card->setBounds(10, (sectionHeight * 2) + 22 + (fullCount * (cardH + padding)), getWidth() - 20, cardH);
+                card->setBounds(10, (sectionHeight * 2) + 24 + (fullCount * (cardH + padding)), getWidth() - 20, cardH);
                 fullCount++;
             }
         }
@@ -339,6 +329,33 @@ public:
     AudioEffect* getSelectedEffect() const noexcept { return currentSelectedFX; }
 
 private:
+    void handleToggleClick(TargetRoute route, int typeIdx, bool shouldExist)
+    {
+        std::vector<int>& indices = (route == TargetRoute::Transient) ? transActiveIndices :
+            ((route == TargetRoute::Tonal) ? tonalActiveIndices : fullMixActiveIndices);
+
+        auto it = std::find(indices.begin(), indices.end(), typeIdx);
+
+        if (shouldExist && it == indices.end())
+        {
+            indices.push_back(typeIdx);
+            // 出現した瞬間に、プロセッサ側プールの該当個体を自動アクティブ化
+            if (auto* fx = (route == TargetRoute::Transient ? processor.getTransientPoolInstance(typeIdx) :
+                (route == TargetRoute::Tonal ? processor.getTonalPoolInstance(typeIdx) : processor.getFullMixPoolInstance(typeIdx))))
+            {
+                fx->setActive(true);
+            }
+        }
+        else if (!shouldExist && it != indices.end())
+        {
+            indices.erase(it);
+        }
+
+        processor.updateRouteOrder(route, indices);
+        rebuildCardComponents();
+        sendChangeMessage();
+    }
+
     void rebuildCardComponents()
     {
         activeCards.clear();
@@ -377,6 +394,9 @@ private:
 
             addAndMakeVisible(card);
             activeCards.add(card);
+
+            // 💥出没と同時にドックへポインタを強制バインドしノブを即座に出現させるUX
+            currentSelectedFX = fxPtr;
             };
 
         for (int idx : transActiveIndices)   createCardInLane(idx, TargetRoute::Transient);
@@ -391,9 +411,9 @@ private:
     juce::OwnedArray<EffectCardComponent> activeCards;
     AudioEffect* currentSelectedFX = nullptr;
 
-    juce::ComboBox transAddCombo;
-    juce::ComboBox tonalAddCombo;
-    juce::ComboBox fullMixAddCombo;
+    std::vector<std::unique_ptr<juce::TextButton>> transToggleButtons;
+    std::vector<std::unique_ptr<juce::TextButton>> tonalToggleButtons;
+    std::vector<std::unique_ptr<juce::TextButton>> fullMixToggleButtons;
 
     std::vector<int> transActiveIndices;
     std::vector<int> tonalActiveIndices;

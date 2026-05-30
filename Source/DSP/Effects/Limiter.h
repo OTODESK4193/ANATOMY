@@ -23,7 +23,6 @@ public:
 
     void process(juce::AudioBuffer<float>& buffer) noexcept override
     {
-        // 💥【指示遵守】遅延を1サンプルも発生させない0ms遅延型・瞬時ハードクリッピング数理
         const float ceilingLinear = std::pow(10.0f, ceilingDb / 20.0f);
         const float mix = currentMix;
 
@@ -36,11 +35,8 @@ public:
             for (int i = 0; i < numSamples; ++i)
             {
                 const float input = data[i];
-
-                // 絶対天井を1ミリも越えさせないハードクランプ
                 float processed = juce::jlimit(-ceilingLinear, ceilingLinear, input);
 
-                // ドライ/ウェットの線形クロスフェード
                 data[i] = (input * (1.0f - mix)) + (processed * mix);
             }
         }
@@ -67,7 +63,7 @@ public:
 private:
     double sampleRate = 44100.0;
     float ceilingDb = -0.1f;
-    float currentMix = 1.0f; // リミッターはデフォルトで100%Wet運用
+    float currentMix = 1.0f;
 
     TargetRoute route = TargetRoute::FullMix;
     bool activeState = false;

@@ -8,18 +8,18 @@
 #include "UI/TransientBrowserPanel.h"
 #include "UI/TonalBrowserPanel.h"
 #include "UI/EffectRackPanel.h"
-#include "UI/ParameterDockPanel.h" // 💥追加統合
+#include "UI/ParameterDockPanel.h"
 
 /**
  * AnatomyAudioProcessorEditor
- * UI各モジュールの配置（Bounds）の決定と、ChangeListenerによる非同期通知の受信に徹する
- * カプセル化されたメインエディタクラス。
+ * 3連ノブに拡張された左右パネルの幾何学アライメント、および
+ * 15面展開独立パラメータの毎フレーム逆同期アライメントを統括するメインエディタクラス。
  */
 class AnatomyAudioProcessorEditor final : public juce::AudioProcessorEditor,
     public juce::FileDragAndDropTarget,
     public juce::Timer,
     public juce::ChangeListener,
-    public juce::DragAndDropContainer // 💥【超重要】内部D&Dを完全開通させるための親コンテナ登録！
+    public juce::DragAndDropContainer
 {
 public:
     AnatomyAudioProcessorEditor(AnatomyAudioProcessor&);
@@ -72,7 +72,7 @@ private:
     TonalBrowserPanel tonalBrowserPanel{ audioProcessor, waveTonal };
 
     EffectRackPanel effectRackPanel{ audioProcessor };
-    ParameterDockPanel parameterDockPanel{ audioProcessor }; // 💥【新設】下段パラメータドックの結合
+    ParameterDockPanel parameterDockPanel{ audioProcessor };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnatomyAudioProcessorEditor)
 };

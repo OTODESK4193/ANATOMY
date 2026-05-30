@@ -6,7 +6,7 @@
 
 /**
  * ADAA_Saturation
- * 1次ADAA非線形歪み。偶数次倍音を動的加算する Asymmetry パラメータを追加。
+ * 1次ADAA非線形歪み。偶数次倍音を制御する Asymmetry パラメータを完全内包。
  */
 class ADAA_Saturation final : public AudioEffect
 {
@@ -48,8 +48,6 @@ public:
             for (int s = 0; s < numSamples; ++s)
             {
                 const float originalInput = channelData[s];
-
-                // 💥【高精度化：Asymmetry】入力信号へ偶数次倍音の核となる非対称直流バイアスを重畳
                 const float x0 = (originalInput * drive) + (asym * 0.4f);
                 float saturatedSample = 0.0f;
                 const float diff = x0 - x1;
@@ -68,7 +66,7 @@ public:
 
                 x1 = x0;
 
-                // 💥非対称化に伴い発生する直流オフセットを 1次洩れ積分器(HPF) で完全に除去
+                // 直流オフセットの除去
                 dcState = 0.995f * dcState + 0.005f * saturatedSample;
                 saturatedSample -= dcState;
 

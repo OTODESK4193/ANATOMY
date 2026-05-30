@@ -12,8 +12,8 @@
 
 /**
  * ParameterDockPanel
- * 選択された隔離エフェクトモジュール群の高精度化パラメータおよび
- * 完全共通規格 Dry/Wet ノブを集約制御するパラメータエディットドック。
+ * 💥【15面展開独立IDに完全追従】クリックされたカードの所属レーン（Route）を自動判別し、
+ * APVTS内の該当プレフィックスIDへノブを瞬時に動的再バインドする高精度パラメータドック。
  */
 class ParameterDockPanel final : public juce::Component
 {
@@ -48,10 +48,11 @@ public:
             return;
         }
 
-        // 💥全共通規格 Dry/Wet ノブの自動配置
+        // 💥所属レーンに応じた独立APVTSパラメータIDを動的に解決
         setupKnob(sliderMix, lblMix, "DRY / WET", 0.0, 1.0, static_cast<double>(currentFx->getMix()));
         sliderMix.onValueChange = [this] {
-            if (currentFx != nullptr) currentFx->setMix(static_cast<float>(sliderMix.getValue()));
+            if (auto* p = processor.apvts.getParameter(getResolvedID("Mix")))
+                p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(sliderMix.getValue())));
             };
 
         if (auto* sat = dynamic_cast<ADAA_Saturation*>(currentFx))
@@ -60,17 +61,15 @@ public:
             setupKnob(slider2, lbl2, "ASYMMETRY", 0.0, 1.0, 0.0);
 
             slider1.onValueChange = [this] {
-                if (auto* p = processor.apvts.getParameter("satDrive"))
+                if (auto* p = processor.apvts.getParameter(getResolvedID("SatDrive")))
                     p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(slider1.getValue())));
                 };
             slider2.onValueChange = [this] {
-                if (auto* p = processor.apvts.getParameter("satAsym"))
+                if (auto* p = processor.apvts.getParameter(getResolvedID("SatAsym")))
                     p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(slider2.getValue())));
                 };
-
-            // 共通Dry/WetをAPVTSに直接バインド
             sliderMix.onValueChange = [this] {
-                if (auto* p = processor.apvts.getParameter("satMix"))
+                if (auto* p = processor.apvts.getParameter(getResolvedID("SatMix")))
                     p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(sliderMix.getValue())));
                 };
         }
@@ -81,40 +80,46 @@ public:
             setupKnob(slider3, lbl3, "JITTER", 0.0, 1.0, 0.0);
 
             slider1.onValueChange = [this] {
-                if (auto* p = processor.apvts.getParameter("bcBits"))
+                if (auto* p = processor.apvts.getParameter(getResolvedID("BcBits")))
                     p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(slider1.getValue())));
                 };
             slider2.onValueChange = [this] {
-                if (auto* p = processor.apvts.getParameter("bcDown"))
+                if (auto* p = processor.apvts.getParameter(getResolvedID("BcDown")))
                     p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(slider2.getValue())));
                 };
             slider3.onValueChange = [this] {
-                if (auto* p = processor.apvts.getParameter("bcJitter"))
+                if (auto* p = processor.apvts.getParameter(getResolvedID("BcJitter")))
                     p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(slider3.getValue())));
                 };
             sliderMix.onValueChange = [this] {
-                if (auto* p = processor.apvts.getParameter("bcMix"))
+                if (auto* p = processor.apvts.getParameter(getResolvedID("BcMix")))
                     p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(sliderMix.getValue())));
                 };
         }
         else if (auto* noise = dynamic_cast<NoiseGenerator*>(currentFx))
         {
             setupKnob(slider1, lbl1, "ENV DECAY (ms)", 1.0, 1000.0, 100.0);
+            setupKnob(slider2, lbl2, "GAIN (dB)", -60.0, 0.0, 0.0); // 💥Noise専用独立音量ノブの完全敷設
+
             slider1.onValueChange = [this] {
-                if (auto* p = processor.apvts.getParameter("nsDecay"))
+                if (auto* p = processor.apvts.getParameter(getResolvedID("NsDecay")))
                     p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(slider1.getValue())));
+                };
+            slider2.onValueChange = [this] {
+                if (auto* p = processor.apvts.getParameter(getResolvedID("NsGain")))
+                    p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(slider2.getValue())));
                 };
 
             addAndMakeVisible(toggleNoiseType);
             toggleNoiseType.setVisible(true);
             toggleNoiseType.setButtonText("PINK NOISE");
             toggleNoiseType.onClick = [this] {
-                if (auto* p = processor.apvts.getParameter("nsPink"))
+                if (auto* p = processor.apvts.getParameter(getResolvedID("NsPink")))
                     p->setValueNotifyingHost(toggleNoiseType.getToggleState() ? 1.0f : 0.0f);
                 };
 
             sliderMix.onValueChange = [this] {
-                if (auto* p = processor.apvts.getParameter("nsMix"))
+                if (auto* p = processor.apvts.getParameter(getResolvedID("NsMix")))
                     p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(sliderMix.getValue())));
                 };
         }
@@ -122,11 +127,11 @@ public:
         {
             setupKnob(slider1, lbl1, "CEILING (dB)", -24.0, 0.0, -0.1);
             slider1.onValueChange = [this] {
-                if (auto* p = processor.apvts.getParameter("limCeil"))
+                if (auto* p = processor.apvts.getParameter(getResolvedID("LimCeil")))
                     p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(slider1.getValue())));
                 };
             sliderMix.onValueChange = [this] {
-                if (auto* p = processor.apvts.getParameter("limMix"))
+                if (auto* p = processor.apvts.getParameter(getResolvedID("LimMix")))
                     p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(sliderMix.getValue())));
                 };
         }
@@ -137,19 +142,19 @@ public:
             setupKnob(slider3, lbl3, "X-OVER FREQ", 100.0, 1000.0, 200.0);
 
             slider1.onValueChange = [this] {
-                if (auto* p = processor.apvts.getParameter("ottTime"))
+                if (auto* p = processor.apvts.getParameter(getResolvedID("OttTime")))
                     p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(slider1.getValue())));
                 };
             slider2.onValueChange = [this] {
-                if (auto* p = processor.apvts.getParameter("ottOutGain"))
+                if (auto* p = processor.apvts.getParameter(getResolvedID("OttOutGain")))
                     p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(slider2.getValue())));
                 };
             slider3.onValueChange = [this] {
-                if (auto* p = processor.apvts.getParameter("ottXOver"))
+                if (auto* p = processor.apvts.getParameter(getResolvedID("OttXOver")))
                     p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(slider3.getValue())));
                 };
             sliderMix.onValueChange = [this] {
-                if (auto* p = processor.apvts.getParameter("ottDepth"))
+                if (auto* p = processor.apvts.getParameter(getResolvedID("OttDepth")))
                     p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(sliderMix.getValue())));
                 };
         }
@@ -165,34 +170,35 @@ public:
 
         if (dynamic_cast<ADAA_Saturation*>(currentFx))
         {
-            slider1.setValue(processor.apvts.getRawParameterValue("satDrive")->load(), juce::dontSendNotification);
-            sliderMix.setValue(processor.apvts.getRawParameterValue("satMix")->load(), juce::dontSendNotification);
-            slider2.setValue(processor.apvts.getRawParameterValue("satAsym")->load(), juce::dontSendNotification);
+            slider1.setValue(processor.apvts.getRawParameterValue(getResolvedID("SatDrive"))->load(), juce::dontSendNotification);
+            sliderMix.setValue(processor.apvts.getRawParameterValue(getResolvedID("SatMix"))->load(), juce::dontSendNotification);
+            slider2.setValue(processor.apvts.getRawParameterValue(getResolvedID("SatAsym"))->load(), juce::dontSendNotification);
         }
         else if (dynamic_cast<BitCrusher*>(currentFx))
         {
-            slider1.setValue(processor.apvts.getRawParameterValue("bcBits")->load(), juce::dontSendNotification);
-            slider2.setValue(processor.apvts.getRawParameterValue("bcDown")->load(), juce::dontSendNotification);
-            sliderMix.setValue(processor.apvts.getRawParameterValue("bcMix")->load(), juce::dontSendNotification);
-            slider3.setValue(processor.apvts.getRawParameterValue("bcJitter")->load(), juce::dontSendNotification);
+            slider1.setValue(processor.apvts.getRawParameterValue(getResolvedID("BcBits"))->load(), juce::dontSendNotification);
+            slider2.setValue(processor.apvts.getRawParameterValue(getResolvedID("BcDown"))->load(), juce::dontSendNotification);
+            sliderMix.setValue(processor.apvts.getRawParameterValue(getResolvedID("BcMix"))->load(), juce::dontSendNotification);
+            slider3.setValue(processor.apvts.getRawParameterValue(getResolvedID("BcJitter"))->load(), juce::dontSendNotification);
         }
         else if (dynamic_cast<NoiseGenerator*>(currentFx))
         {
-            slider1.setValue(processor.apvts.getRawParameterValue("nsDecay")->load(), juce::dontSendNotification);
-            sliderMix.setValue(processor.apvts.getRawParameterValue("nsMix")->load(), juce::dontSendNotification);
-            toggleNoiseType.setToggleState(processor.apvts.getRawParameterValue("nsPink")->load() > 0.5f, juce::dontSendNotification);
+            slider1.setValue(processor.apvts.getRawParameterValue(getResolvedID("NsDecay"))->load(), juce::dontSendNotification);
+            sliderMix.setValue(processor.apvts.getRawParameterValue(getResolvedID("NsMix"))->load(), juce::dontSendNotification);
+            slider2.setValue(processor.apvts.getRawParameterValue(getResolvedID("NsGain"))->load(), juce::dontSendNotification);
+            toggleNoiseType.setToggleState(processor.apvts.getRawParameterValue(getResolvedID("NsPink"))->load() > 0.5f, juce::dontSendNotification);
         }
         else if (dynamic_cast<Limiter*>(currentFx))
         {
-            slider1.setValue(processor.apvts.getRawParameterValue("limCeil")->load(), juce::dontSendNotification);
-            sliderMix.setValue(processor.apvts.getRawParameterValue("limMix")->load(), juce::dontSendNotification);
+            slider1.setValue(processor.apvts.getRawParameterValue(getResolvedID("LimCeil"))->load(), juce::dontSendNotification);
+            sliderMix.setValue(processor.apvts.getRawParameterValue(getResolvedID("LimMix"))->load(), juce::dontSendNotification);
         }
         else if (dynamic_cast<OTT_Multiband*>(currentFx))
         {
-            sliderMix.setValue(processor.apvts.getRawParameterValue("ottDepth")->load(), juce::dontSendNotification);
-            slider1.setValue(processor.apvts.getRawParameterValue("ottTime")->load(), juce::dontSendNotification);
-            slider2.setValue(processor.apvts.getRawParameterValue("ottOutGain")->load(), juce::dontSendNotification);
-            slider3.setValue(processor.apvts.getRawParameterValue("ottXOver")->load(), juce::dontSendNotification);
+            sliderMix.setValue(processor.apvts.getRawParameterValue(getResolvedID("OttDepth"))->load(), juce::dontSendNotification);
+            slider1.setValue(processor.apvts.getRawParameterValue(getResolvedID("OttTime"))->load(), juce::dontSendNotification);
+            slider2.setValue(processor.apvts.getRawParameterValue(getResolvedID("OttOutGain"))->load(), juce::dontSendNotification);
+            slider3.setValue(processor.apvts.getRawParameterValue(getResolvedID("OttXOver"))->load(), juce::dontSendNotification);
         }
     }
 
@@ -224,7 +230,6 @@ public:
 
         auto kw = area.getWidth() / 5;
 
-        // 💥Dry/Wetノブを常に右端に固定配置するレイアウト
         auto mixArea = area.removeFromRight(kw);
         lblMix.setBounds(mixArea.removeFromTop(15));
         sliderMix.setBounds(mixArea);
@@ -262,6 +267,14 @@ public:
     }
 
 private:
+    juce::String getResolvedID(const juce::String& baseName) const noexcept
+    {
+        if (currentFx == nullptr) return {};
+        auto r = currentFx->getTargetRoute();
+        juce::String prefix = (r == TargetRoute::Transient) ? "trans" : ((r == TargetRoute::Tonal) ? "tonal" : "full");
+        return prefix + baseName;
+    }
+
     void setupKnob(juce::Slider& s, juce::Label& l, const juce::String& name, double minV, double maxV, double defV)
     {
         addAndMakeVisible(s);

@@ -68,6 +68,22 @@ public:
 
         startOffsetSlider.onValueChange = onSliderChange;
         endOffsetSlider.onValueChange = onSliderChange;
+
+        // 💥【新設】波形ディスプレイ右側マウント用 Transient 個別最終ゲインノブの完全敷設
+        gainSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+        gainSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 45, 12);
+        gainSlider.setColour(juce::Slider::rotarySliderFillColourId, juce::Colours::cyan);
+        gainSlider.setColour(juce::Slider::thumbColourId, juce::Colours::white);
+        addAndMakeVisible(gainSlider);
+
+        gainLabel.setText("GAIN", juce::dontSendNotification);
+        gainLabel.setFont(juce::Font(9.0f, juce::Font::bold));
+        gainLabel.setJustificationType(juce::Justification::centred);
+        gainLabel.setColour(juce::Label::textColourId, juce::Colours::cyan.withAlpha(0.7f));
+        addAndMakeVisible(gainLabel);
+
+        // APVTSへのアタッチメント完全バインド
+        gainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.apvts, "transMixGain", gainSlider);
     }
 
     ~TransientBrowserPanel() override { closeBrowser(); }
@@ -81,14 +97,20 @@ public:
 
         area.removeFromTop(2);
 
-        auto knobArea = area;
-        auto leftKnob = knobArea.removeFromLeft(knobArea.getWidth() / 2);
+        // 💥【幾何学レイアウト刷新】ノブ3つを等間隔で美しく横並び分割配置
+        auto kw = area.getWidth() / 3;
 
+        auto leftKnob = area.removeFromLeft(kw);
         startOffsetLabel.setBounds(leftKnob.removeFromTop(12));
         startOffsetSlider.setBounds(leftKnob);
 
-        endOffsetLabel.setBounds(knobArea.removeFromTop(12));
-        endOffsetSlider.setBounds(knobArea);
+        auto midKnob = area.removeFromLeft(kw);
+        endOffsetLabel.setBounds(midKnob.removeFromTop(12));
+        endOffsetSlider.setBounds(midKnob);
+
+        auto rightKnob = area;
+        gainLabel.setBounds(rightKnob.removeFromTop(12));
+        gainSlider.setBounds(rightKnob);
     }
 
     void closeBrowser() { browserWindow.reset(); }
@@ -165,6 +187,10 @@ private:
     juce::Slider endOffsetSlider;
     juce::Label startOffsetLabel;
     juce::Label endOffsetLabel;
+
+    juce::Slider gainSlider;
+    juce::Label gainLabel;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> gainAttachment;
 
     std::unique_ptr<BrowserDialog> browserWindow;
 

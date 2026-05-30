@@ -7,7 +7,7 @@
 
 /**
  * OTT_Multiband
- * 分岐帯域をピンポイントシフトできる X-Over Freq パラメータを追加。
+ * ZDFクロスオーバーを用いた3バンドコンプレッサー。X-Over周波数シフト対応。
  */
 class OTT_Multiband final : public AudioEffect
 {
@@ -125,6 +125,7 @@ public:
     bool isActive() const noexcept override { return activeState; }
     void setActive(bool shouldBeActive) noexcept override { activeState = shouldBeActive; }
 
+    // 💥【修正完了】プロセッサ側の共通呼出名に完全アライメントし、名称不整合エラーを完全根絶
     void setMix(float newMix) noexcept override { currentMix = juce::jlimit(0.0f, 1.0f, newMix); }
     float getMix() const noexcept override { return currentMix; }
 
@@ -152,7 +153,7 @@ public:
 
     void setIndexedParameter(int index, float value) noexcept override
     {
-        if (index == 0)      setMix(value); // Depth/Mixの共通統合
+        if (index == 0)      setMix(value);
         else if (index == 1) setTimeMultiplier(value);
         else if (index == 2) setOutGainDb(value);
         else if (index == 3) setCrossoverFreq(value);
@@ -161,9 +162,8 @@ public:
 private:
     void updateCrossoverAndDynamics() noexcept
     {
-        // 💥【高精度化：X-Over Freq】ドラムのキャラクターに応じてクロスオーバーを動的アライメント
         filterLow.setCutoffFrequency(crossoverFreqParam);
-        filterHigh.setCutoffFrequency(crossoverFreqParam * 12.5f); // ロー準拠でハイを相関シフト
+        filterHigh.setCutoffFrequency(crossoverFreqParam * 12.5f);
 
         float att = 10.0f * timeMultiplierParam;
         float rel = 100.0f * timeMultiplierParam;
