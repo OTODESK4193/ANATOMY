@@ -107,7 +107,7 @@ bool AnatomyAudioProcessorEditor::isInterestedInFileDrag(const juce::StringArray
     return true;
 }
 
-// 💥【核心修正：3レーン完全独立インポート】落とされた「ピクセル座標」から落とし先を完全割り出し
+// 💥【核心修正：3レーン完全独立D&Dインポート】落とされた「ピクセル座標」から落とし先を完全割り出し
 void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, int x, int y)
 {
     if (audioProcessor.isCurrentlyProcessing()) return;
@@ -183,7 +183,7 @@ void AnatomyAudioProcessorEditor::timerCallback()
     effectRackPanel.updateCardSlidersFromParameters();
     parameterDockPanel.synchronizeSlidersFromParameters();
 
-    // 波形画面直接トリミングの物理ノブ逆同期リフレクション
+    // 波形画面直接ドラッグの物理ノブ逆同期リフレクション
     auto synchronizeBrowserKnobs = [](juce::Component& panel, float startVal, float endVal) {
         int sliderCount = 0;
         for (auto* child : panel.getChildren())
@@ -200,7 +200,7 @@ void AnatomyAudioProcessorEditor::timerCallback()
     synchronizeBrowserKnobs(transientBrowserPanel, audioProcessor.transStartOffsetMs, audioProcessor.transEndOffsetMs);
     synchronizeBrowserKnobs(tonalBrowserPanel, audioProcessor.tonalStartOffsetMs, audioProcessor.tonalEndOffsetMs);
 
-    // 💥【核心修正：3段全レーンエフェクト波形変形】
+    // 💥【核心修正：3段全レーンエフェクト波形リアルタイム変形】
     // リアルタイムバッファからの取得を廃止し、3段すべてをオフラインプロセッシング通過後の加工済バッファから同期描画！
     juce::AudioBuffer<float> tempTrans, tempTonal, tempFullMix;
     std::vector<float> mixRatios;
@@ -217,7 +217,7 @@ void AnatomyAudioProcessorEditor::timerCallback()
         waveFullMix.setRatioData(mixRatios);
     }
 
-    // 💥エフェクト適用に連動して下の2本の波形も美しくダイナミックに変形する領域へ突入
+    // 💥エフェクト適用に連動して下の2本の波形も美しくダイナミックに変形する領域へ完全突入！
     waveTransient.setBuffer(tempTrans);
     waveTonal.setBuffer(tempTonal);
 

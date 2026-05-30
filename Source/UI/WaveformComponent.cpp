@@ -176,7 +176,8 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
 
 void WaveformComponent::mouseDrag(const juce::MouseEvent& e)
 {
-    // 💥【核心修正：DAW直流エクスポート】startDraggingを完全撤廃し、OSネイティブD&Dを完全駆動！
+    // 💥【核心修正：DAWエクスポート完全開通】
+    // 100%FX加工済みのバッファから、OSネイティブD&D機構を介してDAWへオーディオを受け渡す！
     if (isDraggingExport && processor != nullptr)
     {
         isDraggingExport = false;
@@ -186,7 +187,7 @@ void WaveformComponent::mouseDrag(const juce::MouseEvent& e)
             juce::StringArray files;
             files.add(tempWav.getFullPathName());
 
-            // DAW（外部プロセス）が100%オーディオファイルをコピー認識するJUCE公式API
+            // OSのネイティブドラッグファイルをDAWが完全コピー認識するJUCE 8公式直通関数
             juce::DragAndDropContainer::performExternalDragDropOfFiles(files, false, this);
         }
         return;
