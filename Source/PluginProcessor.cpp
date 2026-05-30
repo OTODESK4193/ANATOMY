@@ -24,7 +24,7 @@ AnatomyAudioProcessor::AnatomyAudioProcessor()
         releasingMuteGain[i] = 1.0f;
     }
 
-    // 💥【バグ根本修正】生成時に「レーンの名札（Route）」を各インスタンスへ鉄壁に叩き込むラムダ式
+    // 生成時に「レーンの名札（Route）」を各インスタンスへ鉄壁に叩き込むラムダ式
     auto instantiatePool = [](std::unique_ptr<AudioEffect>* pool, TargetRoute route) {
         pool[0] = std::make_unique<ADAA_Saturation>();
         pool[1] = std::make_unique<BitCrusher>();
@@ -91,7 +91,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalMixGain", 1 }, "Tonal Mix Gain (dB)", -60.0f, 6.0f, 0.0f));
 
     // ==============================================================================
-    // 2. 3ルート個別独立エフェクトパラメータ（計15セット）の静的展開
+    // 2. 3ルート個別独立エフェクトパラメータの静的展開 (フェーズ2拡張)
     // ==============================================================================
 
     // --- TRANSIENT レーン専用エフェクトパラメータ群 ---
@@ -106,13 +106,23 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transNsDecay", 1 }, "Trans Noise Decay (ms)", 1.0f, 1000.0f, 100.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transNsMix", 1 }, "Trans Noise Mix", 0.0f, 1.0f, 0.3f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transNsType", 1 }, "Trans Noise Type", 0.0f, 3.0f, 0.0f)); // 💥4種対応
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transNsType", 1 }, "Trans Noise Type", 0.0f, 3.0f, 0.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transNsGain", 1 }, "Trans Noise Gain (dB)", -60.0f, 0.0f, 0.0f));
 
+    // 💥 自作OTTマッピング拡張（Transient）
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transOttDepth", 1 }, "Trans OTT Depth", 0.0f, 1.0f, 0.7f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transOttTime", 1 }, "Trans OTT Time Multiplier", 0.1f, 10.0f, 1.0f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transOttOutGain", 1 }, "Trans OTT OutGain (dB)", -24.0f, 24.0f, 0.0f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transOttXOver", 1 }, "Trans OTT Crossover Freq", 100.0f, 1000.0f, 200.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transOttLowMidXOver", 1 }, "Trans OTT Low/Mid X-Over", 40.0f, 1000.0f, 200.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transOttMidHighXOver", 1 }, "Trans OTT Mid/High X-Over", 1000.0f, 15000.0f, 2500.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transOttLowUp", 1 }, "Trans OTT Low Upward Comp", 0.0f, 1.0f, 1.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transOttLowDown", 1 }, "Trans OTT Low Downward Comp", 0.0f, 1.0f, 1.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transOttLowGain", 1 }, "Trans OTT Low Band Gain", -24.0f, 24.0f, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transOttMidUp", 1 }, "Trans OTT Mid Upward Comp", 0.0f, 1.0f, 1.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transOttMidDown", 1 }, "Trans OTT Mid Downward Comp", 0.0f, 1.0f, 1.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transOttMidGain", 1 }, "Trans OTT Mid Band Gain", -24.0f, 24.0f, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transOttHighUp", 1 }, "Trans OTT High Upward Comp", 0.0f, 1.0f, 1.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transOttHighDown", 1 }, "Trans OTT High Downward Comp", 0.0f, 1.0f, 1.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transOttHighGain", 1 }, "Trans OTT High Band Gain", -24.0f, 24.0f, 0.0f));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transLimCeil", 1 }, "Trans Limiter Ceiling (dB)", -24.0f, 0.0f, -0.1f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transLimMix", 1 }, "Trans Limiter Mix", 0.0f, 1.0f, 1.0f));
@@ -129,13 +139,23 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalNsDecay", 1 }, "Tonal Noise Decay (ms)", 1.0f, 1000.0f, 100.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalNsMix", 1 }, "Tonal Noise Mix", 0.0f, 1.0f, 0.3f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalNsType", 1 }, "Tonal Noise Type", 0.0f, 3.0f, 0.0f)); // 💥4種対応
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalNsType", 1 }, "Tonal Noise Type", 0.0f, 3.0f, 0.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalNsGain", 1 }, "Tonal Noise Gain (dB)", -60.0f, 0.0f, 0.0f));
 
+    // 💥 自作OTTマッピング拡張（Tonal）
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalOttDepth", 1 }, "Tonal OTT Depth", 0.0f, 1.0f, 0.7f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalOttTime", 1 }, "Tonal OTT Time Multiplier", 0.1f, 10.0f, 1.0f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalOttOutGain", 1 }, "Tonal OTT OutGain (dB)", -24.0f, 24.0f, 0.0f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalOttXOver", 1 }, "Tonal OTT Crossover Freq", 100.0f, 1000.0f, 200.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalOttLowMidXOver", 1 }, "Tonal OTT Low/Mid X-Over", 40.0f, 1000.0f, 200.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalOttMidHighXOver", 1 }, "Tonal OTT Mid/High X-Over", 1000.0f, 15000.0f, 2500.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalOttLowUp", 1 }, "Tonal OTT Low Upward Comp", 0.0f, 1.0f, 1.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalOttLowDown", 1 }, "Tonal OTT Low Downward Comp", 0.0f, 1.0f, 1.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalOttLowGain", 1 }, "Tonal OTT Low Band Gain", -24.0f, 24.0f, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalOttMidUp", 1 }, "Tonal OTT Mid Upward Comp", 0.0f, 1.0f, 1.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalOttMidDown", 1 }, "Tonal OTT Mid Downward Comp", 0.0f, 1.0f, 1.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalOttMidGain", 1 }, "Tonal OTT Mid Band Gain", -24.0f, 24.0f, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalOttHighUp", 1 }, "Tonal OTT High Upward Comp", 0.0f, 1.0f, 1.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalOttHighDown", 1 }, "Tonal OTT High Downward Comp", 0.0f, 1.0f, 1.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalOttHighGain", 1 }, "Tonal OTT High Band Gain", -24.0f, 24.0f, 0.0f));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalLimCeil", 1 }, "Tonal Limiter Ceiling (dB)", -24.0f, 0.0f, -0.1f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalLimMix", 1 }, "Tonal Limiter Mix", 0.0f, 1.0f, 1.0f));
@@ -152,13 +172,23 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullNsDecay", 1 }, "Full Noise Decay (ms)", 1.0f, 1000.0f, 100.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullNsMix", 1 }, "Full Noise Mix", 0.0f, 1.0f, 0.3f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullNsType", 1 }, "Full Noise Type", 0.0f, 3.0f, 0.0f)); // 💥4種対応
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullNsType", 1 }, "Full Noise Type", 0.0f, 3.0f, 0.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullNsGain", 1 }, "Full Noise Gain (dB)", -60.0f, 0.0f, 0.0f));
 
+    // 💥 自作OTTマッピング拡張（Full Mix）
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullOttDepth", 1 }, "Full OTT Depth", 0.0f, 1.0f, 0.7f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullOttTime", 1 }, "Full OTT Time Multiplier", 0.1f, 10.0f, 1.0f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullOttOutGain", 1 }, "Full OTT OutGain (dB)", -24.0f, 24.0f, 0.0f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullOttXOver", 1 }, "Full OTT Crossover Freq", 100.0f, 1000.0f, 200.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullOttLowMidXOver", 1 }, "Full OTT Low/Mid X-Over", 40.0f, 1000.0f, 200.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullOttMidHighXOver", 1 }, "Full OTT Mid/High X-Over", 1000.0f, 15000.0f, 2500.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullOttLowUp", 1 }, "Full OTT Low Upward Comp", 0.0f, 1.0f, 1.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullOttLowDown", 1 }, "Full OTT Low Downward Comp", 0.0f, 1.0f, 1.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullOttLowGain", 1 }, "Full OTT Low Band Gain", -24.0f, 24.0f, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullOttMidUp", 1 }, "Full OTT Mid Upward Comp", 0.0f, 1.0f, 1.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullOttMidDown", 1 }, "Full OTT Mid Downward Comp", 0.0f, 1.0f, 1.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullOttMidGain", 1 }, "Full OTT Mid Band Gain", -24.0f, 24.0f, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullOttHighUp", 1 }, "Full OTT High Upward Comp", 0.0f, 1.0f, 1.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullOttHighDown", 1 }, "Full OTT High Downward Comp", 0.0f, 1.0f, 1.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullOttHighGain", 1 }, "Full OTT High Band Gain", -24.0f, 24.0f, 0.0f));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullLimCeil", 1 }, "Full Limiter Ceiling (dB)", -24.0f, 0.0f, -0.1f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "fullLimMix", 1 }, "Full Limiter Mix", 0.0f, 1.0f, 1.0f));
@@ -215,14 +245,26 @@ void AnatomyAudioProcessor::synchronizePoolParameters() noexcept
     if (auto* ns = dynamic_cast<NoiseGenerator*>(transientPool[2].get())) {
         ns->setDecay(apvts.getRawParameterValue("transNsDecay")->load());
         ns->setMix(apvts.getRawParameterValue("transNsMix")->load());
-        ns->setNoiseType(static_cast<int>(apvts.getRawParameterValue("transNsType")->load())); // 💥連動
+        ns->setNoiseType(static_cast<int>(apvts.getRawParameterValue("transNsType")->load()));
         ns->setGainDb(apvts.getRawParameterValue("transNsGain")->load());
     }
     if (auto* ott = dynamic_cast<OTT_Multiband*>(transientPool[3].get())) {
         ott->setMix(apvts.getRawParameterValue("transOttDepth")->load());
         ott->setTimeMultiplier(apvts.getRawParameterValue("transOttTime")->load());
-        ott->setOutGainDb(apvts.getRawParameterValue("transOttOutGain")->load());
-        ott->setCrossoverFreq(apvts.getRawParameterValue("transOttXOver")->load());
+        ott->setLowMidXOver(apvts.getRawParameterValue("transOttLowMidXOver")->load());
+        ott->setMidHighXOver(apvts.getRawParameterValue("transOttMidHighXOver")->load());
+
+        ott->setBandUpward(0, apvts.getRawParameterValue("transOttLowUp")->load());
+        ott->setBandDownward(0, apvts.getRawParameterValue("transOttLowDown")->load());
+        ott->setBandGainDb(0, apvts.getRawParameterValue("transOttLowGain")->load());
+
+        ott->setBandUpward(1, apvts.getRawParameterValue("transOttMidUp")->load());
+        ott->setBandDownward(1, apvts.getRawParameterValue("transOttMidDown")->load());
+        ott->setBandGainDb(1, apvts.getRawParameterValue("transOttMidGain")->load());
+
+        ott->setBandUpward(2, apvts.getRawParameterValue("transOttHighUp")->load());
+        ott->setBandDownward(2, apvts.getRawParameterValue("transOttHighDown")->load());
+        ott->setBandGainDb(2, apvts.getRawParameterValue("transOttHighGain")->load());
     }
     if (auto* lim = dynamic_cast<Limiter*>(transientPool[4].get())) {
         lim->setCeiling(apvts.getRawParameterValue("transLimCeil")->load());
@@ -244,14 +286,26 @@ void AnatomyAudioProcessor::synchronizePoolParameters() noexcept
     if (auto* ns = dynamic_cast<NoiseGenerator*>(tonalPool[2].get())) {
         ns->setDecay(apvts.getRawParameterValue("tonalNsDecay")->load());
         ns->setMix(apvts.getRawParameterValue("tonalNsMix")->load());
-        ns->setNoiseType(static_cast<int>(apvts.getRawParameterValue("tonalNsType")->load())); // 💥連動
+        ns->setNoiseType(static_cast<int>(apvts.getRawParameterValue("tonalNsType")->load()));
         ns->setGainDb(apvts.getRawParameterValue("tonalNsGain")->load());
     }
     if (auto* ott = dynamic_cast<OTT_Multiband*>(tonalPool[3].get())) {
         ott->setMix(apvts.getRawParameterValue("tonalOttDepth")->load());
         ott->setTimeMultiplier(apvts.getRawParameterValue("tonalOttTime")->load());
-        ott->setOutGainDb(apvts.getRawParameterValue("tonalOttOutGain")->load());
-        ott->setCrossoverFreq(apvts.getRawParameterValue("tonalOttXOver")->load());
+        ott->setLowMidXOver(apvts.getRawParameterValue("tonalOttLowMidXOver")->load());
+        ott->setMidHighXOver(apvts.getRawParameterValue("tonalOttMidHighXOver")->load());
+
+        ott->setBandUpward(0, apvts.getRawParameterValue("tonalOttLowUp")->load());
+        ott->setBandDownward(0, apvts.getRawParameterValue("tonalOttLowDown")->load());
+        ott->setBandGainDb(0, apvts.getRawParameterValue("tonalOttLowGain")->load());
+
+        ott->setBandUpward(1, apvts.getRawParameterValue("tonalOttMidUp")->load());
+        ott->setBandDownward(1, apvts.getRawParameterValue("tonalOttMidDown")->load());
+        ott->setBandGainDb(1, apvts.getRawParameterValue("tonalOttMidGain")->load());
+
+        ott->setBandUpward(2, apvts.getRawParameterValue("tonalOttHighUp")->load());
+        ott->setBandDownward(2, apvts.getRawParameterValue("tonalOttHighDown")->load());
+        ott->setBandGainDb(2, apvts.getRawParameterValue("tonalOttHighGain")->load());
     }
     if (auto* lim = dynamic_cast<Limiter*>(tonalPool[4].get())) {
         lim->setCeiling(apvts.getRawParameterValue("tonalLimCeil")->load());
@@ -273,14 +327,26 @@ void AnatomyAudioProcessor::synchronizePoolParameters() noexcept
     if (auto* ns = dynamic_cast<NoiseGenerator*>(fullMixPool[2].get())) {
         ns->setDecay(apvts.getRawParameterValue("fullNsDecay")->load());
         ns->setMix(apvts.getRawParameterValue("fullNsMix")->load());
-        ns->setNoiseType(static_cast<int>(apvts.getRawParameterValue("fullNsType")->load())); // 💥連動
+        ns->setNoiseType(static_cast<int>(apvts.getRawParameterValue("fullNsType")->load()));
         ns->setGainDb(apvts.getRawParameterValue("fullNsGain")->load());
     }
     if (auto* ott = dynamic_cast<OTT_Multiband*>(fullMixPool[3].get())) {
         ott->setMix(apvts.getRawParameterValue("fullOttDepth")->load());
         ott->setTimeMultiplier(apvts.getRawParameterValue("fullOttTime")->load());
-        ott->setOutGainDb(apvts.getRawParameterValue("fullOttOutGain")->load());
-        ott->setCrossoverFreq(apvts.getRawParameterValue("fullOttXOver")->load());
+        ott->setLowMidXOver(apvts.getRawParameterValue("fullOttLowMidXOver")->load());
+        ott->setMidHighXOver(apvts.getRawParameterValue("fullOttMidHighXOver")->load());
+
+        ott->setBandUpward(0, apvts.getRawParameterValue("fullOttLowUp")->load());
+        ott->setBandDownward(0, apvts.getRawParameterValue("fullOttLowDown")->load());
+        ott->setBandGainDb(0, apvts.getRawParameterValue("fullOttLowGain")->load());
+
+        ott->setBandUpward(1, apvts.getRawParameterValue("fullOttMidUp")->load());
+        ott->setBandDownward(1, apvts.getRawParameterValue("fullOttMidDown")->load());
+        ott->setBandGainDb(1, apvts.getRawParameterValue("fullOttMidGain")->load());
+
+        ott->setBandUpward(2, apvts.getRawParameterValue("fullOttHighUp")->load());
+        ott->setBandDownward(2, apvts.getRawParameterValue("fullOttHighDown")->load());
+        ott->setBandGainDb(2, apvts.getRawParameterValue("fullOttHighGain")->load());
     }
     if (auto* lim = dynamic_cast<Limiter*>(fullMixPool[4].get())) {
         lim->setCeiling(apvts.getRawParameterValue("fullLimCeil")->load());
@@ -306,6 +372,7 @@ void AnatomyAudioProcessor::updateRouteOrder(TargetRoute route, const std::vecto
     else if (route == TargetRoute::Tonal)    tonalChain.updateChain(sortedFX, fxGarbageBin);
     else if (route == TargetRoute::FullMix)  fullMixChain.updateChain(sortedFX, fxGarbageBin);
 }
+
 void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;

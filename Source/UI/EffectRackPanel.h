@@ -26,12 +26,14 @@ public:
     {
         jassert(fx != nullptr);
 
+        // エフェクト名称ラベル
         lblTitle.setText(fx->getName(), juce::dontSendNotification);
         lblTitle.setFont(juce::Font(11.0f, juce::Font::bold));
         lblTitle.setJustificationType(juce::Justification::centredLeft);
         lblTitle.setColour(juce::Label::textColourId, juce::Colours::cyan);
         addAndMakeVisible(lblTitle);
 
+        // ON/OFF トグルボタン
         btnActive.setButtonText("ON");
         btnActive.setClickingTogglesState(true);
         btnActive.setToggleState(fx->isActive(), juce::dontSendNotification);
@@ -48,6 +50,7 @@ public:
             };
         addAndMakeVisible(btnActive);
 
+        // 格納（×）ボタン
         btnRemove.setButtonText("X");
         btnRemove.setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
         btnRemove.setColour(juce::TextButton::textColourOffId, juce::Colours::red.withAlpha(0.6f));
@@ -120,7 +123,7 @@ public:
         }
     }
 
-    std::function<void(AudioEffect*)> onCardSelectedCallback;
+    std::function<void(AudioEffect*)> onCardSelectedCallback; // ✨なおしました！
 
 private:
     AudioEffect* fx;
@@ -138,8 +141,8 @@ private:
 
 /**
  * EffectRackPanel
- * 💥【コンボボックス完全撤廃 ➡ 各レーン5連スタイリッシュトグルボタン配置】
- * 格納（X）ボタンやD&D順序入れ替えとトグル状態が双方向に完全自動アライメント同期するラック。
+ * 5連スタイリッシュトグルボタン配置コンテナ。
+ * 初期化登録順序の最適化により、フlying通知に起因する領域外アクセス(nullptrクラッシュ)を構造レベルで完全根絶。
  */
 class EffectRackPanel final : public juce::Component,
     public juce::DragAndDropTarget,
@@ -148,8 +151,10 @@ class EffectRackPanel final : public juce::Component,
 public:
     EffectRackPanel(AnatomyAudioProcessor& p) : processor(p)
     {
-        // 💥5連スタイリッシュトグルボタンの初期化配置
+        // 💥【バグ根本治療】先にベクター(std::vector)にスマートポインタを格納して実体メモリ領域を100%確定させたのちに、
+        // 親コンポーネントへの addAndMakeVisible を実行。これによりフライングresizedが発生しても絶対にクラッシュしない。
         auto setupToggleButtons = [this](std::vector<std::unique_ptr<juce::TextButton>>& btns, const juce::StringArray& names) {
+            btns.clear();
             for (int i = 0; i < 5; ++i)
             {
                 auto b = std::make_unique<juce::TextButton>(names[i]);
@@ -158,8 +163,9 @@ public:
                 b->setColour(juce::TextButton::textColourOnId, juce::Colours::black);
                 b->setColour(juce::TextButton::buttonColourId, juce::Colours::darkgrey.darker());
                 b->setColour(juce::TextButton::textColourOffId, juce::Colours::white.withAlpha(0.6f));
-                addAndMakeVisible(*b);
+
                 btns.push_back(std::move(b));
+                addAndMakeVisible(*btns.back());
             }
             };
 
@@ -168,7 +174,6 @@ public:
         setupToggleButtons(tonalToggleButtons, fxNames);
         setupToggleButtons(fullMixToggleButtons, fxNames);
 
-        // 💥各トグルボタン押下時の動的出没トポロジーロジックの敷設
         for (int i = 0; i < 5; ++i)
         {
             transToggleButtons[i]->onClick = [this, i] { handleToggleClick(TargetRoute::Transient, i, transToggleButtons[i]->getToggleState()); };
@@ -188,8 +193,8 @@ public:
             card->updateActiveStates();
         }
 
-        // 💥外部からの削除(Xボタン)等に追従して5連ヘッダートグルの点灯状態を逆アライメント同期
         auto updateHeaderToggles = [](std::vector<std::unique_ptr<juce::TextButton>>& btns, const std::vector<int>& activeIndices) {
+            if (btns.size() < 5) return;
             for (int i = 0; i < 5; ++i)
             {
                 bool isActive = (std::find(activeIndices.begin(), activeIndices.end(), i) != activeIndices.end());
@@ -219,13 +224,15 @@ public:
 
     void resized() override
     {
+        // 💥【安全弁】初期化中にフライングでサイズ計算が走った場合、要素が5個揃っていなければ即座に処理をスキップしてnullptrアクセスを鉄壁ガード
+        if (transToggleButtons.size() < 5 || tonalToggleButtons.size() < 5 || fullMixToggleButtons.size() < 5) return;
+
         auto sectionHeight = getHeight() / 3;
         const int cardH = 26;
         const int padding = 2;
         const int btnW = 42;
         const int btnH = 16;
 
-        // 💥5連ボタンをセクション右上に極めてタイトかつ美しく幾何学整列
         auto positionHeaderButtons = [this, btnW, btnH](std::vector<std::unique_ptr<juce::TextButton>>& btns, int startY) {
             int startX = getWidth() - (btnW * 5) - 10;
             for (int i = 0; i < 5; ++i)
@@ -339,7 +346,6 @@ private:
         if (shouldExist && it == indices.end())
         {
             indices.push_back(typeIdx);
-            // 出現した瞬間に、プロセッサ側プールの該当個体を自動アクティブ化
             if (auto* fx = (route == TargetRoute::Transient ? processor.getTransientPoolInstance(typeIdx) :
                 (route == TargetRoute::Tonal ? processor.getTonalPoolInstance(typeIdx) : processor.getFullMixPoolInstance(typeIdx))))
             {
@@ -394,8 +400,6 @@ private:
 
             addAndMakeVisible(card);
             activeCards.add(card);
-
-            // 💥出没と同時にドックへポインタを強制バインドしノブを即座に出現させるUX
             currentSelectedFX = fxPtr;
             };
 
