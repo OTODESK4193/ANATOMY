@@ -107,20 +107,72 @@ bool AnatomyAudioProcessorEditor::isInterestedInFileDrag(const juce::StringArray
     return true;
 }
 
-void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, int, int)
+// 💥【核心修正：3レーン完全独立インポート】落とされた「ピクセル座標」から落とし先を完全割り出し
+void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, int x, int y)
 {
     if (audioProcessor.isCurrentlyProcessing()) return;
 
     juce::File file(files[0]);
-    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
+    if (file.getFileExtension().toLowerCase() != ".wav") return;
 
-    if (reader != nullptr)
+    juce::Point<int> dropPoint(x, y);
+
+    // 1. FullMixエリアに落ちた場合 ➡ 元ファイルの差し替え（全体HPSS再分析）
+    if (waveFullMix.getBounds().contains(dropPoint))
     {
-        juce::AudioBuffer<float> buffer((int)reader->numChannels, (int)reader->lengthInSamples);
-        reader->read(&buffer, 0, (int)reader->lengthInSamples, 0, true, true);
+        std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
+        if (reader != nullptr)
+        {
+            juce::AudioBuffer<float> buffer((int)reader->numChannels, (int)reader->lengthInSamples);
+            reader->read(&buffer, 0, (int)reader->lengthInSamples, 0, true, true);
+            audioProcessor.startSeparation(buffer, reader->sampleRate);
+            wasProcessing = true;
+        }
+    }
+    // 2. Transientエリアに落ちた場合 ➡ Transient波形のみ単独差し替え（カスタムReplacerへロード）
+    else if (waveTransient.getBounds().contains(dropPoint))
+    {
+        std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
+        if (reader != nullptr)
+        {
+            juce::AudioBuffer<float> buffer(1, static_cast<int>(reader->lengthInSamples));
+            reader->read(&buffer, 0, static_cast<int>(reader->lengthInSamples), 0, true, false);
 
-        audioProcessor.startSeparation(buffer, reader->sampleRate);
-        wasProcessing = true;
+            audioProcessor.customTransientReplacer.loadSample(buffer, reader->sampleRate);
+
+            double durationMs = (static_cast<double>(reader->lengthInSamples) / reader->sampleRate) * 1000.0;
+            audioProcessor.setOffsetsFromUI(true, 0.0f, static_cast<float>(durationMs));
+
+            // ブラウザテキストパネル側の名称を安全に逆同期書き換え
+            for (auto* child : transientBrowserPanel.getChildren()) {
+                if (auto* b = dynamic_cast<juce::TextButton*>(child)) {
+                    if (b->getButtonText() == "Browse" || b->getButtonText().length() <= 7)
+                        b->setButtonText(file.getFileNameWithoutExtension().substring(0, 7));
+                }
+            }
+        }
+    }
+    // 3. Tonalエリアに落ちた場合 ➡ Tonal波形のみ単独差し替え（カスタムReplacerへロード）
+    else if (waveTonal.getBounds().contains(dropPoint))
+    {
+        std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
+        if (reader != nullptr)
+        {
+            juce::AudioBuffer<float> buffer(1, static_cast<int>(reader->lengthInSamples));
+            reader->read(&buffer, 0, static_cast<int>(reader->lengthInSamples), 0, true, false);
+
+            audioProcessor.customTonalReplacer.loadSample(buffer, reader->sampleRate);
+
+            double durationMs = (static_cast<double>(reader->lengthInSamples) / reader->sampleRate) * 1000.0;
+            audioProcessor.setOffsetsFromUI(false, 0.0f, static_cast<float>(durationMs));
+
+            for (auto* child : tonalBrowserPanel.getChildren()) {
+                if (auto* b = dynamic_cast<juce::TextButton*>(child)) {
+                    if (b->getButtonText() == "Browse" || b->getButtonText().length() <= 7)
+                        b->setButtonText(file.getFileNameWithoutExtension().substring(0, 7));
+                }
+            }
+        }
     }
 }
 
@@ -131,8 +183,7 @@ void AnatomyAudioProcessorEditor::timerCallback()
     effectRackPanel.updateCardSlidersFromParameters();
     parameterDockPanel.synchronizeSlidersFromParameters();
 
-    bool isProcessing = audioProcessor.isCurrentlyProcessing();
-
+    // 波形画面直接トリミングの物理ノブ逆同期リフレクション
     auto synchronizeBrowserKnobs = [](juce::Component& panel, float startVal, float endVal) {
         int sliderCount = 0;
         for (auto* child : panel.getChildren())
@@ -146,50 +197,38 @@ void AnatomyAudioProcessorEditor::timerCallback()
         }
         };
 
-    // 💥【修正完了】Replacer直接参照から、プロセッサ側の安全な直通キャッシュ変数参照へ完全統合
-    synchronizeBrowserKnobs(transientBrowserPanel,
-        audioProcessor.transStartOffsetMs,
-        audioProcessor.transEndOffsetMs);
+    synchronizeBrowserKnobs(transientBrowserPanel, audioProcessor.transStartOffsetMs, audioProcessor.transEndOffsetMs);
+    synchronizeBrowserKnobs(tonalBrowserPanel, audioProcessor.tonalStartOffsetMs, audioProcessor.tonalEndOffsetMs);
 
-    synchronizeBrowserKnobs(tonalBrowserPanel,
-        audioProcessor.tonalStartOffsetMs,
-        audioProcessor.tonalEndOffsetMs);
+    // 💥【核心修正：3段全レーンエフェクト波形変形】
+    // リアルタイムバッファからの取得を廃止し、3段すべてをオフラインプロセッシング通過後の加工済バッファから同期描画！
+    juce::AudioBuffer<float> tempTrans, tempTonal, tempFullMix;
+    std::vector<float> mixRatios;
 
-    if (isProcessing || wasProcessing || true)
+    audioProcessor.offlineMixRenderer.getRenderedResults(tempFullMix, tempTrans, tempTonal, mixRatios);
+
+    if (btnBefore.getToggleState())
     {
-        juce::AudioBuffer<float> tempTrans, tempTonal, tempFullMix;
-        std::vector<float> mixRatios;
-
-        audioProcessor.getCallbackBuffersSecure(tempTrans, tempTonal);
-        audioProcessor.offlineMixRenderer.getRenderedResults(tempFullMix, mixRatios);
-
-        if (btnBefore.getToggleState())
-        {
-            waveFullMix.setBuffer(audioProcessor.getRawInputBufferForUI());
-        }
-        else
-        {
-            waveFullMix.setBuffer(tempFullMix);
-            waveFullMix.setRatioData(mixRatios);
-        }
-
-        if (!audioProcessor.customTransientReplacer.isLoaded())
-            waveTransient.setBuffer(tempTrans);
-
-        if (!audioProcessor.customTonalReplacer.isLoaded())
-            waveTonal.setBuffer(tempTonal);
-
-        double sr = audioProcessor.getFileSampleRate();
-        waveFullMix.setOffsets(0.0f, 0.0f, sr);
-
-        // 💥【修正完了】プロセッサ側のキャッシュ変数から安全にミリ秒を伝達
-        waveTransient.setOffsets(audioProcessor.transStartOffsetMs, audioProcessor.transEndOffsetMs, sr);
-        waveTonal.setOffsets(audioProcessor.tonalStartOffsetMs, audioProcessor.tonalEndOffsetMs, sr);
-
-        repaint();
+        waveFullMix.setBuffer(audioProcessor.getRawInputBufferForUI());
+    }
+    else
+    {
+        waveFullMix.setBuffer(tempFullMix);
+        waveFullMix.setRatioData(mixRatios);
     }
 
-    if (wasProcessing && !isProcessing)
+    // 💥エフェクト適用に連動して下の2本の波形も美しくダイナミックに変形する領域へ突入
+    waveTransient.setBuffer(tempTrans);
+    waveTonal.setBuffer(tempTonal);
+
+    double sr = audioProcessor.getFileSampleRate();
+    waveFullMix.setOffsets(0.0f, 0.0f, sr);
+    waveTransient.setOffsets(audioProcessor.transStartOffsetMs, audioProcessor.transEndOffsetMs, sr);
+    waveTonal.setOffsets(audioProcessor.tonalStartOffsetMs, audioProcessor.tonalEndOffsetMs, sr);
+
+    repaint();
+
+    if (wasProcessing && !audioProcessor.isCurrentlyProcessing())
     {
         wasProcessing = false;
         updateButtonToggleStates();

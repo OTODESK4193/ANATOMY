@@ -214,21 +214,10 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     const int numSamples = buffer.getNumSamples();
     const int numChannels = buffer.getNumChannels();
 
-    if (beforeAfterBypasser.julesIsBeforeBypassed())
-    {
-        buffer.clear();
-        const int rawSamples = rawInputBuffer.getNumSamples();
-        if (rawSamples > 0)
-        {
-            for (int ch = 0; ch < numChannels; ++ch)
-            {
-                int srcCh = std::min(ch, rawInputBuffer.getNumChannels() - 1);
-                int readLength = std::min(numSamples, rawSamples);
-                buffer.copyFrom(ch, 0, rawInputBuffer, srcCh, 0, readLength);
-            }
-        }
-        return;
-    }
+    float* outL = buffer.getWritePointer(0);
+    float* outR = numChannels > 1 ? buffer.getWritePointer(1) : nullptr;
+
+    bool isBeforeMode = beforeAfterBypasser.julesIsBeforeBypassed();
 
     if (transientBlockBuffer.getNumSamples() < numSamples || transientBlockBuffer.getNumChannels() < numChannels) return;
 
@@ -270,8 +259,13 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
             if (currentDataSnapshot != nullptr)
             {
                 activeVoice.sampleData = currentDataSnapshot;
-                activeVoice.clickReadIndex = 0.0;
-                activeVoice.sustainReadIndex = 0.0;
+
+                float transStartSamples = (transStartOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
+                float tonalStartSamples = (tonalStartOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
+
+                activeVoice.clickReadIndex = transStartSamples;
+                activeVoice.sustainReadIndex = tonalStartSamples;
+
                 activeVoice.triggerVelocity = msg.getFloatVelocity();
                 activeVoice.isActive = true;
                 activeVoice.isReleasing = false;
@@ -314,15 +308,25 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
         float mixedTransL = 0.0f, mixedTransR = 0.0f;
         float mixedTonalL = 0.0f, mixedTonalR = 0.0f;
 
+        float transEndSamples = (transEndOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
+        float tonalEndSamples = (tonalEndOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
+
         if (activeVoice.isActive)
         {
             float vTransL = 0.0f, vTransR = 0.0f; float vTonalL = 0.0f, vTonalR = 0.0f;
             generateVoiceSample(activeVoice, vTransL, vTransR, vTonalL, vTonalR, clickHold, clickCurve, transScale, tonalScale);
+
             mixedTransL += vTransL * activeMuteGain; mixedTransR += vTransR * activeMuteGain;
             mixedTonalL += vTonalL * activeMuteGain; mixedTonalR += vTonalR * activeMuteGain;
+
             if (activeVoice.isReleasing) activeVoice.releaseGain *= dynamicReleaseFactor;
             if (activeIsMuting) activeMuteGain *= muteFactor;
-            if (activeVoice.releaseGain <= 0.001f || activeMuteGain <= 0.001f) { activeVoice.reset(); activeIsMuting = false; activeMuteGain = 1.0f; }
+
+            bool reachEnd = (activeVoice.clickReadIndex >= transEndSamples || activeVoice.sustainReadIndex >= tonalEndSamples);
+            if (reachEnd || activeVoice.releaseGain <= 0.001f || activeMuteGain <= 0.001f)
+            {
+                activeVoice.reset(); activeIsMuting = false; activeMuteGain = 1.0f;
+            }
         }
 
         for (int i = 0; i < maxReleasingVoices; ++i)
@@ -331,11 +335,18 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
             {
                 float vTransL = 0.0f, vTransR = 0.0f; float vTonalL = 0.0f, vTonalR = 0.0f;
                 generateVoiceSample(releasingVoices[i], vTransL, vTransR, vTonalL, vTonalR, clickHold, clickCurve, transScale, tonalScale);
+
                 mixedTransL += vTransL * releasingMuteGain[i]; mixedTransR += vTransR * releasingMuteGain[i];
                 mixedTonalL += vTonalL * releasingMuteGain[i]; mixedTonalR += vTonalR * releasingMuteGain[i];
+
                 if (releasingVoices[i].isReleasing) releasingVoices[i].releaseGain *= dynamicReleaseFactor;
                 if (releasingIsMuting[i]) releasingMuteGain[i] *= muteFactor;
-                if (releasingVoices[i].releaseGain <= 0.001f || releasingMuteGain[i] <= 0.001f) { releasingVoices[i].reset(); releasingIsMuting[i] = false; releasingMuteGain[i] = 1.0f; }
+
+                bool reachEnd = (releasingVoices[i].clickReadIndex >= transEndSamples || releasingVoices[i].sustainReadIndex >= tonalEndSamples);
+                if (reachEnd || releasingVoices[i].releaseGain <= 0.001f || releasingMuteGain[i] <= 0.001f)
+                {
+                    releasingVoices[i].reset(); releasingIsMuting[i] = false; releasingMuteGain[i] = 1.0f;
+                }
             }
         }
 
@@ -343,14 +354,22 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
         tonalL[sample] = mixedTonalL; if (tonalR != nullptr) tonalR[sample] = mixedTonalR;
     }
 
+    if (isBeforeMode)
+    {
+        for (int sample = 0; sample < numSamples; ++sample)
+        {
+            outL[sample] = transL[sample] + tonalL[sample];
+            if (outR != nullptr && transR != nullptr && tonalR != nullptr)
+                outR[sample] = transR[sample] + tonalR[sample];
+        }
+        return;
+    }
+
     transientChain.process(transientBlockBuffer);
     tonalChain.process(tonalBlockBuffer);
 
     const float transLinearGain = std::pow(10.0f, apvts.getRawParameterValue("transMixGain")->load() / 20.0f);
     const float tonalLinearGain = std::pow(10.0f, apvts.getRawParameterValue("tonalMixGain")->load() / 20.0f);
-
-    float* outL = buffer.getWritePointer(0);
-    float* outR = numChannels > 1 ? buffer.getWritePointer(1) : nullptr;
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
@@ -380,26 +399,36 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     int cIdx = static_cast<int> (voice.clickReadIndex);
     int sIdx = static_cast<int> (voice.sustainReadIndex);
 
-    if (customTransientReplacer.isLoaded())
+    if (beforeAfterBypasser.julesIsBeforeBypassed())
     {
-        shiftedClick = customTransientReplacer.processSample(voice.clickReadIndex, voice.pitchRatio, transScale, clickHold, clickCurve, currentSampleRate, currentSoloMode);
+        if (cIdx < clickLen) shiftedClick = click.getSample(0, cIdx);
+        if (sIdx < sustainLen) shiftedSustain = sustain.getSample(0, sIdx);
         voice.clickReadIndex += voice.pitchRatio;
+        voice.sustainReadIndex += voice.pitchRatio;
     }
-    else if (voice.transShifter && cIdx < clickLen)
+    else
     {
-        if (currentSoloMode != 2) shiftedClick = voice.transShifter->processSample(click, cIdx, transScale);
-        voice.clickReadIndex += voice.pitchRatio;
-    }
+        if (customTransientReplacer.isLoaded())
+        {
+            shiftedClick = customTransientReplacer.processSample(voice.clickReadIndex, voice.pitchRatio, transScale, clickHold, clickCurve, currentSampleRate, currentSoloMode);
+            voice.clickReadIndex += voice.pitchRatio;
+        }
+        else if (voice.transShifter && cIdx < clickLen)
+        {
+            if (currentSoloMode != 2) shiftedClick = voice.transShifter->processSample(click, cIdx, transScale);
+            voice.clickReadIndex += voice.pitchRatio;
+        }
 
-    if (customTonalReplacer.isLoaded())
-    {
-        shiftedSustain = customTonalReplacer.processSample(voice.sustainReadIndex, voice.pitchRatio, tonalScale, clickHold, clickCurve, currentSampleRate, currentSoloMode);
-        voice.sustainReadIndex += voice.pitchRatio;
-    }
-    else if (voice.tonalShifter && sIdx < sustainLen)
-    {
-        if (currentSoloMode != 1) shiftedSustain = voice.tonalShifter->processSample(sustain, sIdx, tonalScale);
-        voice.sustainReadIndex += voice.pitchRatio;
+        if (customTonalReplacer.isLoaded())
+        {
+            shiftedSustain = customTonalReplacer.processSample(voice.sustainReadIndex, voice.pitchRatio, tonalScale, clickHold, clickCurve, currentSampleRate, currentSoloMode);
+            voice.sustainReadIndex += voice.pitchRatio;
+        }
+        else if (voice.tonalShifter && sIdx < sustainLen)
+        {
+            if (currentSoloMode != 1) shiftedSustain = voice.tonalShifter->processSample(sustain, sIdx, tonalScale);
+            voice.sustainReadIndex += voice.pitchRatio;
+        }
     }
 
     float finalClick = shiftedClick * voice.triggerVelocity * voice.releaseGain * 0.63f;
@@ -407,15 +436,6 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
 
     outTransL = finalClick; outTransR = finalClick;
     outTonalL = finalSustain; outTonalR = finalSustain;
-
-    if (customTransientReplacer.isLoaded() || customTonalReplacer.isLoaded())
-    {
-        if (voice.isReleasing && voice.releaseGain <= 0.001f) voice.reset();
-    }
-    else
-    {
-        if (static_cast<int>(voice.clickReadIndex) >= clickLen && static_cast<int>(voice.sustainReadIndex) >= sustainLen) voice.reset();
-    }
 }
 
 void AnatomyAudioProcessor::parameterChanged(const juce::String&, float)
@@ -551,21 +571,20 @@ void AnatomyAudioProcessor::cleanUpGarbageBin()
     fxGarbageBin.clear();
 }
 
+// 💥【仕様刷新】各レーン固有のエフェクトが適用された100%加工済みの結果を、ディスクへオンデマンド書き出し
 juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
 {
     juce::File tempDir = juce::File::getSpecialLocation(juce::File::SpecialLocationType::tempDirectory);
     juce::File targetWavFile = tempDir.getChildFile("ANATOMY_Export_" + juce::String(juce::Random::getSystemRandom().nextInt64()) + ".wav");
 
     juce::AudioBuffer<float> exportSource;
-    {
-        const juce::ScopedLock sl(lock);
-        if (laneIndex == 1)      exportSource.makeCopyOf(transBufferThread);
-        else if (laneIndex == 2) exportSource.makeCopyOf(tonalBufferThread);
-        else {
-            std::vector<float> dummy;
-            offlineMixRenderer.getRenderedResults(exportSource, dummy);
-        }
-    }
+    juce::AudioBuffer<float> dummyTrans, dummyTonal;
+    std::vector<float> dummyRatios;
+
+    // オフラインレンダラーが裏で完成させた、FX適用済みの各完成バッファをダイレクト吸い上げ
+    if (laneIndex == 1)      offlineMixRenderer.getRenderedResults(dummyTrans, exportSource, dummyTonal, dummyRatios); // Transient FX通過済
+    else if (laneIndex == 2) offlineMixRenderer.getRenderedResults(dummyTrans, dummyTrans, exportSource, dummyRatios); // Tonal FX通過済
+    else                     offlineMixRenderer.getRenderedResults(exportSource, dummyTrans, dummyTonal, dummyRatios); // FullMix Master FX通過済
 
     if (exportSource.getNumSamples() == 0) return {};
 
@@ -583,6 +602,7 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
     return {};
 }
 
+// 💥【大改造】脳内レンダリング内で、Transient と Tonal に対してもエフェクトを焼き込みマウント
 void OfflineMixRenderer::executeRender()
 {
     juce::AudioBuffer<float> localTrans, localTonal;
@@ -598,40 +618,17 @@ void OfflineMixRenderer::executeRender()
     const int numSamples = localTrans.getNumSamples();
     if (numSamples == 0) return;
 
-    float transStart = processor.transStartOffsetMs;
-    float transEnd = processor.transEndOffsetMs;
-    float tonalStart = processor.tonalStartOffsetMs;
-    float tonalEnd = processor.tonalEndOffsetMs;
-
-    int tStartSmp = static_cast<int>((transStart / 1000.0) * sr);
-    int tEndSmp = static_cast<int>((transEnd / 1000.0) * sr);
-    int oStartSmp = static_cast<int>((tonalStart / 1000.0) * sr);
-    int oEndSmp = static_cast<int>((tonalEnd / 1000.0) * sr);
-
-    tStartSmp = juce::jlimit(0, numSamples, tStartSmp);
-    tEndSmp = juce::jlimit(0, numSamples, tEndSmp);
-    oStartSmp = juce::jlimit(0, numSamples, oStartSmp);
-    oEndSmp = juce::jlimit(0, numSamples, oEndSmp);
-
     juce::AudioBuffer<float> workTrans(2, numSamples);
     juce::AudioBuffer<float> workTonal(2, numSamples);
     workTrans.clear(); workTonal.clear();
 
-    if (tEndSmp > tStartSmp)
+    for (int ch = 0; ch < 2; ++ch)
     {
-        for (int ch = 0; ch < 2; ++ch)
-        {
-            int srcCh = std::min(ch, localTrans.getNumChannels() - 1);
-            workTrans.copyFrom(ch, tStartSmp, localTrans, srcCh, tStartSmp, tEndSmp - tStartSmp);
-        }
-    }
-    if (oEndSmp > oStartSmp)
-    {
-        for (int ch = 0; ch < 2; ++ch)
-        {
-            int srcCh = std::min(ch, localTonal.getNumChannels() - 1);
-            workTonal.copyFrom(ch, oStartSmp, localTonal, srcCh, oStartSmp, oEndSmp - oStartSmp);
-        }
+        int srcCh = std::min(ch, localTrans.getNumChannels() - 1);
+        workTrans.copyFrom(ch, 0, localTrans, srcCh, 0, numSamples);
+
+        int srcTonalCh = std::min(ch, localTonal.getNumChannels() - 1);
+        workTonal.copyFrom(ch, 0, localTonal, srcTonalCh, 0, numSamples);
     }
 
     float transPitch = processor.apvts.getRawParameterValue("transPitch")->load();
@@ -657,6 +654,7 @@ void OfflineMixRenderer::executeRender()
     applyPitch(workTrans, transPitch);
     applyPitch(workTonal, tonalPitch);
 
+    // 各レーン固有のEffectChain（エフェクト）を完全通過！
     processor.transientChain.process(workTrans);
     processor.tonalChain.process(workTonal);
 
@@ -684,11 +682,15 @@ void OfflineMixRenderer::executeRender()
         else               ratios[s] = 0.5f;
     }
 
+    // マスター FullMix エフェクトチェーンの通過
     processor.fullMixChain.process(outputMix);
 
     {
+        // 💥ロック下で3レーンすべてのFX通過後バッファを鉄壁退避
         const juce::ScopedLock sl(renderLock);
         renderedFullMix.makeCopyOf(outputMix);
+        renderedTransient.makeCopyOf(workTrans);
+        renderedTonal.makeCopyOf(workTonal);
         componentRatios = std::move(ratios);
     }
 
@@ -698,9 +700,6 @@ void OfflineMixRenderer::executeRender()
         });
 }
 
-// ==============================================================================
-// 💥【完全復活】JUCE必須バーチャル関数群を鉄壁マウント
-// ==============================================================================
 juce::AudioProcessorEditor* AnatomyAudioProcessor::createEditor() { return new AnatomyAudioProcessorEditor(*this); }
 bool AnatomyAudioProcessor::hasEditor() const { return true; }
 const juce::String AnatomyAudioProcessor::getName() const { return "ANATOMY"; }
@@ -726,7 +725,6 @@ void AnatomyAudioProcessor::setStateInformation(const void* data, int sizeInByte
         apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
 }
 
-// 💥【完全復活】JUCE純正の最末尾起動プラグイン結合関数
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new AnatomyAudioProcessor();

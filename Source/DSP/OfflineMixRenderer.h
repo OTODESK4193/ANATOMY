@@ -9,9 +9,9 @@
 class AnatomyAudioProcessor;
 
 /**
- * OfflineMixRenderer
- * ユーザーのエディットに非同期追従し、バックグラウンドで超高速オフライン合成を行うスレッド。
- * 最終波形の「Transient / Tonal のエネルギー比率（2色色分け用）」も同時に数理生成する。
+ * OfflineMixRenderer (Phase 3-4 Realtime Update Edition)
+ * エフェクトやピッチ、トリミングに完全追従し、FullMixだけでなく、
+ * 加工済みのTransientおよびTonalバッファも完全並列で脳内レンダリングするバックグラウンドコア。
  */
 class OfflineMixRenderer final : public juce::Thread
 {
@@ -49,11 +49,16 @@ public:
         }
     }
 
-    // レンダリングされた最新のFullMixバッファと、色分け比率の配列を安全に取得
-    void getRenderedResults(juce::AudioBuffer<float>& destBuffer, std::vector<float>& destRatios)
+    // 💥【仕様拡張】3レーンすべての加工済み（FX適用後）バッファを一括して安全に非同期取得
+    void getRenderedResults(juce::AudioBuffer<float>& destFull,
+        juce::AudioBuffer<float>& destTrans,
+        juce::AudioBuffer<float>& destTonal,
+        std::vector<float>& destRatios)
     {
         const juce::ScopedLock sl(renderLock);
-        destBuffer.makeCopyOf(renderedFullMix);
+        destFull.makeCopyOf(renderedFullMix);
+        destTrans.makeCopyOf(renderedTransient);
+        destTonal.makeCopyOf(renderedTonal);
         destRatios = componentRatios;
     }
 
@@ -65,7 +70,9 @@ private:
     std::atomic<bool> triggerFlag;
 
     juce::AudioBuffer<float> renderedFullMix;
-    std::vector<float> componentRatios; // 💥2色色分け用：0.0(純Tonal)〜1.0(純Transient)の比率データ配列
+    juce::AudioBuffer<float> renderedTransient; // 💥新設：FX適用後Transient波形バッファ
+    juce::AudioBuffer<float> renderedTonal;     // 💥新設：FX適用後Tonal波形バッファ
+    std::vector<float> componentRatios;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OfflineMixRenderer)
 };

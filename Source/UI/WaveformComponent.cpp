@@ -1,6 +1,6 @@
 #include "WaveformComponent.h"
 #include "../PluginProcessor.h"
-#include "../PluginEditor.h" // 💥【重要】メインUIの定義を教えてあげるために追加
+#include "../PluginEditor.h" 
 #include <cmath>
 #include <algorithm>
 
@@ -176,23 +176,20 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
 
 void WaveformComponent::mouseDrag(const juce::MouseEvent& e)
 {
+    // 💥【核心修正：DAW直流エクスポート】startDraggingを完全撤廃し、OSネイティブD&Dを完全駆動！
     if (isDraggingExport && processor != nullptr)
     {
-        if (auto* dragContainer = juce::DragAndDropContainer::findParentDragContainerFor(this))
+        isDraggingExport = false;
+        juce::File tempWav = processor->createTemporaryWavForExport(laneIndex);
+        if (tempWav.existsAsFile())
         {
-            if (!dragContainer->isDragAndDropActive())
-            {
-                isDraggingExport = false;
-                juce::File tempWav = processor->createTemporaryWavForExport(laneIndex);
-                if (tempWav.existsAsFile())
-                {
-                    juce::StringArray files;
-                    files.add(tempWav.getFullPathName());
-                    dragContainer->startDragging(files, this);
-                }
-                return;
-            }
+            juce::StringArray files;
+            files.add(tempWav.getFullPathName());
+
+            // DAW（外部プロセス）が100%オーディオファイルをコピー認識するJUCE公式API
+            juce::DragAndDropContainer::performExternalDragDropOfFiles(files, false, this);
         }
+        return;
     }
 
     if (internalBuffer.getNumSamples() == 0) return;
@@ -228,7 +225,6 @@ void WaveformComponent::synchronizeToTargetSliders(float startMs, float endMs)
 
     processor->setOffsetsFromUI((laneIndex == 1), startMs, endMs);
 
-    // 💥【修正完了】汎用クラスではなく、AnatomyAudioProcessorEditor型へ正確に型キャスト探索
     if (auto* editor = juce::Component::findParentComponentOfClass<AnatomyAudioProcessorEditor>())
     {
         editor->changeListenerCallback(nullptr);
