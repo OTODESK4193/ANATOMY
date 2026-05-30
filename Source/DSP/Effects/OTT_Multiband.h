@@ -6,17 +6,16 @@
 #include <cmath>
 
 /**
- * OTT_Multiband (Phase 2 Master Edition)
- * 既製品コンプレッサーを完全排除し、Upward（上方）/ Downward（下方）Dynamics数理、
- * およびLow/Mid/High独立帯域ゲイン回路を完全内包した、自作3バンドOTTエンジン。
+ * OTT_Multiband (Phase 4 Master Noise-Free Edition)
+ * 無音時や弱音時のフロアノイズが爆発的に持ち上がるのを自動的に検知し、
+ * Upward Dynamicsの適用量を分子レベルで自動減衰遮断させる「スマート・ローレベル・ゲート数理」を搭載。
+ * 初期Mix値を使いやすい 35% へリチューニングした、ノイズフリー型最高級3バンドOTTエンジン。
  */
 class OTT_Multiband final : public AudioEffect
 {
 public:
     OTT_Multiband()
     {
-        // リンクウィッツ・ライリー型（Linkwitz-Riley）クラスに近い特性を持つ
-        // 状態変数（State Variable）フィルターをローパス・ハイパスに設定
         filterLow.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
         filterHigh.setType(juce::dsp::StateVariableTPTFilterType::highpass);
     }
@@ -41,7 +40,6 @@ public:
         midBuffer.setSize(2, maxBlockSize, false, false, true);
         highBuffer.setSize(2, maxBlockSize, false, false, true);
 
-        // 各帯域のエンベロープフォロワー履歴の初期化
         for (int b = 0; b < 3; ++b)
         {
             envFollower[b] = 0.0f;
@@ -65,23 +63,20 @@ public:
 
         if (lowBuffer.getNumSamples() < numSamples) return;
 
-        // クロスオーバー分岐のために元信号を各一時バッファへ高速射影
         lowBuffer.copyFrom(0, 0, buffer, 0, 0, numSamples);
         if (numChannels > 1) lowBuffer.copyFrom(1, 0, buffer, 1, 0, numSamples);
 
         highBuffer.copyFrom(0, 0, buffer, 0, 0, numSamples);
         if (numChannels > 1) highBuffer.copyFrom(1, 0, buffer, 1, 0, numSamples);
 
-        // 1. ゼロディレイ・フィードバック（ZDF）フィルターによる3帯域の数学的分離
         juce::dsp::AudioBlock<float> lowBlock(lowBuffer);
         juce::dsp::ProcessContextReplacing<float> lowContext(lowBlock);
-        filterLow.process(lowContext); // Lowパス通過 ➡ Low帯域の確定
+        filterLow.process(lowContext);
 
         juce::dsp::AudioBlock<float> highBlock(highBuffer);
         juce::dsp::ProcessContextReplacing<float> highContext(highBlock);
-        filterHigh.process(highContext); // Highパス通過 ➡ High帯域の確定
+        filterHigh.process(highContext);
 
-        // Mid帯域は「全帯域の元信号 - Low信号 - High信号」という完全減算による位相反転相殺数理で抽出
         for (int ch = 0; ch < numChannels; ++ch)
         {
             if (ch >= 2) break;
@@ -96,75 +91,79 @@ public:
             }
         }
 
-        // 時定数アライメントの計算
         const float timeMultiplier = std::max(0.1f, timeMultiplierParam);
-        // 基準アタックタイム: 10ms, リリースタイム: 100ms を係数化
         const float attackCoef = std::exp(-1.0f / (0.010f * timeMultiplier * static_cast<float>(currentSampleRate)));
         const float releaseCoef = std::exp(-1.0f / (0.100f * timeMultiplier * static_cast<float>(currentSampleRate)));
 
-        // 本物OTT規格の固定内部しきい値（-30 dBFS）をリニア換算
-        const float ottThreshold = std::pow(10.0f, -30.0f / 20.0f);
+        const float ottThreshold = std::pow(10.0f, -30.0f / 20.0f); // -30 dBFS 固定内部しきい値
+
+        // 💥【ノイズ対策核心数理：ローレベル・スマートゲート限界値設定】
+        // 聴感上、サーノイズや吸気音が爆発的に持ち上がり始める閾値（-54dBFS）を検知リミッターに設定
+        const float noiseFloorThreshold = std::pow(10.0f, -54.0f / 20.0f);
+        const float gateGripBottom = std::pow(10.0f, -66.0f / 20.0f); // この下は完全遮断スリープ
 
         float* bandPtrs[3] = { lowBuffer.getWritePointer(0), midBuffer.getWritePointer(0), highBuffer.getWritePointer(0) };
         float* bandPtrsR[3] = { numChannels > 1 ? lowBuffer.getWritePointer(1) : nullptr,
                                 numChannels > 1 ? midBuffer.getWritePointer(1) : nullptr,
                                 numChannels > 1 ? highBuffer.getWritePointer(1) : nullptr };
 
-        // 2. 独自開発マルチバンド「Upward / Downward」同軸複合Dynamicsエンジン駆動
         for (int b = 0; b < 3; ++b)
         {
             float* dataL = bandPtrs[b];
             float* dataR = bandPtrsR[b];
 
-            // 独立帯域最終Gainのリニア換算
             const float bandGainLinear = std::pow(10.0f, bandGainDb[b] / 20.0f);
 
             for (int s = 0; s < numSamples; ++s)
             {
-                // ステレオリンク対応のピークサイドチェイン検出
                 float absL = std::abs(dataL[s]);
                 float absR = dataR != nullptr ? std::abs(dataR[s]) : 0.0f;
                 float currentPeak = std::max(absL, absR);
 
-                // エンベロープフォロワーの弾道追従
                 float& env = envFollower[b];
                 if (currentPeak > env) env = attackCoef * env + (1.0f - attackCoef) * currentPeak;
                 else                   env = releaseCoef * env + (1.0f - releaseCoef) * currentPeak;
 
-                // 核心数理：Upward / Downward 同軸圧縮アルゴリズム
                 float gainReduction = 1.0f;
 
                 if (env > 1.0e-5f)
                 {
-                    // 基準しきい値に対する現入力の比率を検出
                     float ratioOffset = env / ottThreshold;
 
                     if (ratioOffset > 1.0f)
                     {
-                        // 【Downward領域】：音がしきい値を超えたので、比率 4:1 で叩く
+                        // 【Downward領域】：4:1 比率で叩く
                         float downFactor = std::pow(ratioOffset, (1.0f / 4.0f) - 1.0f);
-                        // ユーザー設定の％（0.0〜1.0）で線形適用量をブレンド
                         gainReduction *= (1.0f - downwardAmount[b]) + (downwardAmount[b] * downFactor);
                     }
                     else
                     {
-                        // 【Upward領域】：音がしきい値より小さいので、比率 1:2 で強制引き上げ
+                        // 【Upward領域】：1:2 比率で強制引き上げ（最大＋18dBブースト）
                         float upFactor = std::pow(ratioOffset, (1.0f / 0.5f) - 1.0f);
-                        // 最大 ＋18dB までの上方ブースト天井ガード
                         upFactor = std::min(upFactor, 7.94f);
-                        // ユーザー設定の％（0.0〜1.0）で線形適用量をブレンド
+
+                        // 💥【スマート・ノイズミュート数理のインジェクション】
+                        // 信号のエネルギーがノイズフロアに近づくにつれて、Upwardのブースト適用量を
+                        // 自動的になめらかに 1.0（等倍＝ブースト無し）へ向けて減衰遮断させる！
+                        if (env < noiseFloorThreshold)
+                        {
+                            float gateFactor = (env - gateGripBottom) / (noiseFloorThreshold - gateGripBottom);
+                            gateFactor = std::max(0.0f, std::min(1.0f, gateFactor)); // 0.0 〜 1.0 にクランプ
+
+                            // 1.0（無加工）と upFactor の間で線形補間し、無音時のサーノイズを完全スリープ
+                            upFactor = 1.0f + (upFactor - 1.0f) * gateFactor;
+                        }
+
                         gainReduction *= (1.0f - upwardAmount[b]) + (upwardAmount[b] * upFactor);
                     }
                 }
 
-                // ダイナミクス適用と帯域ゲインの最終乗算
                 float finalScalar = gainReduction * bandGainLinear;
                 dataL[s] *= finalScalar;
                 if (dataR != nullptr) dataR[s] *= finalScalar;
             }
         }
 
-        // 3. 全帯域の最終再合算、およびウェット深度（Mix）のブレンド
         const float depth = currentMix;
         for (int ch = 0; ch < numChannels; ++ch)
         {
@@ -194,15 +193,12 @@ public:
 
     void setTimeMultiplier(float t) noexcept { timeMultiplierParam = juce::jlimit(0.1f, 10.0f, t); }
 
-    // 💥【新設】分離独立型2ツマミ・クロスオーバー入力インターフェース
     void setLowMidXOver(float freq) noexcept { lowMidFreqParam = juce::jlimit(40.0f, 1000.0f, freq); updateCrossoverFilters(); }
     void setMidHighXOver(float freq) noexcept { midHighFreqParam = juce::jlimit(1000.0f, 15000.0f, freq); updateCrossoverFilters(); }
 
-    // 旧プロセッサ側から叩かれるダミー互換セッター（内部結合の安全確保用）
     void setOutGainDb(float) noexcept {}
     void setCrossoverFreq(float f) noexcept { setLowMidXOver(f); }
 
-    // 💥【新設】9パラメータ一斉制御セッター
     void setBandUpward(int bandIdx, float pct) noexcept { if (bandIdx >= 0 && bandIdx < 3) upwardAmount[bandIdx] = juce::jlimit(0.0f, 1.0f, pct); }
     void setBandDownward(int bandIdx, float pct) noexcept { if (bandIdx >= 0 && bandIdx < 3) downwardAmount[bandIdx] = juce::jlimit(0.0f, 1.0f, pct); }
     void setBandGainDb(int bandIdx, float db) noexcept { if (bandIdx >= 0 && bandIdx < 3) bandGainDb[bandIdx] = juce::jlimit(-24.0f, 24.0f, db); }
@@ -229,12 +225,12 @@ private:
     juce::AudioBuffer<float> midBuffer;
     juce::AudioBuffer<float> highBuffer;
 
-    float currentMix = 0.7f;
+    // 💥【汎用デフォルト変更】挿入時のノイズ事故を防ぐため、初期ウェット量を 35% にリチューニング
+    float currentMix = 0.35f;
     float timeMultiplierParam = 1.0f;
-    float lowMidFreqParam = 200.0f;      // 初期値 200 Hz
-    float midHighFreqParam = 2500.0f;    // 初期値 2.5 kHz
+    float lowMidFreqParam = 200.0f;
+    float midHighFreqParam = 2500.0f;
 
-    // 3バンド分配配列パラメータコンテナ [0=Low, 1=Mid, 2=High]
     float upwardAmount[3] = { 1.0f, 1.0f, 1.0f };
     float downwardAmount[3] = { 1.0f, 1.0f, 1.0f };
     float bandGainDb[3] = { 0.0f, 0.0f, 0.0f };
