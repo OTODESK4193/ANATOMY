@@ -84,13 +84,13 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     configureSlider(sliderTonalPitch, lblTonalPitch, "TONAL PITCH (st)", juce::Colours::magenta);
     configureSlider(sliderTonalGain, lblTonalGain, "TONAL GAIN (dB)", juce::Colours::magenta);
 
-    attachClickLength = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "clickLength", sliderClickLength);
-    attachClickCurve = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "clickCurve", sliderClickCurve);
-    attachTransPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "transPitch", sliderTransPitch);
-    attachTonalPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "tonalPitch", sliderTonalPitch);
-    attachSustainRelease = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "sustainRelease", sliderSustainRelease);
-    attachTransMixGain = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "transMixGain", sliderTransGain);
-    attachTonalMixGain = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, "tonalMixGain", sliderTonalGain);
+    attachClickLength = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "clickLength", sliderClickLength);
+    attachClickCurve = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "clickCurve", sliderClickCurve);
+    attachTransPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "transPitch", sliderTransPitch);
+    attachTonalPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "tonalPitch", sliderTonalPitch);
+    attachSustainRelease = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "sustainRelease", sliderSustainRelease);
+    attachTransMixGain = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "transMixGain", sliderTransGain);
+    attachTonalMixGain = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "tonalMixGain", sliderTonalGain);
 
     setSize(1150, 720);
     startTimer(40);
@@ -107,7 +107,6 @@ bool AnatomyAudioProcessorEditor::isInterestedInFileDrag(const juce::StringArray
     return true;
 }
 
-// 💥【核心修正：3レーン完全独立D&Dインポート】落とされた「ピクセル座標」から落とし先を完全割り出し
 void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, int x, int y)
 {
     if (audioProcessor.isCurrentlyProcessing()) return;
@@ -117,7 +116,6 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
 
     juce::Point<int> dropPoint(x, y);
 
-    // 1. FullMixエリアに落ちた場合 ➡ 元ファイルの差し替え（全体HPSS再分析）
     if (waveFullMix.getBounds().contains(dropPoint))
     {
         std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
@@ -129,7 +127,8 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
             wasProcessing = true;
         }
     }
-    // 2. Transientエリアに落ちた場合 ➡ Transient波形のみ単独差し替え（カスタムReplacerへロード）
+    // 💥【インポート波形不動バグ完全破壊】
+    // ドロップされた新サンプルの実体を、Replacerだけでなくプロセッサの処理バッファへも同時に直流転送流し込み命令！
     else if (waveTransient.getBounds().contains(dropPoint))
     {
         std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
@@ -143,7 +142,9 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
             double durationMs = (static_cast<double>(reader->lengthInSamples) / reader->sampleRate) * 1000.0;
             audioProcessor.setOffsetsFromUI(true, 0.0f, static_cast<float>(durationMs));
 
-            // ブラウザテキストパネル側の名称を安全に逆同期書き換え
+            // プロセッサ内部の波形・合成元データをこの新サンプルバッファで完全同期上書き！
+            audioProcessor.loadCustomSampleFromUI(true, buffer, reader->sampleRate);
+
             for (auto* child : transientBrowserPanel.getChildren()) {
                 if (auto* b = dynamic_cast<juce::TextButton*>(child)) {
                     if (b->getButtonText() == "Browse" || b->getButtonText().length() <= 7)
@@ -152,7 +153,6 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
             }
         }
     }
-    // 3. Tonalエリアに落ちた場合 ➡ Tonal波形のみ単独差し替え（カスタムReplacerへロード）
     else if (waveTonal.getBounds().contains(dropPoint))
     {
         std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
@@ -165,6 +165,9 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
 
             double durationMs = (static_cast<double>(reader->lengthInSamples) / reader->sampleRate) * 1000.0;
             audioProcessor.setOffsetsFromUI(false, 0.0f, static_cast<float>(durationMs));
+
+            // プロセッサ内部の波形・合成元データをこの新サンプルバッファで完全同期上書き！
+            audioProcessor.loadCustomSampleFromUI(false, buffer, reader->sampleRate);
 
             for (auto* child : tonalBrowserPanel.getChildren()) {
                 if (auto* b = dynamic_cast<juce::TextButton*>(child)) {
@@ -183,7 +186,6 @@ void AnatomyAudioProcessorEditor::timerCallback()
     effectRackPanel.updateCardSlidersFromParameters();
     parameterDockPanel.synchronizeSlidersFromParameters();
 
-    // 波形画面直接ドラッグの物理ノブ逆同期リフレクション
     auto synchronizeBrowserKnobs = [](juce::Component& panel, float startVal, float endVal) {
         int sliderCount = 0;
         for (auto* child : panel.getChildren())
@@ -200,8 +202,6 @@ void AnatomyAudioProcessorEditor::timerCallback()
     synchronizeBrowserKnobs(transientBrowserPanel, audioProcessor.transStartOffsetMs, audioProcessor.transEndOffsetMs);
     synchronizeBrowserKnobs(tonalBrowserPanel, audioProcessor.tonalStartOffsetMs, audioProcessor.tonalEndOffsetMs);
 
-    // 💥【核心修正：3段全レーンエフェクト波形リアルタイム変形】
-    // リアルタイムバッファからの取得を廃止し、3段すべてをオフラインプロセッシング通過後の加工済バッファから同期描画！
     juce::AudioBuffer<float> tempTrans, tempTonal, tempFullMix;
     std::vector<float> mixRatios;
 
@@ -217,7 +217,6 @@ void AnatomyAudioProcessorEditor::timerCallback()
         waveFullMix.setRatioData(mixRatios);
     }
 
-    // 💥エフェクト適用に連動して下の2本の波形も美しくダイナミックに変形する領域へ完全突入！
     waveTransient.setBuffer(tempTrans);
     waveTonal.setBuffer(tempTonal);
 

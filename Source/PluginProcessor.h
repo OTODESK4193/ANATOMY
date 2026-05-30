@@ -77,11 +77,9 @@ public:
     AudioEffect* getTonalPoolInstance(int idx) const noexcept { return (idx >= 0 && idx < 5) ? tonalPool[idx].get() : nullptr; }
     AudioEffect* getFullMixPoolInstance(int idx) const noexcept { return (idx >= 0 && idx < 5) ? fullMixPool[idx].get() : nullptr; }
 
-    // フェーズ2〜4：バックグラウンドレンダリング・バイパスシステムの実体定義
     BeforeAfterBypasser beforeAfterBypasser;
     OfflineMixRenderer offlineMixRenderer;
 
-    // オフラインレンダリングおよびUI同期用のパブリック Start/End ミリ秒キャッシュ配列
     float transStartOffsetMs = 0.0f;
     float transEndOffsetMs = 0.0f;
     float tonalStartOffsetMs = 0.0f;
@@ -89,6 +87,9 @@ public:
 
     juce::File createTemporaryWavForExport(int laneIndex);
     void setOffsetsFromUI(bool isTransient, float startMs, float endMs) noexcept;
+
+    // 💥【新設フェーズ4】個別サンプルインポート時に、内部バッファを一撃で差し替え波形更新させる直通関数
+    void loadCustomSampleFromUI(bool isTransient, const juce::AudioBuffer<float>& newBuffer, double sr) noexcept;
 
     juce::AudioProcessorValueTreeState apvts;
 
