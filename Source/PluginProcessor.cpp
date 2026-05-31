@@ -782,28 +782,7 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
     float dynamicReleaseFactor = std::exp(std::log(0.001f) / std::max(1.0f, rampSamples));
 
     const int maxRenderSamples = static_cast<int>(5.0 * currentSampleRate);
-
-    // 各ターゲット成分本来の有効発音範囲に基づき、過剰な引き延ばしを防ぐシミュレーション上限サンプル数を動的に決定
-    int maxAllowedSamples = maxRenderSamples;
-    if (laneIndex == 1) // Transient
-    {
-        float transLengthMs = std::min(clickHold, std::max(0.0f, transEndOffsetMs - transStartOffsetMs));
-        maxAllowedSamples = static_cast<int>(((transLengthMs + 300.0f) / 1000.0f) * currentSampleRate);
-    }
-    else if (laneIndex == 2) // Tonal
-    {
-        float tonalLengthMs = std::max(0.0f, tonalEndOffsetMs - tonalStartOffsetMs);
-        maxAllowedSamples = static_cast<int>(((tonalLengthMs + 300.0f) / 1000.0f) * currentSampleRate);
-    }
-    else // FullMix
-    {
-        float transLengthMs = std::min(clickHold, std::max(0.0f, transEndOffsetMs - transStartOffsetMs));
-        float tonalLengthMs = std::max(0.0f, tonalEndOffsetMs - tonalStartOffsetMs);
-        float maxLengthMs = std::max(transLengthMs, tonalLengthMs);
-        maxAllowedSamples = static_cast<int>(((maxLengthMs + 300.0f) / 1000.0f) * currentSampleRate);
-    }
     const int virtualNoteOffSample = static_cast<int>(0.4 * currentSampleRate);
-    maxAllowedSamples = juce::jlimit(virtualNoteOffSample + 512, maxRenderSamples, maxAllowedSamples);
 
     int savedSoloMode = currentSoloMode;
     currentSoloMode = 0;
@@ -822,7 +801,7 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
     exportVoice.pitchRatio = (exportVoice.sampleData->getSampleRate() > 0.0 && currentSampleRate > 0.0)
         ? (exportVoice.sampleData->getSampleRate() / currentSampleRate) : 1.0;
 
-    int actualExportSamples = maxAllowedSamples;
+    int actualExportSamples = virtualNoteOffSample + 512;
     bool silenceDetected = false;
 
     const int blockSize = 512;
@@ -837,9 +816,9 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
     float transGain = std::pow(10.0f, apvts.getRawParameterValue("transMixGain")->load() / 20.0f);
     float tonalGain = std::pow(10.0f, apvts.getRawParameterValue("tonalMixGain")->load() / 20.0f);
 
-    for (int blockStart = 0; blockStart < maxAllowedSamples; blockStart += blockSize)
+    for (int blockStart = 0; blockStart < maxRenderSamples; blockStart += blockSize)
     {
-        int currentBlockSize = std::min(blockSize, maxAllowedSamples - blockStart);
+        int currentBlockSize = std::min(blockSize, maxRenderSamples - blockStart);
         blockTrans.setSize(2, currentBlockSize, false, false, true);
         blockTonal.setSize(2, currentBlockSize, false, false, true);
         blockTrans.clear();
@@ -910,34 +889,40 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
                 accumulatedBuffer.copyFrom(ch, blockStart, blockFull, ch, 0, currentBlockSize);
         }
 
-        if (!silenceDetected && blockStart > virtualNoteOffSample)
+        // 精密トリミング数理：ボイス内部状態（isActive）に依存せず、耳に届く出力信号波形自体が
+        // 実効限界値（1e-4f = -80dB）を完全に下回った瞬間を決定論的に感知
+        bool blockIsSilent = true;
+        for (int ch = 0; ch < 2; ++ch)
         {
-            bool blockIsSilent = true;
-            for (int ch = 0; ch < 2; ++ch)
+            const float* samples = (laneIndex == 1) ? blockTrans.getReadPointer(ch) :
+                ((laneIndex == 2) ? blockTonal.getReadPointer(ch) : blockFull.getReadPointer(ch));
+            for (int s = 0; s < currentBlockSize; ++s)
             {
-                const float* samples = (laneIndex == 1) ? blockTrans.getReadPointer(ch) :
-                    ((laneIndex == 2) ? blockTonal.getReadPointer(ch) : blockFull.getReadPointer(ch));
-                for (int s = 0; s < currentBlockSize; ++s)
+                if (std::abs(samples[s]) > 1e-4f)
                 {
-                    if (std::abs(samples[s]) > 1e-3f) // ノイズ浮遊レベルに適合するようしきい値を1e-3f(-60dB)に適正化
-                    {
-                        blockIsSilent = false;
-                        break;
-                    }
+                    blockIsSilent = false;
+                    break;
                 }
-                if (!blockIsSilent) break;
             }
+            if (!blockIsSilent) break;
+        }
 
-            if (blockIsSilent && !exportVoice.isActive)
+        if (!blockIsSilent)
+        {
+            actualExportSamples = blockStart + currentBlockSize;
+        }
+        else
+        {
+            // 仮想ノートオフ（離鍵）のタイミングを通過した後に完全無音化されたら、即座にループを安全脱出
+            if (blockStart >= virtualNoteOffSample)
             {
-                silenceDetected = true;
-                actualExportSamples = blockStart + currentBlockSize;
+                break;
             }
         }
     }
 
     currentSoloMode = savedSoloMode;
-    actualExportSamples = juce::jlimit(512, maxAllowedSamples, actualExportSamples);
+    actualExportSamples = juce::jlimit(512, maxRenderSamples, actualExportSamples);
 
     juce::AudioBuffer<float> trimmedBuffer(accumulatedBuffer.getNumChannels(), actualExportSamples);
     for (int ch = 0; ch < trimmedBuffer.getNumChannels(); ++ch)
