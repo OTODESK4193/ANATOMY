@@ -22,6 +22,10 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     addAndMakeVisible(effectRackPanel);
     addAndMakeVisible(parameterDockPanel);
 
+    addAndMakeVisible(btnExportFull);
+    addAndMakeVisible(btnExportTransient);
+    addAndMakeVisible(btnExportTonal);
+
     btnOriginal.setRadioGroupId(1);
     btnTransient.setRadioGroupId(1);
     btnTonal.setRadioGroupId(1);
@@ -92,8 +96,6 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     attachTransMixGain = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "transMixGain", sliderTransGain);
     attachTonalMixGain = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "tonalMixGain", sliderTonalGain);
 
-    // 💥【修正④・確定】DeleteボタンをJUCEコンポーネント構造からテキストベースで自動検出し、
-    // プロセッサの独立クリア関数（clearCustomSampleFromUI）と安全に直流フック結合
     for (auto* child : transientBrowserPanel.getChildren())
     {
         if (auto* b = dynamic_cast<juce::TextButton*>(child))
@@ -106,11 +108,11 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
                     for (auto* c : transientBrowserPanel.getChildren()) {
                         if (auto* btn = dynamic_cast<juce::TextButton*>(c)) {
                             juce::String cTxt = btn->getButtonText().toLowerCase();
-                            // 隣のDelete/Resetボタン自体のテキストを破壊から完全シールドガード
                             if (!cTxt.contains("delete") && !cTxt.contains("clear") && cTxt != "x" && !cTxt.contains("reset"))
                                 btn->setButtonText("Browse");
                         }
                     }
+                    btnExportTransient.reset();
                     repaint();
                     };
             }
@@ -133,6 +135,7 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
                                 btn->setButtonText("Browse");
                         }
                     }
+                    btnExportTonal.reset();
                     repaint();
                     };
             }
@@ -172,6 +175,9 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
             reader->read(&buffer, 0, (int)reader->lengthInSamples, 0, true, true);
             audioProcessor.startSeparation(buffer, reader->sampleRate);
             wasProcessing = true;
+            btnExportFull.reset();
+            btnExportTransient.reset();
+            btnExportTonal.reset();
         }
     }
     else if (waveTransient.getBounds().contains(dropPoint))
@@ -187,10 +193,8 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
             double durationMs = (static_cast<double>(reader->lengthInSamples) / reader->sampleRate) * 1000.0;
             audioProcessor.setOffsetsFromUI(true, 0.0f, static_cast<float>(durationMs));
 
-            // プロセッサ側の独立カスタム常駐メモリへ安全コピー
             audioProcessor.storeCustomSampleFromUI(true, buffer, reader->sampleRate);
 
-            // 💥【名称バグ修正】Deleteボタンを巻き込まず、Browseボタンのみをピンポイント狙撃置換
             for (auto* child : transientBrowserPanel.getChildren()) {
                 if (auto* b = dynamic_cast<juce::TextButton*>(child)) {
                     juce::String bTxt = b->getButtonText().toLowerCase();
@@ -198,6 +202,8 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
                         b->setButtonText(file.getFileNameWithoutExtension().substring(0, 7));
                 }
             }
+            btnExportTransient.reset();
+            btnExportFull.reset();
         }
     }
     else if (waveTonal.getBounds().contains(dropPoint))
@@ -222,6 +228,8 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
                         b->setButtonText(file.getFileNameWithoutExtension().substring(0, 7));
                 }
             }
+            btnExportTonal.reset();
+            btnExportFull.reset();
         }
     }
 }
@@ -252,7 +260,6 @@ void AnatomyAudioProcessorEditor::timerCallback()
     juce::AudioBuffer<float> tempTrans, tempTonal, tempFullMix;
     std::vector<float> mixRatios;
 
-    // オフラインレンダラーから常時最新のFX適用後・全長バッファをキャッチ
     audioProcessor.offlineMixRenderer.getRenderedResults(tempFullMix, tempTrans, tempTonal, mixRatios);
 
     if (btnBefore.getToggleState())
@@ -265,9 +272,6 @@ void AnatomyAudioProcessorEditor::timerCallback()
         waveFullMix.setRatioData(mixRatios);
     }
 
-    // 💥【修正④・完全解決】
-    // 下段の波形コンポーネントへ加工完了後の最新バッファを直流伝送。
-    // Resetボタン押下時は内部で空（サイズ0）になるため、自動的に元の生ドラム波形がクッキリ100%美しく再描画復元される
     waveTransient.setBuffer(tempTrans);
     waveTonal.setBuffer(tempTonal);
 
@@ -282,6 +286,9 @@ void AnatomyAudioProcessorEditor::timerCallback()
     {
         wasProcessing = false;
         updateButtonToggleStates();
+        btnExportFull.reset();
+        btnExportTransient.reset();
+        btnExportTonal.reset();
         repaint();
     }
 }
@@ -378,15 +385,19 @@ void AnatomyAudioProcessorEditor::resized()
     auto tn3 = tonalCtrlArea;                          lblTonalGain.setBounds(tn3.removeFromTop(14));      sliderTonalGain.setBounds(tn3);
 
     auto fMixArea = area.removeFromTop(130).reduced(10, 14);
+    auto fMixExportArea = fMixArea.removeFromRight(135);
     waveFullMix.setBounds(fMixArea);
+    btnExportFull.setBounds(fMixExportArea.removeFromBottom(24).reduced(0, 2));
 
     auto transArea = area.removeFromTop(130).reduced(10, 14);
     auto transBrowserArea = transArea.removeFromRight(135);
     waveTransient.setBounds(transArea);
     transientBrowserPanel.setBounds(transBrowserArea.removeFromTop(75));
+    btnExportTransient.setBounds(transBrowserArea.removeFromBottom(24).reduced(0, 2));
 
     auto tonalArea = area.removeFromTop(130).reduced(10, 14);
     auto tonalBrowserArea = tonalArea.removeFromRight(135);
     waveTonal.setBounds(tonalArea);
     tonalBrowserPanel.setBounds(tonalBrowserArea.removeFromTop(75));
+    btnExportTonal.setBounds(tonalBrowserArea.removeFromBottom(24).reduced(0, 2));
 }

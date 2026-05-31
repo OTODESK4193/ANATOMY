@@ -802,7 +802,6 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
         ? (exportVoice.sampleData->getSampleRate() / currentSampleRate) : 1.0;
 
     int actualExportSamples = virtualNoteOffSample + 512;
-    bool silenceDetected = false;
 
     const int blockSize = 512;
     juce::AudioBuffer<float> blockTrans(2, blockSize);
@@ -889,8 +888,6 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
                 accumulatedBuffer.copyFrom(ch, blockStart, blockFull, ch, 0, currentBlockSize);
         }
 
-        // 精密トリミング数理：ボイス内部状態（isActive）に依存せず、耳に届く出力信号波形自体が
-        // 実効限界値（1e-4f = -80dB）を完全に下回った瞬間を決定論的に感知
         bool blockIsSilent = true;
         for (int ch = 0; ch < 2; ++ch)
         {
@@ -911,13 +908,12 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
         {
             actualExportSamples = blockStart + currentBlockSize;
         }
-        else
+
+        // Transient抽出の場合はノートオフ終了を待たず、音声が途切れたブロックで即終了。
+        // Tonal / FullMix は離鍵（400ms）を全うした後の無音で安全終了。
+        if (blockIsSilent && (laneIndex == 1 || blockStart >= virtualNoteOffSample))
         {
-            // 仮想ノートオフ（離鍵）のタイミングを通過した後に完全無音化されたら、即座にループを安全脱出
-            if (blockStart >= virtualNoteOffSample)
-            {
-                break;
-            }
+            break;
         }
     }
 
