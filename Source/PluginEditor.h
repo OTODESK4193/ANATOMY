@@ -10,8 +10,24 @@
 #include "UI/EffectRackPanel.h"
 #include "UI/ParameterDockPanel.h"
 
+// プロセッサ側とデータ構造を完全に一元化するレコーディングスコープの完全型定義
+namespace ExportRecordingCore
+{
+    enum class State { Idle, Request, Recording, Ready };
+    struct Lane {
+        std::atomic<State> state{ State::Idle };
+        juce::AudioBuffer<float> buffer;
+        int writePos = 0;
+        int sampleCounter = 0;
+        int noteOffSample = 0;
+        bool isNoteOffTriggered = false;
+        juce::File file;
+    };
+    extern Lane lanes[3]; // グローバル宣言
+}
+
 /**
- * 外部DAWへのドラッグ＆ドロップエクスポートをネイティブに成立させる
+ * 外部DAWへの直接ドラッグ＆ドロップエクスポートを成立させる
  * 特製インタラクティブ・エクスポートソースコンポーネント
  */
 class ExportButton final : public juce::Component
@@ -23,25 +39,25 @@ public:
     void paint(juce::Graphics& g) override
     {
         auto bounds = getLocalBounds().toFloat();
+        auto s = ExportRecordingCore::lanes[laneIndex].state.load();
 
-        if (isReady)
+        if (s == ExportRecordingCore::State::Ready)
             g.setColour(juce::Colour::fromRGB(0, 180, 100)); // Drag OK (Green)
-        else if (isProcessing)
-            g.setColour(juce::Colour::fromRGB(220, 130, 0)); // Processing (Orange)
+        else if (s == ExportRecordingCore::State::Request || s == ExportRecordingCore::State::Recording)
+            g.setColour(juce::Colour::fromRGB(220, 130, 0)); // Recording (Orange)
         else
-            g.setColour(juce::Colours::darkgrey.darker());   // Normal (Dark)
+            g.setColour(juce::Colours::darkgrey.darker());   // Idle (Dark)
 
         g.fillRoundedRectangle(bounds, 4.0f);
-
         g.setColour(juce::Colours::white.withAlpha(0.3f));
         g.drawRoundedRectangle(bounds, 4.0f, 1.0f);
 
         g.setColour(juce::Colours::white);
         g.setFont(juce::Font(10.5f, juce::Font::bold));
 
-        if (isProcessing)
-            g.drawText("Processing...", getLocalBounds(), juce::Justification::centred);
-        else if (isReady)
+        if (s == ExportRecordingCore::State::Request || s == ExportRecordingCore::State::Recording)
+            g.drawText("Recording...", getLocalBounds(), juce::Justification::centred);
+        else if (s == ExportRecordingCore::State::Ready)
             g.drawText("Drag OK!", getLocalBounds(), juce::Justification::centred);
         else
             g.drawText("EXPORT", getLocalBounds(), juce::Justification::centred);
@@ -49,62 +65,46 @@ public:
 
     void mouseDown(const juce::MouseEvent&) override
     {
-        if (!isProcessing && !isReady)
-        {
-            isProcessing = true;
-            repaint();
-
-            // 一時フォルダに実動作レート流路で音声を生成
-            exportedFile = processor.createTemporaryWavForExport(laneIndex);
-
-            isProcessing = false;
-            isReady = exportedFile.existsAsFile();
-            repaint();
-        }
+        ExportRecordingCore::lanes[laneIndex].state.store(ExportRecordingCore::State::Request);
+        repaint();
     }
 
     void mouseDrag(const juce::MouseEvent&) override
     {
-        if (isReady && exportedFile.existsAsFile())
+        auto s = ExportRecordingCore::lanes[laneIndex].state.load();
+        if (s == ExportRecordingCore::State::Ready)
         {
-            if (auto* dragContainer = juce::DragAndDropContainer::findParentDragContainerFor(this))
+            juce::File file = processor.createTemporaryWavForExport(laneIndex);
+            if (file.existsAsFile())
             {
-                // ドラッグ中の視覚的サムネイルを生成
-                juce::Image dragImage(juce::Image::ARGB, getWidth(), getHeight(), true);
-                juce::Graphics dg(dragImage);
-                dg.setColour(juce::Colour::fromRGB(0, 180, 100).withAlpha(0.6f));
-                dg.fillRoundedRectangle(dragImage.getBounds().toFloat(), 4.0f);
-                dg.setColour(juce::Colours::white);
-                dg.setFont(juce::Font(10.0f, juce::Font::bold));
-                dg.drawText("Dropping WAV...", dragImage.getBounds(), juce::Justification::centred);
+                if (auto* dragContainer = juce::DragAndDropContainer::findParentDragContainerFor(this))
+                {
+                    juce::Image dragImage(juce::Image::ARGB, getWidth(), getHeight(), true);
+                    juce::Graphics dg(dragImage);
+                    dg.setColour(juce::Colour::fromRGB(0, 180, 100).withAlpha(0.6f));
+                    dg.fillRoundedRectangle(dragImage.getBounds().toFloat(), 4.0f);
+                    dg.setColour(juce::Colours::white);
+                    dg.setFont(juce::Font(10.0f, juce::Font::bold));
+                    dg.drawText("Dropping WAV...", dragImage.getBounds(), juce::Justification::centred);
 
-                // 第1引数にファイルの絶対パスを渡し、OSを介して外部DAWのタイムラインへ直流ドロップ
-                dragContainer->startDragging(exportedFile.getFullPathName(), this, dragImage, true);
+                    dragContainer->startDragging(file.getFullPathName(), this, dragImage, true);
 
-                // ドロップ開始後に状態をクリアし次のエクスポートに備える
-                isReady = false;
-                repaint();
+                    ExportRecordingCore::lanes[laneIndex].state.store(ExportRecordingCore::State::Idle);
+                    repaint();
+                }
             }
         }
     }
 
     void reset() noexcept
     {
-        if (isReady || isProcessing)
-        {
-            isReady = false;
-            isProcessing = false;
-            exportedFile = juce::File();
-            repaint();
-        }
+        ExportRecordingCore::lanes[laneIndex].state.store(ExportRecordingCore::State::Idle);
+        repaint();
     }
 
 private:
     const int laneIndex;
     AnatomyAudioProcessor& processor;
-    bool isProcessing = false;
-    bool isReady = false;
-    juce::File exportedFile;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ExportButton)
 };
@@ -147,28 +147,28 @@ private:
     // 1段目操作部
     juce::TextButton btnOriginal{ "Full Mix" };
     juce::TextButton btnTransient{ "Transient Solo" };
-    juce::TextButton btnTonal{ "Tonal Solo" };     // SustainからTonalへ名称変更
-    juce::TextButton btnBefore{ "BEFORE" };        // スマートON/OFFトグルボタン
+    juce::TextButton btnTonal{ "Tonal Solo" };
+    juce::TextButton btnBefore{ "BEFORE" };
 
     // 2段目左右引き裂き用 Transientコアパラメータ
     juce::Slider sliderClickLength;
     juce::Slider sliderTransPitch;
-    juce::Slider sliderTransGain; // 1段目から引っ越しマウント
+    juce::Slider sliderTransGain;
     juce::Label lblClickLength;
     juce::Label lblTransPitch;
     juce::Label lblTransGain;
 
     // 2段目左右引き裂き用 Tonalコアパラメータ
     juce::Slider sliderClickCurve;
-    juce::Slider sliderTonalPitch; // SustainからTonalへ名称変更
-    juce::Slider sliderTonalGain;  // 1段目から引っ越しマウント
+    juce::Slider sliderTonalPitch;
+    juce::Slider sliderTonalGain;
     juce::Slider sliderSustainRelease;
     juce::Label lblClickCurve;
     juce::Label lblTonalPitch;
     juce::Label lblTonalGain;
     juce::Label lblSustainRelease;
 
-    // 各レーン専用のネイティブドラッグエクスポートソース
+    // 各レーン専用のリアルタイムエクスポートトリガーボタン
     ExportButton btnExportFull{ 0, audioProcessor };
     ExportButton btnExportTransient{ 1, audioProcessor };
     ExportButton btnExportTonal{ 2, audioProcessor };

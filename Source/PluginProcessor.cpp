@@ -9,6 +9,13 @@
 #include <cmath>
 #include <algorithm>
 
+// 型の定義は PluginEditor.h 側で一元管理されているため、再定義（structやenum）は行わない。
+// ここでは、オーディオスレッドとUI間で共有される実体（Entity）の定義のみを記述する。
+namespace ExportRecordingCore
+{
+    Lane lanes[3]; // 0: Full, 1: Trans, 2: Tonal
+}
+
 AnatomyAudioProcessor::AnatomyAudioProcessor()
     : AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)),
     juce::Thread("AnatomyTimeDomainThread"),
@@ -231,6 +238,45 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
     if (transientBlockBuffer.getNumSamples() < numSamples || transientBlockBuffer.getNumChannels() < numChannels) return;
 
+    for (int l = 0; l < 3; ++l)
+    {
+        if (ExportRecordingCore::lanes[l].state.load() == ExportRecordingCore::State::Request)
+        {
+            ExportRecordingCore::lanes[l].buffer.setSize(2, static_cast<int>(6.0 * currentSampleRate), false, false, true);
+            ExportRecordingCore::lanes[l].buffer.clear();
+            ExportRecordingCore::lanes[l].writePos = 0;
+            ExportRecordingCore::lanes[l].sampleCounter = 0;
+            ExportRecordingCore::lanes[l].noteOffSample = static_cast<int>(0.4 * currentSampleRate);
+            ExportRecordingCore::lanes[l].isNoteOffTriggered = false;
+            ExportRecordingCore::lanes[l].state.store(ExportRecordingCore::State::Recording);
+
+            if (auto* nsTrans = dynamic_cast<NoiseGenerator*>(transientPool[2].get())) nsTrans->trigger();
+            if (auto* nsTonal = dynamic_cast<NoiseGenerator*>(tonalPool[2].get())) nsTonal->trigger();
+            if (auto* nsFull = dynamic_cast<NoiseGenerator*>(fullMixPool[2].get()))  nsFull->trigger();
+
+            if (activeVoice.isActive) activeVoice.resetProcessing();
+            SharedSampleData* currentDataSnapshot = masterSampleData.load(std::memory_order_acquire);
+            if (currentDataSnapshot != nullptr)
+            {
+                activeVoice.sampleData = currentDataSnapshot;
+                activeVoice.clickReadIndex = 0.0;
+                activeVoice.sustainReadIndex = 0.0;
+                activeVoice.triggerVelocity = 1.0f;
+                activeVoice.isActive = true;
+                activeVoice.isReleasing = false;
+                activeVoice.releaseGain = 1.0f;
+                activeVoice.currentMidiNote = 60;
+                activeVoice.pitchRatio = (activeVoice.sampleData->getSampleRate() > 0.0 && currentSampleRate > 0.0)
+                    ? (activeVoice.sampleData->getSampleRate() / currentSampleRate) : 1.0;
+                activeIsMuting = false;
+                activeMuteGain = 1.0f;
+                activeVoice.resetProcessing();
+                customTransientReplacer.reset();
+                customTonalReplacer.reset();
+            }
+        }
+    }
+
     synchronizePoolParameters();
     transientBlockBuffer.clear();
     tonalBlockBuffer.clear();
@@ -312,6 +358,23 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
+        for (int l = 0; l < 3; ++l)
+        {
+            if (ExportRecordingCore::lanes[l].state.load() == ExportRecordingCore::State::Recording)
+            {
+                if (!ExportRecordingCore::lanes[l].isNoteOffTriggered &&
+                    ExportRecordingCore::lanes[l].sampleCounter == ExportRecordingCore::lanes[l].noteOffSample)
+                {
+                    if (activeVoice.isActive && activeVoice.currentMidiNote == 60)
+                    {
+                        activeVoice.isReleasing = true;
+                    }
+                    ExportRecordingCore::lanes[l].isNoteOffTriggered = true;
+                }
+                ExportRecordingCore::lanes[l].sampleCounter++;
+            }
+        }
+
         float mixedTransL = 0.0f, mixedTransR = 0.0f;
         float mixedTonalL = 0.0f, mixedTonalR = 0.0f;
 
@@ -425,6 +488,85 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     }
 
     fullMixChain.process(buffer);
+
+    for (int l = 0; l < 3; ++l)
+    {
+        if (ExportRecordingCore::lanes[l].state.load() == ExportRecordingCore::State::Recording)
+        {
+            int wPos = ExportRecordingCore::lanes[l].writePos;
+            int space = ExportRecordingCore::lanes[l].buffer.getNumSamples() - wPos;
+            int toWrite = std::min(numSamples, space);
+
+            if (toWrite > 0)
+            {
+                const juce::AudioBuffer<float>* srcBuf = nullptr;
+                if (l == 0) srcBuf = &buffer;
+                if (l == 1) srcBuf = &transientBlockBuffer;
+                if (l == 2) srcBuf = &tonalBlockBuffer;
+
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    int srcCh = std::min(ch, srcBuf->getNumChannels() - 1);
+                    ExportRecordingCore::lanes[l].buffer.copyFrom(ch, wPos, *srcBuf, srcCh, 0, toWrite);
+                }
+                ExportRecordingCore::lanes[l].writePos += toWrite;
+            }
+
+            bool isSilent = true;
+            const juce::AudioBuffer<float>* checkBuf = (l == 0) ? &buffer : ((l == 1) ? &transientBlockBuffer : &tonalBlockBuffer);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                int srcCh = std::min(ch, checkBuf->getNumChannels() - 1);
+                const float* ptr = checkBuf->getReadPointer(srcCh);
+                for (int s = 0; s < numSamples; ++s)
+                {
+                    if (std::abs(ptr[s]) > 1e-4f) { isSilent = false; break; }
+                }
+                if (!isSilent) break;
+            }
+
+            bool shouldStop = false;
+            if (l == 1)
+            {
+                float transHoldSamples = (clickHold / 1000.0f) * static_cast<float>(fileSampleRate);
+                if (activeVoice.clickReadIndex >= transHoldSamples && isSilent) shouldStop = true;
+                if (!activeVoice.isActive && isSilent) shouldStop = true;
+            }
+            else
+            {
+                if (ExportRecordingCore::lanes[l].isNoteOffTriggered && isSilent && !activeVoice.isActive) shouldStop = true;
+                if (!activeVoice.isActive && isSilent) shouldStop = true;
+            }
+
+            if (ExportRecordingCore::lanes[l].writePos >= static_cast<int>(5.5 * currentSampleRate)) shouldStop = true;
+
+            if (shouldStop)
+            {
+                juce::File tempDir = juce::File::getSpecialLocation(juce::File::SpecialLocationType::tempDirectory);
+                ExportRecordingCore::lanes[l].file = tempDir.getChildFile("ANATOMY_Export_" + juce::String(juce::Random::getSystemRandom().nextInt64()) + ".wav");
+
+                int finalLength = ExportRecordingCore::lanes[l].writePos;
+                juce::AudioBuffer<float> trimmed(2, finalLength);
+                for (int ch = 0; ch < 2; ++ch)
+                    trimmed.copyFrom(ch, 0, ExportRecordingCore::lanes[l].buffer, ch, 0, finalLength);
+
+                juce::WavAudioFormat wavFormat;
+                std::unique_ptr<juce::AudioFormatWriter> writer(wavFormat.createWriterFor(
+                    new juce::FileOutputStream(ExportRecordingCore::lanes[l].file), currentSampleRate, 2, 24, {}, 0));
+
+                if (writer != nullptr)
+                {
+                    writer->writeFromAudioSampleBuffer(trimmed, 0, finalLength);
+                    writer.reset();
+                    ExportRecordingCore::lanes[l].state.store(ExportRecordingCore::State::Ready);
+                }
+                else
+                {
+                    ExportRecordingCore::lanes[l].state.store(ExportRecordingCore::State::Idle);
+                }
+            }
+        }
+    }
 }
 
 void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
@@ -763,180 +905,13 @@ void AnatomyAudioProcessor::cleanUpGarbageBin()
 
 juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
 {
-    juce::File tempDir = juce::File::getSpecialLocation(juce::File::SpecialLocationType::tempDirectory);
-    juce::File targetWavFile = tempDir.getChildFile("ANATOMY_Export_" + juce::String(juce::Random::getSystemRandom().nextInt64()) + ".wav");
-
-    SharedSampleData* currentDataSnapshot = masterSampleData.load(std::memory_order_acquire);
-    if (currentDataSnapshot == nullptr) return {};
-
-    float clickHold = apvts.getRawParameterValue("clickLength")->load();
-    float clickCurve = apvts.getRawParameterValue("clickCurve")->load();
-    float transPitch = apvts.getRawParameterValue("transPitch")->load();
-    float tonalPitch = apvts.getRawParameterValue("tonalPitch")->load();
-    float relMs = apvts.getRawParameterValue("sustainRelease")->load();
-
-    float transScale = std::pow(2.0f, transPitch / 12.0f);
-    float tonalScale = std::pow(2.0f, tonalPitch / 12.0f);
-
-    float rampSamples = static_cast<float>((relMs / 1000.0f) * currentSampleRate);
-    float dynamicReleaseFactor = std::exp(std::log(0.001f) / std::max(1.0f, rampSamples));
-
-    const int maxRenderSamples = static_cast<int>(5.0 * currentSampleRate);
-    const int virtualNoteOffSample = static_cast<int>(0.4 * currentSampleRate);
-
-    int savedSoloMode = currentSoloMode;
-    currentSoloMode = 0;
-
-    if (auto* nsTrans = dynamic_cast<NoiseGenerator*>(transientPool[2].get())) nsTrans->trigger();
-    if (auto* nsTonal = dynamic_cast<NoiseGenerator*>(tonalPool[2].get())) nsTonal->trigger();
-    if (auto* nsFull = dynamic_cast<NoiseGenerator*>(fullMixPool[2].get()))  nsFull->trigger();
-
-    juce::AudioBuffer<float> accumulatedBuffer(2, maxRenderSamples);
-    accumulatedBuffer.clear();
-
-    VoiceState exportVoice;
-    exportVoice.sampleData = currentDataSnapshot;
-    exportVoice.triggerVelocity = 1.0f;
-    exportVoice.isActive = true;
-    exportVoice.pitchRatio = (exportVoice.sampleData->getSampleRate() > 0.0 && currentSampleRate > 0.0)
-        ? (exportVoice.sampleData->getSampleRate() / currentSampleRate) : 1.0;
-
-    int actualExportSamples = virtualNoteOffSample + 512;
-
-    const int blockSize = 512;
-    juce::AudioBuffer<float> blockTrans(2, blockSize);
-    juce::AudioBuffer<float> blockTonal(2, blockSize);
-    juce::AudioBuffer<float> blockFull(2, blockSize);
-
-    float transEndSamples = (transEndOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
-    float tonalEndSamples = (tonalEndOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
-    float transHoldSamples = (clickHold / 1000.0f) * static_cast<float>(fileSampleRate);
-
-    float transGain = std::pow(10.0f, apvts.getRawParameterValue("transMixGain")->load() / 20.0f);
-    float tonalGain = std::pow(10.0f, apvts.getRawParameterValue("tonalMixGain")->load() / 20.0f);
-
-    for (int blockStart = 0; blockStart < maxRenderSamples; blockStart += blockSize)
+    if (laneIndex >= 0 && laneIndex < 3)
     {
-        int currentBlockSize = std::min(blockSize, maxRenderSamples - blockStart);
-        blockTrans.setSize(2, currentBlockSize, false, false, true);
-        blockTonal.setSize(2, currentBlockSize, false, false, true);
-        blockTrans.clear();
-        blockTonal.clear();
-
-        for (int s = 0; s < currentBlockSize; ++s)
+        if (ExportRecordingCore::lanes[laneIndex].state.load() == ExportRecordingCore::State::Ready)
         {
-            int globalSampleIdx = blockStart + s;
-            if (globalSampleIdx == virtualNoteOffSample)
-                exportVoice.isReleasing = true;
-
-            if (exportVoice.isActive)
-            {
-                float vTransL = 0.0f, vTransR = 0.0f;
-                float vTonalL = 0.0f, vTonalR = 0.0f;
-                generateVoiceSample(exportVoice, vTransL, vTransR, vTonalL, vTonalR, clickHold, clickCurve, transScale, tonalScale, currentSampleRate);
-
-                if (exportVoice.isReleasing)
-                    exportVoice.releaseGain *= dynamicReleaseFactor;
-
-                bool transTimeUp = (exportVoice.clickReadIndex >= transHoldSamples);
-                double exactClick = ((transStartOffsetMs / 1000.0f) * fileSampleRate) + exportVoice.clickReadIndex;
-                if (transTimeUp || exactClick >= transEndSamples)
-                {
-                    vTransL = 0.0f; vTransR = 0.0f;
-                }
-
-                double exactSustainIdx = ((tonalStartOffsetMs / 1000.0f) * fileSampleRate) + exportVoice.sustainReadIndex;
-                if (exactSustainIdx >= tonalEndSamples || exportVoice.releaseGain <= 0.001f)
-                {
-                    exportVoice.reset();
-                }
-
-                blockTrans.setSample(0, s, vTransL);
-                blockTrans.setSample(1, s, vTransR);
-                blockTonal.setSample(0, s, vTonalL);
-                blockTonal.setSample(1, s, vTonalR);
-            }
-        }
-
-        transientChain.process(blockTrans);
-        tonalChain.process(blockTonal);
-
-        blockTrans.applyGain(transGain);
-        blockTonal.applyGain(tonalGain);
-
-        if (laneIndex == 1)
-        {
-            for (int ch = 0; ch < 2; ++ch)
-                accumulatedBuffer.copyFrom(ch, blockStart, blockTrans, ch, 0, currentBlockSize);
-        }
-        else if (laneIndex == 2)
-        {
-            for (int ch = 0; ch < 2; ++ch)
-                accumulatedBuffer.copyFrom(ch, blockStart, blockTonal, ch, 0, currentBlockSize);
-        }
-        else
-        {
-            blockFull.setSize(2, currentBlockSize, false, false, true);
-            for (int ch = 0; ch < 2; ++ch)
-            {
-                for (int s = 0; s < currentBlockSize; ++s)
-                    blockFull.setSample(ch, s, blockTrans.getSample(ch, s) + blockTonal.getSample(ch, s));
-            }
-            fullMixChain.process(blockFull);
-
-            for (int ch = 0; ch < 2; ++ch)
-                accumulatedBuffer.copyFrom(ch, blockStart, blockFull, ch, 0, currentBlockSize);
-        }
-
-        bool blockIsSilent = true;
-        for (int ch = 0; ch < 2; ++ch)
-        {
-            const float* samples = (laneIndex == 1) ? blockTrans.getReadPointer(ch) :
-                ((laneIndex == 2) ? blockTonal.getReadPointer(ch) : blockFull.getReadPointer(ch));
-            for (int s = 0; s < currentBlockSize; ++s)
-            {
-                if (std::abs(samples[s]) > 1e-4f)
-                {
-                    blockIsSilent = false;
-                    break;
-                }
-            }
-            if (!blockIsSilent) break;
-        }
-
-        if (!blockIsSilent)
-        {
-            actualExportSamples = blockStart + currentBlockSize;
-        }
-
-        // Transient抽出の場合はノートオフ終了を待たず、音声が途切れたブロックで即終了。
-        // Tonal / FullMix は離鍵（400ms）を全うした後の無音で安全終了。
-        if (blockIsSilent && (laneIndex == 1 || blockStart >= virtualNoteOffSample))
-        {
-            break;
+            return ExportRecordingCore::lanes[laneIndex].file;
         }
     }
-
-    currentSoloMode = savedSoloMode;
-    actualExportSamples = juce::jlimit(512, maxRenderSamples, actualExportSamples);
-
-    juce::AudioBuffer<float> trimmedBuffer(accumulatedBuffer.getNumChannels(), actualExportSamples);
-    for (int ch = 0; ch < trimmedBuffer.getNumChannels(); ++ch)
-    {
-        trimmedBuffer.copyFrom(ch, 0, accumulatedBuffer, ch, 0, actualExportSamples);
-    }
-
-    juce::WavAudioFormat wavFormat;
-    std::unique_ptr<juce::AudioFormatWriter> writer(wavFormat.createWriterFor(
-        new juce::FileOutputStream(targetWavFile), currentSampleRate, trimmedBuffer.getNumChannels(), 24, {}, 0));
-
-    if (writer != nullptr)
-    {
-        writer->writeFromAudioSampleBuffer(trimmedBuffer, 0, trimmedBuffer.getNumSamples());
-        writer.reset();
-        return targetWavFile;
-    }
-
     return {};
 }
 
