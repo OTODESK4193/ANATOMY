@@ -6,9 +6,9 @@
 #include "WaveformComponent.h"
 
 /**
- * TransientBrowserPanel (ノブ完全廃止・フラット集約設計版)
- * 重複していた不要なGAINノブやタイマー干渉スライダーを完全消滅。
- * マウスドラッグ可動レンジのみを100%解放した高効率型アタック置換UI。
+ * TransientBrowserPanel
+ * START/END/GAINノブ類を完全に排除し、BrowseとResetボタンのみを全域に配置した
+ * フラットデザインのTransient置換サンプルブラウザパネル。
  */
 class TransientBrowserPanel final : public juce::Component, public juce::FileBrowserListener
 {

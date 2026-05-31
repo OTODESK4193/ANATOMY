@@ -79,7 +79,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
-    // 💥【プロダクション初期アライメント】起ち上げた瞬間の数値を、最も音楽的なプロ基準値へ正確に初期固定
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "clickLength", 1 }, "Click Hold (ms)", 0.0f, 50.0f, 10.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "clickCurve", 1 }, "Sustain Fade-In (ms)", 1.0f, 100.0f, 5.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transPitch", 1 }, "Transient Pitch (st)", -12.0f, 12.0f, 0.0f));
@@ -319,10 +318,7 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
         if (activeVoice.isActive)
         {
             float vTransL = 0.0f, vTransR = 0.0f; float vTonalL = 0.0f, vTonalR = 0.0f;
-            generateVoiceSample(activeVoice, vTransL, vTransR, vTonalL, vTonalR, clickHold, clickCurve, transScale, tonalScale);
-
-            mixedTransL += vTransL * activeMuteGain; mixedTransR += vTransR * activeMuteGain;
-            mixedTonalL += vTonalL * activeMuteGain; mixedTonalR += vTonalR * activeMuteGain;
+            generateVoiceSample(activeVoice, vTransL, vTransR, vTonalL, vTonalR, clickHold, clickCurve, transScale, tonalScale, currentSampleRate);
 
             if (activeVoice.isReleasing) activeVoice.releaseGain *= dynamicReleaseFactor;
             if (activeIsMuting) activeMuteGain *= muteFactor;
@@ -333,7 +329,7 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
                 double exactClick = ((transStartOffsetMs / 1000.0f) * fileSampleRate) + activeVoice.clickReadIndex;
                 if (transTimeUp || exactClick >= transEndSamples)
                 {
-                    mixedTransL = 0.0f; mixedTransR = 0.0f;
+                    vTransL = 0.0f; vTransR = 0.0f;
                 }
 
                 double exactSustainIdx = ((tonalStartOffsetMs / 1000.0f) * fileSampleRate) + activeVoice.sustainReadIndex;
@@ -350,6 +346,9 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
                     activeVoice.reset(); activeIsMuting = false; activeMuteGain = 1.0f;
                 }
             }
+
+            mixedTransL += vTransL * activeMuteGain; mixedTransR += vTransR * activeMuteGain;
+            mixedTonalL += vTonalL * activeMuteGain; mixedTonalR += vTonalR * activeMuteGain;
         }
 
         for (int i = 0; i < maxReleasingVoices; ++i)
@@ -357,10 +356,7 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
             if (releasingVoices[i].isActive)
             {
                 float vTransL = 0.0f, vTransR = 0.0f; float vTonalL = 0.0f, vTonalR = 0.0f;
-                generateVoiceSample(releasingVoices[i], vTransL, vTransR, vTonalL, vTonalR, clickHold, clickCurve, transScale, tonalScale);
-
-                mixedTransL += vTransL * releasingMuteGain[i]; mixedTransR += vTransR * releasingMuteGain[i];
-                mixedTonalL += vTonalL * releasingMuteGain[i]; mixedTonalR += vTonalR * releasingMuteGain[i];
+                generateVoiceSample(releasingVoices[i], vTransL, vTransR, vTonalL, vTonalR, clickHold, clickCurve, transScale, tonalScale, currentSampleRate);
 
                 if (releasingVoices[i].isReleasing) releasingVoices[i].releaseGain *= dynamicReleaseFactor;
                 if (releasingIsMuting[i]) releasingMuteGain[i] *= muteFactor;
@@ -371,7 +367,7 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
                     double exactClick = ((transStartOffsetMs / 1000.0f) * fileSampleRate) + releasingVoices[i].clickReadIndex;
                     if (transTimeUp || exactClick >= transEndSamples)
                     {
-                        mixedTransL = 0.0f; mixedTransR = 0.0f;
+                        vTransL = 0.0f; vTransR = 0.0f;
                     }
 
                     double exactSustainIdx = ((tonalStartOffsetMs / 1000.0f) * fileSampleRate) + releasingVoices[i].sustainReadIndex;
@@ -388,6 +384,9 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
                         releasingVoices[i].reset(); releasingIsMuting[i] = false; releasingMuteGain[i] = 1.0f;
                     }
                 }
+
+                mixedTransL += vTransL * releasingMuteGain[i]; mixedTransR += vTransR * releasingMuteGain[i];
+                mixedTonalL += vTonalL * releasingMuteGain[i]; mixedTonalR += vTonalR * releasingMuteGain[i];
             }
         }
 
@@ -409,7 +408,6 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     transientChain.process(transientBlockBuffer);
     tonalChain.process(tonalBlockBuffer);
 
-    // 💥【SOLO防衛仕様】2段目ノブ利得計算時、Soloモードに応じて反対流路を完全に0.0f化して鉄壁ガード
     const float transLinearGain = (currentSoloMode == 2) ? 0.0f : std::pow(10.0f, apvts.getRawParameterValue("transMixGain")->load() / 20.0f);
     const float tonalLinearGain = (currentSoloMode == 1) ? 0.0f : std::pow(10.0f, apvts.getRawParameterValue("tonalMixGain")->load() / 20.0f);
 
@@ -427,7 +425,7 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
 void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     float& outTransL, float& outTransR, float& outTonalL, float& outTonalR,
-    float clickHold, float clickCurve, float transScale, float tonalScale) noexcept
+    float clickHold, float clickCurve, float transScale, float tonalScale, double hostSampleRate) noexcept
 {
     outTransL = 0.0f; outTransR = 0.0f; outTonalL = 0.0f; outTonalR = 0.0f;
     if (voice.sampleData == nullptr) return;
@@ -449,9 +447,6 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     int cIdx = static_cast<int>(exactClickIdx);
     int sIdx = static_cast<int>(exactSustainIdx);
 
-    // 💥【SOLOバグ・音色差の完全治療】
-    // 差し替えサンプラーがなくデフォルト(1.0倍)の時は、ClickとSustainそれぞれの高精度分離生音をoutTransとoutTonalへ正しく分配出力。
-    // 各SoloMode(1=Transient, 2=Tonal)による不要流路の完全遮断もここで同時にマウント。
     if (isBefore || (!hasCustomTrans && !hasCustomTonal && std::abs(transScale - 1.0f) < 0.01f && std::abs(tonalScale - 1.0f) < 0.01f))
     {
         if (currentSoloMode != 2 && transBufferThread.getNumSamples() > 0 && cIdx < transBufferThread.getNumSamples())
@@ -481,7 +476,7 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     if (transGateOpen && currentSoloMode != 2)
     {
         if (hasCustomTrans)
-            shiftedClick = customTransientReplacer.processSample(voice.clickReadIndex, voice.pitchRatio, transScale, clickHold, clickCurve, currentSampleRate, currentSoloMode);
+            shiftedClick = customTransientReplacer.processSample(voice.clickReadIndex, voice.pitchRatio, transScale, clickHold, clickCurve, hostSampleRate, currentSoloMode);
         else if (voice.transShifter && cIdx < click.getNumSamples())
             shiftedClick = voice.transShifter->processSample(click, cIdx, transScale);
     }
@@ -490,7 +485,7 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     if (tonalGateOpen && currentSoloMode != 1)
     {
         if (hasCustomTonal)
-            shiftedSustain = customTonalReplacer.processSample(voice.sustainReadIndex, voice.pitchRatio, tonalScale, clickHold, clickCurve, currentSampleRate, currentSoloMode);
+            shiftedSustain = customTonalReplacer.processSample(voice.sustainReadIndex, voice.pitchRatio, tonalScale, clickHold, clickCurve, hostSampleRate, currentSoloMode);
         else if (voice.tonalShifter && sIdx < sustain.getNumSamples())
             shiftedSustain = voice.tonalShifter->processSample(sustain, sIdx, tonalScale);
     }
@@ -809,7 +804,7 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
 
         float vTransL = 0.0f, vTransR = 0.0f;
         float vTonalL = 0.0f, vTonalR = 0.0f;
-        generateVoiceSample(exportVoice, vTransL, vTransR, vTonalL, vTonalR, clickHold, clickCurve, transScale, tonalScale);
+        generateVoiceSample(exportVoice, vTransL, vTransR, vTonalL, vTonalR, clickHold, clickCurve, transScale, tonalScale, sr);
 
         if (exportVoice.isReleasing)
             exportVoice.releaseGain *= dynamicReleaseFactor;
@@ -833,8 +828,8 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
     transientChain.process(workTrans);
     tonalChain.process(workTonal);
 
-    float transGain = std::pow(10.0f, apvts.getRawParameterValue("transMixGain")->load() / 20.0f);
-    float tonalGain = std::pow(10.0f, apvts.getRawParameterValue("tonalMixGain")->load() / 20.0f);
+    float transGain = (currentSoloMode == 2) ? 0.0f : std::pow(10.0f, apvts.getRawParameterValue("transMixGain")->load() / 20.0f);
+    float tonalGain = (currentSoloMode == 1) ? 0.0f : std::pow(10.0f, apvts.getRawParameterValue("tonalMixGain")->load() / 20.0f);
     workTrans.applyGain(transGain);
     workTonal.applyGain(tonalGain);
 

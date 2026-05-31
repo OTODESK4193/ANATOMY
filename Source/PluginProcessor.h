@@ -115,7 +115,7 @@ private:
         float& outTransL, float& outTransR,
         float& outTonalL, float& outTonalR,
         float clickHold, float clickCurve,
-        float transScale, float tonalScale) noexcept;
+        float transScale, float tonalScale, double hostSampleRate) noexcept;
 
     void updateActiveSampleData();
     void cleanUpGarbageBin();

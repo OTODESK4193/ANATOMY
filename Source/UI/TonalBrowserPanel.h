@@ -7,7 +7,6 @@
 
 /**
  * TonalBrowserPanel
- * 重複オブジェクト指定およびポインタ宣言のタイポを修正。
  * START/END/GAINノブ類を完全に排除し、BrowseとResetボタンのみを全域に配置した
  * フラットデザインのTonal置換サンプルブラウザパネル。
  */
