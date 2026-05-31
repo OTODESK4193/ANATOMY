@@ -6,10 +6,9 @@
 #include <cmath>
 
 /**
- * OTT_Multiband (Phase 4 Master Noise-Free Edition)
- * 無音時や弱音時のフロアノイズが爆発的に持ち上がるのを自動的に検知し、
- * Upward Dynamicsの適用量を分子レベルで自動減衰遮断させる「スマート・ローレベル・ゲート数理」を搭載。
- * 初期Mix値を使いやすい 35% へリチューニングした、ノイズフリー型最高級3バンドOTTエンジン。
+ * OTT_Multiband (Production-Grade Noise-Controlled Edition)
+ * 弱音領域でのフロアノイズ増幅を抑制する「改良型スマート・ローレベル・ゲート数理」を搭載。
+ * 各帯域の役割に適合した傾斜配分初期値と、ドラムの基音に調和するクロスオーバー設計を内包した3バンドOTTエンジン。
  */
 class OTT_Multiband final : public AudioEffect
 {
@@ -97,10 +96,10 @@ public:
 
         const float ottThreshold = std::pow(10.0f, -30.0f / 20.0f); // -30 dBFS 固定内部しきい値
 
-        // 💥【ノイズ対策核心数理：ローレベル・スマートゲート限界値設定】
-        // 聴感上、サーノイズや吸気音が爆発的に持ち上がり始める閾値（-54dBFS）を検知リミッターに設定
-        const float noiseFloorThreshold = std::pow(10.0f, -54.0f / 20.0f);
-        const float gateGripBottom = std::pow(10.0f, -66.0f / 20.0f); // この下は完全遮断スリープ
+        // 💥【スマート・ノイズミュート数理の閾値最適化】
+        // ドラムのテール減衰特性に合わせ、作動開始の上弦の閾値を -45.0dBFS、遮断下弦を -54.0dBFS に先回りシフト
+        const float noiseFloorThreshold = std::pow(10.0f, -45.0f / 20.0f);
+        const float gateGripBottom = std::pow(10.0f, -54.0f / 20.0f);
 
         float* bandPtrs[3] = { lowBuffer.getWritePointer(0), midBuffer.getWritePointer(0), highBuffer.getWritePointer(0) };
         float* bandPtrsR[3] = { numChannels > 1 ? lowBuffer.getWritePointer(1) : nullptr,
@@ -132,25 +131,22 @@ public:
 
                     if (ratioOffset > 1.0f)
                     {
-                        // 【Downward領域】：4:1 比率で叩く
+                        // 【Downward領域】：4:1 比率で圧縮
                         float downFactor = std::pow(ratioOffset, (1.0f / 4.0f) - 1.0f);
                         gainReduction *= (1.0f - downwardAmount[b]) + (downwardAmount[b] * downFactor);
                     }
                     else
                     {
-                        // 【Upward領域】：1:2 比率で強制引き上げ（最大＋18dBブースト）
+                        // 【Upward領域】：1:2 比率で引き上げ（最大＋18dBブースト）
                         float upFactor = std::pow(ratioOffset, (1.0f / 0.5f) - 1.0f);
                         upFactor = std::min(upFactor, 7.94f);
 
-                        // 💥【スマート・ノイズミュート数理のインジェクション】
-                        // 信号のエネルギーがノイズフロアに近づくにつれて、Upwardのブースト適用量を
-                        // 自動的になめらかに 1.0（等倍＝ブースト無し）へ向けて減衰遮断させる！
                         if (env < noiseFloorThreshold)
                         {
                             float gateFactor = (env - gateGripBottom) / (noiseFloorThreshold - gateGripBottom);
-                            gateFactor = std::max(0.0f, std::min(1.0f, gateFactor)); // 0.0 〜 1.0 にクランプ
+                            gateFactor = std::max(0.0f, std::min(1.0f, gateFactor));
 
-                            // 1.0（無加工）と upFactor の間で線形補間し、無音時のサーノイズを完全スリープ
+                            // 1.0（無加工）と upFactor の間で線形補間し、無音〜弱音時のサーノイズを完全ミュート
                             upFactor = 1.0f + (upFactor - 1.0f) * gateFactor;
                         }
 
@@ -225,14 +221,14 @@ private:
     juce::AudioBuffer<float> midBuffer;
     juce::AudioBuffer<float> highBuffer;
 
-    // 💥【汎用デフォルト変更】挿入時のノイズ事故を防ぐため、初期ウェット量を 35% にリチューニング
+    // 💥【プロダクション初期アライメント】ノイズフロアの暴れを防ぎ、パラレルコンプとして最も馴染む音楽的基準数値を初期固定
     float currentMix = 0.35f;
-    float timeMultiplierParam = 1.0f;
-    float lowMidFreqParam = 200.0f;
-    float midHighFreqParam = 2500.0f;
+    float timeMultiplierParam = 1.35f;
+    float lowMidFreqParam = 140.0f;
+    float midHighFreqParam = 3800.0f;
 
-    float upwardAmount[3] = { 1.0f, 1.0f, 1.0f };
-    float downwardAmount[3] = { 1.0f, 1.0f, 1.0f };
+    float upwardAmount[3] = { 0.60f, 0.40f, 0.15f };
+    float downwardAmount[3] = { 0.75f, 0.70f, 0.60f };
     float bandGainDb[3] = { 0.0f, 0.0f, 0.0f };
 
     float envFollower[3];
