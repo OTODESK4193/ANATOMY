@@ -34,14 +34,16 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     btnTransient.setClickingTogglesState(true);
     btnTonal.setClickingTogglesState(true);
 
+    // Abletonライクなフラット＆ソリッドなボタンカラー定義
     auto configureButtonLook = [](juce::TextButton& b, juce::Colour activeColor) {
         b.setColour(juce::TextButton::buttonOnColourId, activeColor);
         b.setColour(juce::TextButton::textColourOnId, juce::Colours::black);
-        b.setColour(juce::TextButton::buttonColourId, juce::Colours::darkgrey.darker());
+        b.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a3a));
         b.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
         };
 
-    configureButtonLook(btnOriginal, juce::Colours::white.withAlpha(0.8f));
+    // セクション固有のテーマカラーをマウント
+    configureButtonLook(btnOriginal, juce::Colours::lightgrey);
     configureButtonLook(btnTransient, juce::Colours::cyan);
     configureButtonLook(btnTonal, juce::Colours::magenta);
 
@@ -66,19 +68,21 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
         };
 
     auto configureSlider = [this](juce::Slider& s, juce::Label& l, const juce::String& name, juce::Colour color) {
+        s.setLookAndFeel(&arcLookAndFeel); // 特製アークルックアンドフィールをアタッチ
         s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
         s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 14);
         s.setColour(juce::Slider::rotarySliderFillColourId, color);
-        s.setColour(juce::Slider::thumbColourId, juce::Colours::white);
         addAndMakeVisible(s);
 
         l.setText(name, juce::dontSendNotification);
         l.setFont(juce::Font(9.5f, juce::Font::bold));
         l.setJustificationType(juce::Justification::centred);
+        // 💥【修正】第1引数を型の衝突が起きない完全な整数型ID（juce::Label::textColourId）へ直流変更
         l.setColour(juce::Label::textColourId, color.withAlpha(0.9f));
         addAndMakeVisible(l);
         };
 
+    // 各セクションのテーマカラー（Full: LightGrey / Trans: Cyan / Tonal: Magenta）にアライン
     configureSlider(sliderClickLength, lblClickLength, "CLICK HOLD (ms)", juce::Colours::cyan);
     configureSlider(sliderTransPitch, lblTransPitch, "TRANSIENT PITCH (st)", juce::Colours::cyan);
     configureSlider(sliderTransGain, lblTransGain, "TRANSIENT GAIN (dB)", juce::Colours::cyan);
@@ -87,6 +91,10 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     configureSlider(sliderSustainRelease, lblSustainRelease, "SUSTAIN RELEASE (ms)", juce::Colours::magenta);
     configureSlider(sliderTonalPitch, lblTonalPitch, "TONAL PITCH (st)", juce::Colours::magenta);
     configureSlider(sliderTonalGain, lblTonalGain, "TONAL GAIN (dB)", juce::Colours::magenta);
+
+    // エフェクトラックパネルおよびパラメータドック全体にルックアンドフィールを伝播
+    effectRackPanel.setLookAndFeel(&arcLookAndFeel);
+    parameterDockPanel.setLookAndFeel(&arcLookAndFeel);
 
     attachClickLength = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "clickLength", sliderClickLength);
     attachClickCurve = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "clickCurve", sliderClickCurve);
@@ -149,6 +157,18 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
 AnatomyAudioProcessorEditor::~AnatomyAudioProcessorEditor()
 {
     effectRackPanel.removeChangeListener(this);
+
+    // カスタムルックアンドフィール解放に伴うJUCEコアへの安全なnullクリア処理
+    sliderClickLength.setLookAndFeel(nullptr);
+    sliderTransPitch.setLookAndFeel(nullptr);
+    sliderTransGain.setLookAndFeel(nullptr);
+    sliderClickCurve.setLookAndFeel(nullptr);
+    sliderSustainRelease.setLookAndFeel(nullptr);
+    sliderTonalPitch.setLookAndFeel(nullptr);
+    sliderTonalGain.setLookAndFeel(nullptr);
+    effectRackPanel.setLookAndFeel(nullptr);
+    parameterDockPanel.setLookAndFeel(nullptr);
+
     stopTimer();
 }
 
@@ -316,12 +336,13 @@ void AnatomyAudioProcessorEditor::updateButtonToggleStates()
 
 void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    g.fillAll(juce::Colours::black.withAlpha(0.95f));
+    // Ableton風ミディアムダーク背景（炭色フラット）に変更
+    g.fillAll(juce::Colour(0xff2b2b2b));
 
     g.setFont(juce::Font(10.5f, juce::Font::bold));
 
     auto area = getLocalBounds();
-    area.removeFromRight(350);
+    area.removeFromRight(250); // 幅変更と同期
     area.removeFromTop(155);
     area.removeFromBottom(130);
 
@@ -356,7 +377,8 @@ void AnatomyAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds();
 
-    auto rackArea = area.removeFromRight(350);
+    // エフェクトラックカードのスリム化に伴い幅を350➔250へ縮小
+    auto rackArea = area.removeFromRight(250);
     effectRackPanel.setBounds(rackArea.reduced(2));
 
     auto dockArea = area.removeFromBottom(130).reduced(5, 2);

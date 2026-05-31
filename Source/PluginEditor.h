@@ -10,7 +10,6 @@
 #include "UI/EffectRackPanel.h"
 #include "UI/ParameterDockPanel.h"
 
-// プロセッサ側とデータ構造を完全に一元化するレコーディングスコープの完全型定義
 namespace ExportRecordingCore
 {
     enum class State { Idle, Request, Recording, Ready };
@@ -23,8 +22,67 @@ namespace ExportRecordingCore
         bool isNoteOffTriggered = false;
         juce::File file;
     };
-    extern Lane lanes[3]; // グローバル宣言
+    extern Lane lanes[3];
 }
+
+/**
+ * 提示された数理ロジックに基づくグラデーション・アークダイヤル・ルックアンドフィール
+ */
+class ArcDialLookAndFeel final : public juce::LookAndFeel_V4
+{
+public:
+    ArcDialLookAndFeel()
+    {
+        setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff1a1a1a));
+        setColour(juce::Slider::textBoxTextColourId, juce::Colours::white);
+        // 💥【修正】juce::Colours::transparent を存在定義されている transparentBlack へ変更
+        setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+    }
+    ~ArcDialLookAndFeel() override = default;
+
+    void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
+        float sliderPos, const float rotaryStartAngle,
+        const float rotaryEndAngle, juce::Slider& slider) override
+    {
+        auto radius = (float)juce::jmin(width / 2, height / 2) - 4.0f;
+        auto centreX = (float)x + (float)width * 0.5f;
+        auto centreY = (float)y + (float)height * 0.5f;
+        auto rx = centreX - radius;
+        auto ry = centreY - radius;
+        auto rw = radius * 2.0f;
+        auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
+        auto arcThickness = 6.0f;
+
+        // 1. 背景のトラック（Ableton風のダークグレー）
+        g.setColour(juce::Colour(0xff1a1a1a));
+        g.drawEllipse(rx, ry, rw, rw, arcThickness);
+
+        // 2. 塗りつぶされるアーク（セクション色を基にしたグラデーション）
+        juce::Path p;
+        p.addArc(rx, ry, rw, rw, rotaryStartAngle, angle, true);
+
+        auto baseColour = slider.findColour(juce::Slider::rotarySliderFillColourId);
+        auto lightColour = baseColour.brighter(1.2f);
+        auto darkColour = baseColour.darker(0.8f);
+
+        juce::ColourGradient gradient(
+            darkColour, rx, centreY,
+            lightColour, rx + rw, centreY,
+            false
+        );
+
+        g.setGradientFill(gradient);
+        g.strokePath(p, juce::PathStrokeType(arcThickness, juce::PathStrokeType::mitered, juce::PathStrokeType::butt));
+
+        // 3. ポインター（直線のインジケーター）
+        juce::Path p2;
+        auto pointerLength = radius * 0.4f;
+        p2.addRectangle(-1.5f, -radius, 3.0f, pointerLength);
+        p2.applyTransform(juce::AffineTransform::rotation(angle).translated(centreX, centreY));
+        g.setColour(juce::Colours::white);
+        g.fillPath(p2);
+    }
+};
 
 /**
  * 外部DAWへの直接ドラッグ＆ドロップエクスポートを成立させる
@@ -46,19 +104,19 @@ public:
         else if (s == ExportRecordingCore::State::Request || s == ExportRecordingCore::State::Recording)
             g.setColour(juce::Colour::fromRGB(220, 130, 0)); // Recording (Orange)
         else
-            g.setColour(juce::Colours::darkgrey.darker());   // Idle (Dark)
+            g.setColour(juce::Colour(0xff3a3a3a));           // Ableton風フラットグレー
 
-        g.fillRoundedRectangle(bounds, 4.0f);
-        g.setColour(juce::Colours::white.withAlpha(0.3f));
-        g.drawRoundedRectangle(bounds, 4.0f, 1.0f);
+        g.fillRoundedRectangle(bounds, 2.0f);
+        g.setColour(juce::Colour(0xff1a1a1a));
+        g.drawRoundedRectangle(bounds, 2.0f, 1.0f);
 
         g.setColour(juce::Colours::white);
-        g.setFont(juce::Font(10.5f, juce::Font::bold));
+        g.setFont(juce::Font(10.0f, juce::Font::bold));
 
         if (s == ExportRecordingCore::State::Request || s == ExportRecordingCore::State::Recording)
-            g.drawText("Recording...", getLocalBounds(), juce::Justification::centred);
+            g.drawText("RECORDING...", getLocalBounds(), juce::Justification::centred);
         else if (s == ExportRecordingCore::State::Ready)
-            g.drawText("Drag OK!", getLocalBounds(), juce::Justification::centred);
+            g.drawText("DRAG OK!", getLocalBounds(), juce::Justification::centred);
         else
             g.drawText("EXPORT", getLocalBounds(), juce::Justification::centred);
     }
@@ -82,10 +140,10 @@ public:
                     juce::Image dragImage(juce::Image::ARGB, getWidth(), getHeight(), true);
                     juce::Graphics dg(dragImage);
                     dg.setColour(juce::Colour::fromRGB(0, 180, 100).withAlpha(0.6f));
-                    dg.fillRoundedRectangle(dragImage.getBounds().toFloat(), 4.0f);
+                    dg.fillRoundedRectangle(dragImage.getBounds().toFloat(), 2.0f);
                     dg.setColour(juce::Colours::white);
-                    dg.setFont(juce::Font(10.0f, juce::Font::bold));
-                    dg.drawText("Dropping WAV...", dragImage.getBounds(), juce::Justification::centred);
+                    dg.setFont(juce::Font(9.0f, juce::Font::bold));
+                    dg.drawText("DROP WAV", dragImage.getBounds(), juce::Justification::centred);
 
                     dragContainer->startDragging(file.getFullPathName(), this, dragImage, true);
 
@@ -111,7 +169,6 @@ private:
 
 /**
  * AnatomyAudioProcessorEditor (Phase 2-4 Ultimate Edition)
- * 5段積み超統合レイアウト、左右コアエリア分割、およびBefore/Afterのスマートトグルを統括。
  */
 class AnatomyAudioProcessorEditor final : public juce::AudioProcessorEditor,
     public juce::FileDragAndDropTarget,
@@ -138,6 +195,9 @@ private:
     AnatomyAudioProcessor& audioProcessor;
     juce::AudioFormatManager formatManager;
     bool wasProcessing = false;
+
+    // 特製ルックアンドフィール常駐インスタンス
+    ArcDialLookAndFeel arcLookAndFeel;
 
     // 5段積み専用：3枚の特製ハイパー波形ビジュアルパネル
     WaveformComponent waveFullMix;

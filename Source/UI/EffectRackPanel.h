@@ -39,7 +39,7 @@ public:
         btnActive.setToggleState(fx->isActive(), juce::dontSendNotification);
         btnActive.setColour(juce::TextButton::buttonOnColourId, juce::Colours::cyan);
         btnActive.setColour(juce::TextButton::textColourOnId, juce::Colours::black);
-        btnActive.setColour(juce::TextButton::buttonColourId, juce::Colours::darkgrey.darker());
+        btnActive.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a3a));
         btnActive.setColour(juce::TextButton::textColourOffId, juce::Colours::white.withAlpha(0.4f));
         btnActive.onClick = [this] {
             if (fx != nullptr)
@@ -117,13 +117,14 @@ public:
         {
             if (!dragContainer->isDragAndDropActive())
             {
+                // 💥【修正】内部型へのキャストエラーを、ポインタの生アドレス数値を安全に格納するint64キャストへ復元
                 auto ptrValue = reinterpret_cast<juce::int64>(this);
                 dragContainer->startDragging(juce::var(ptrValue), this);
             }
         }
     }
 
-    std::function<void(AudioEffect*)> onCardSelectedCallback; // ✨なおしました！
+    std::function<void(AudioEffect*)> onCardSelectedCallback;
 
 private:
     AudioEffect* fx;
@@ -142,7 +143,6 @@ private:
 /**
  * EffectRackPanel
  * 5連スタイリッシュトグルボタン配置コンテナ。
- * 初期化登録順序の最適化により、フlying通知に起因する領域外アクセス(nullptrクラッシュ)を構造レベルで完全根絶。
  */
 class EffectRackPanel final : public juce::Component,
     public juce::DragAndDropTarget,
@@ -151,8 +151,6 @@ class EffectRackPanel final : public juce::Component,
 public:
     EffectRackPanel(AnatomyAudioProcessor& p) : processor(p)
     {
-        // 💥【バグ根本治療】先にベクター(std::vector)にスマートポインタを格納して実体メモリ領域を100%確定させたのちに、
-        // 親コンポーネントへの addAndMakeVisible を実行。これによりフライングresizedが発生しても絶対にクラッシュしない。
         auto setupToggleButtons = [this](std::vector<std::unique_ptr<juce::TextButton>>& btns, const juce::StringArray& names) {
             btns.clear();
             for (int i = 0; i < 5; ++i)
@@ -161,7 +159,7 @@ public:
                 b->setClickingTogglesState(true);
                 b->setColour(juce::TextButton::buttonOnColourId, juce::Colours::cyan);
                 b->setColour(juce::TextButton::textColourOnId, juce::Colours::black);
-                b->setColour(juce::TextButton::buttonColourId, juce::Colours::darkgrey.darker());
+                b->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a3a));
                 b->setColour(juce::TextButton::textColourOffId, juce::Colours::white.withAlpha(0.6f));
 
                 btns.push_back(std::move(b));
@@ -208,42 +206,47 @@ public:
 
     void paint(juce::Graphics& g) override
     {
-        g.fillAll(juce::Colours::black.withAlpha(0.5f));
+        g.fillAll(juce::Colour(0xff242424));
         auto sectionHeight = getHeight() / 3;
 
-        g.setColour(juce::Colours::white.withAlpha(0.1f));
+        g.setColour(juce::Colours::white.withAlpha(0.08f));
         g.drawHorizontalLine(sectionHeight, 0.0f, static_cast<float>(getWidth()));
         g.drawHorizontalLine(sectionHeight * 2, 0.0f, static_cast<float>(getWidth()));
 
-        g.setFont(11.0f);
-        g.setColour(juce::Colours::white.withAlpha(0.4f));
-        g.drawText("TRANSIENT FX SLOT (D&D REORDERABLE)", 10, 5, getWidth(), 15, juce::Justification::left);
-        g.drawText("SUSTAIN TONAL FX SLOT (D&D REORDERABLE)", 10, sectionHeight + 5, getWidth(), 15, juce::Justification::left);
-        g.drawText("FULL MIX MASTER FX SLOT (D&D REORDERABLE)", 10, (sectionHeight * 2) + 5, getWidth(), 15, juce::Justification::left);
+        g.setFont(juce::Font(10.5f, juce::Font::bold));
+
+        g.setColour(juce::Colours::cyan.withAlpha(0.7f));
+        g.drawText("TransientSlot", 10, 4, getWidth() - 20, 14, juce::Justification::left);
+
+        g.setColour(juce::Colours::magenta.withAlpha(0.7f));
+        g.drawText("TonalSlot", 10, sectionHeight + 4, getWidth() - 20, 14, juce::Justification::left);
+
+        g.setColour(juce::Colours::white.withAlpha(0.6f));
+        g.drawText("FullMixSlot", 10, (sectionHeight * 2) + 4, getWidth() - 20, 14, juce::Justification::left);
     }
 
     void resized() override
     {
-        // 💥【安全弁】初期化中にフライングでサイズ計算が走った場合、要素が5個揃っていなければ即座に処理をスキップしてnullptrアクセスを鉄壁ガード
         if (transToggleButtons.size() < 5 || tonalToggleButtons.size() < 5 || fullMixToggleButtons.size() < 5) return;
 
         auto sectionHeight = getHeight() / 3;
         const int cardH = 26;
         const int padding = 2;
-        const int btnW = 42;
+
+        const int btnW = 44;
         const int btnH = 16;
 
-        auto positionHeaderButtons = [this, btnW, btnH](std::vector<std::unique_ptr<juce::TextButton>>& btns, int startY) {
-            int startX = getWidth() - (btnW * 5) - 10;
+        auto positionHeaderButtons = [this, btnW, btnH](std::vector<std::unique_ptr<juce::TextButton>>& btns, int sectionTopY) {
+            int startX = 10;
             for (int i = 0; i < 5; ++i)
             {
-                btns[i]->setBounds(startX + (i * btnW), startY, btnW - 1, btnH);
+                btns[i]->setBounds(startX + (i * btnW), sectionTopY + 18, btnW - 1, btnH);
             }
             };
 
-        positionHeaderButtons(transToggleButtons, 4);
-        positionHeaderButtons(tonalToggleButtons, sectionHeight + 4);
-        positionHeaderButtons(fullMixToggleButtons, (sectionHeight * 2) + 4);
+        positionHeaderButtons(transToggleButtons, 0);
+        positionHeaderButtons(tonalToggleButtons, sectionHeight);
+        positionHeaderButtons(fullMixToggleButtons, sectionHeight * 2);
 
         int transCount = 0; int tonalCount = 0; int fullCount = 0;
 
@@ -252,17 +255,17 @@ public:
             const auto route = card->getRoute();
             if (route == TargetRoute::Transient)
             {
-                card->setBounds(10, 24 + (transCount * (cardH + padding)), getWidth() - 20, cardH);
+                card->setBounds(10, 38 + (transCount * (cardH + padding)), getWidth() - 20, cardH);
                 transCount++;
             }
             else if (route == TargetRoute::Tonal)
             {
-                card->setBounds(10, sectionHeight + 24 + (tonalCount * (cardH + padding)), getWidth() - 20, cardH);
+                card->setBounds(10, sectionHeight + 38 + (tonalCount * (cardH + padding)), getWidth() - 20, cardH);
                 tonalCount++;
             }
             else if (route == TargetRoute::FullMix)
             {
-                card->setBounds(10, (sectionHeight * 2) + 24 + (fullCount * (cardH + padding)), getWidth() - 20, cardH);
+                card->setBounds(10, (sectionHeight * 2) + 38 + (fullCount * (cardH + padding)), getWidth() - 20, cardH);
                 fullCount++;
             }
         }
