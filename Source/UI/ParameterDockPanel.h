@@ -367,8 +367,8 @@ public:
         const bool isOtt   = (currentFx && dynamic_cast<OTT_Multiband*>(currentFx));
         const bool isGlue  = (currentFx && dynamic_cast<GlueCompressor*>(currentFx));
 
-        // Glue は6ノブ(5+mix)、それ以外は5ノブ(4+mix) でkwを計算
-        const int totalCols = isGlue ? 6 : 5;
+        // Glue: 6cols(5knob+mix), OTT: 6cols(4or3knob+BANDS+mix), その他: 5cols(4knob+mix)
+        const int totalCols = isGlue ? 6 : isOtt ? 6 : 5;
         const int kw = area.getWidth() / totalCols;
 
         // DRY/WET ノブは常に右端
