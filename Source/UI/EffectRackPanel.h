@@ -153,7 +153,7 @@ public:
     {
         auto setupToggleButtons = [this](std::vector<std::unique_ptr<juce::TextButton>>& btns, const juce::StringArray& names) {
             btns.clear();
-            for (int i = 0; i < 5; ++i)
+            for (int i = 0; i < 6; ++i)
             {
                 auto b = std::make_unique<juce::TextButton>(names[i]);
                 b->setClickingTogglesState(true);
@@ -167,12 +167,13 @@ public:
             }
             };
 
-        juce::StringArray fxNames{ "Satu", "Crush", "Noise", "OTT", "Limit" };
+        // Glue を slot[4] に追加、Limit を slot[5] に移動
+        juce::StringArray fxNames{ "Satu", "Crush", "Noise", "OTT", "Glue", "Limit" };
         setupToggleButtons(transToggleButtons, fxNames);
         setupToggleButtons(tonalToggleButtons, fxNames);
         setupToggleButtons(fullMixToggleButtons, fxNames);
 
-        for (int i = 0; i < 5; ++i)
+        for (int i = 0; i < 6; ++i)
         {
             transToggleButtons[i]->onClick = [this, i] { handleToggleClick(TargetRoute::Transient, i, transToggleButtons[i]->getToggleState()); };
             tonalToggleButtons[i]->onClick = [this, i] { handleToggleClick(TargetRoute::Tonal, i, tonalToggleButtons[i]->getToggleState()); };
@@ -192,8 +193,8 @@ public:
         }
 
         auto updateHeaderToggles = [](std::vector<std::unique_ptr<juce::TextButton>>& btns, const std::vector<int>& activeIndices) {
-            if (btns.size() < 5) return;
-            for (int i = 0; i < 5; ++i)
+            if (btns.size() < 6) return;
+            for (int i = 0; i < 6; ++i)
             {
                 bool isActive = (std::find(activeIndices.begin(), activeIndices.end(), i) != activeIndices.end());
                 btns[i]->setToggleState(isActive, juce::dontSendNotification);
@@ -227,18 +228,19 @@ public:
 
     void resized() override
     {
-        if (transToggleButtons.size() < 5 || tonalToggleButtons.size() < 5 || fullMixToggleButtons.size() < 5) return;
+        if (transToggleButtons.size() < 6 || tonalToggleButtons.size() < 6 || fullMixToggleButtons.size() < 6) return;
 
         auto sectionHeight = getHeight() / 3;
         const int cardH = 26;
         const int padding = 2;
 
-        const int btnW = 44;
+        // 6ボタン対応: btnW=38 で 10 + 6*38 = 238px < 246px内径 に収まる
+        const int btnW = 38;
         const int btnH = 16;
 
         auto positionHeaderButtons = [this, btnW, btnH](std::vector<std::unique_ptr<juce::TextButton>>& btns, int sectionTopY) {
             int startX = 10;
-            for (int i = 0; i < 5; ++i)
+            for (int i = 0; i < 6; ++i)
             {
                 btns[i]->setBounds(startX + (i * btnW), sectionTopY + 18, btnW - 1, btnH);
             }

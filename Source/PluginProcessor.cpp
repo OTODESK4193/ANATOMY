@@ -4,6 +4,7 @@
 #include "DSP/Effects/BitCrusher.h"
 #include "DSP/Effects/NoiseGenerator.h"
 #include "DSP/Effects/OTT_Multiband.h"
+#include "DSP/Effects/GlueCompressor.h"
 #include "DSP/Effects/Limiter.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <cmath>
@@ -38,8 +39,9 @@ AnatomyAudioProcessor::AnatomyAudioProcessor()
         pool[1] = std::make_unique<BitCrusher>();
         pool[2] = std::make_unique<NoiseGenerator>();
         pool[3] = std::make_unique<OTT_Multiband>();
-        pool[4] = std::make_unique<Limiter>();
-        for (int i = 0; i < 5; ++i) pool[i]->setTargetRoute(route);
+        pool[4] = std::make_unique<GlueCompressor>();
+        pool[5] = std::make_unique<Limiter>();
+        for (int i = 0; i < 6; ++i) pool[i]->setTargetRoute(route);
         };
 
     instantiatePool(transientPool, TargetRoute::Transient);
@@ -123,6 +125,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "OttMidHighXOver", 1 }, pre + " OTT Mid/High X-Over", 1000.0f, 15000.0f, 3800.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "OttGateFloor", 1 }, pre + " OTT Gate Floor (dBFS)", -70.0f, -20.0f, -45.0f));
 
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "GlueDepth", 1 }, pre + " Glue Mix",              0.0f,   1.0f,    1.0f));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "GlueThr",   1 }, pre + " Glue Threshold (dBFS)", -40.0f, 0.0f,  -18.0f));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "GlueRatio", 1 }, pre + " Glue Ratio",              1.0f, 20.0f,    2.0f));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "GlueAtk",   1 }, pre + " Glue Attack (ms)",         1.0f, 100.0f,  30.0f));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "GlueRel",   1 }, pre + " Glue Release (ms)",        10.0f, 1000.0f, 200.0f));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "GlueMkp",   1 }, pre + " Glue Makeup (dB)",        -12.0f,  12.0f,   0.0f));
+
         juce::StringArray bands{ "Low", "Mid", "High" };
         for (const auto& b : bands)
         {
@@ -156,7 +165,7 @@ void AnatomyAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     transientBlockBuffer.setSize(2, safetyBufferSize, false, false, true);
     tonalBlockBuffer.setSize(2, safetyBufferSize, false, false, true);
 
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < 6; ++i)
     {
         transientPool[i]->prepare(sampleRate, safetyBufferSize);
         tonalPool[i]->prepare(sampleRate, safetyBufferSize);
@@ -207,7 +216,15 @@ void AnatomyAudioProcessor::synchronizePoolParameters() noexcept
                 ott->setBandGainDb(b, apvts.getRawParameterValue(pre + "Ott" + bName + "Gain")->load());
             }
         }
-        if (auto* lim = dynamic_cast<Limiter*>(pool[4].get())) {
+        if (auto* glue = dynamic_cast<GlueCompressor*>(pool[4].get())) {
+            glue->setMix(apvts.getRawParameterValue(pre + "GlueDepth")->load());
+            glue->setThresholdDb(apvts.getRawParameterValue(pre + "GlueThr")->load());
+            glue->setRatio(apvts.getRawParameterValue(pre + "GlueRatio")->load());
+            glue->setAttackMs(apvts.getRawParameterValue(pre + "GlueAtk")->load());
+            glue->setReleaseMs(apvts.getRawParameterValue(pre + "GlueRel")->load());
+            glue->setMakeupDb(apvts.getRawParameterValue(pre + "GlueMkp")->load());
+        }
+        if (auto* lim = dynamic_cast<Limiter*>(pool[5].get())) {
             lim->setCeiling(apvts.getRawParameterValue(pre + "LimCeil")->load());
             lim->setMix(apvts.getRawParameterValue(pre + "LimMix")->load());
         }
@@ -223,7 +240,7 @@ void AnatomyAudioProcessor::updateRouteOrder(TargetRoute route, const std::vecto
     sortedFX.reserve(activeEffectIndices.size());
     for (const int idx : activeEffectIndices)
     {
-        if (idx < 0 || idx >= 5) continue;
+        if (idx < 0 || idx >= 6) continue;
         if (route == TargetRoute::Transient)     sortedFX.push_back(transientPool[idx].get());
         else if (route == TargetRoute::Tonal)    sortedFX.push_back(tonalPool[idx].get());
         else if (route == TargetRoute::FullMix)  sortedFX.push_back(fullMixPool[idx].get());
@@ -977,8 +994,13 @@ void OfflineMixRenderer::executeRender()
     applyPitch(workTrans, transPitch);
     applyPitch(workTonal, tonalPitch);
 
-    processor.transientChain.process(workTrans);
-    processor.tonalChain.process(workTonal);
+    // ⚠️ RACE CONDITION FIX:
+    // OfflineMixRenderer（バックグラウンドスレッド）と processBlock（オーディオスレッド）が
+    // 同一のエフェクトインスタンス（OTT_Multibandの StateVariableTPTFilter 等）を同時に呼ぶと
+    // フィルター内部ステートが競合し、フィルターが発振して爆音を引き起こす。
+    // プレビュー波形はドライ信号（HPSS分離後）を表示する。分離品質の確認として十分な情報を提供。
+    // processor.transientChain.process(workTrans);  // DISABLED: スレッド競合→爆音
+    // processor.tonalChain.process(workTonal);      // DISABLED: スレッド競合→爆音
 
     float transGain = std::pow(10.0f, processor.apvts.getRawParameterValue("transMixGain")->load() / 20.0f);
     float tonalGain = std::pow(10.0f, processor.apvts.getRawParameterValue("tonalMixGain")->load() / 20.0f);
@@ -1028,7 +1050,7 @@ void OfflineMixRenderer::executeRender()
         else               ratios[s] = 0.5f;
     }
 
-    processor.fullMixChain.process(outputMix);
+    // processor.fullMixChain.process(outputMix);  // DISABLED: スレッド競合→爆音（上記参照）
 
     {
         const juce::ScopedLock sl(renderLock);

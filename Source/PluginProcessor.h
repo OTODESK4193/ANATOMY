@@ -71,9 +71,9 @@ public:
 
     void updateRouteOrder(TargetRoute route, const std::vector<int>& activeEffectIndices);
 
-    AudioEffect* getTransientPoolInstance(int idx) const noexcept { return (idx >= 0 && idx < 5) ? transientPool[idx].get() : nullptr; }
-    AudioEffect* getTonalPoolInstance(int idx) const noexcept { return (idx >= 0 && idx < 5) ? tonalPool[idx].get() : nullptr; }
-    AudioEffect* getFullMixPoolInstance(int idx) const noexcept { return (idx >= 0 && idx < 5) ? fullMixPool[idx].get() : nullptr; }
+    AudioEffect* getTransientPoolInstance(int idx) const noexcept { return (idx >= 0 && idx < 6) ? transientPool[idx].get() : nullptr; }
+    AudioEffect* getTonalPoolInstance(int idx) const noexcept { return (idx >= 0 && idx < 6) ? tonalPool[idx].get() : nullptr; }
+    AudioEffect* getFullMixPoolInstance(int idx) const noexcept { return (idx >= 0 && idx < 6) ? fullMixPool[idx].get() : nullptr; }
 
     BeforeAfterBypasser beforeAfterBypasser;
     OfflineMixRenderer offlineMixRenderer;
@@ -163,9 +163,9 @@ private:
 
     int currentSoloMode = 0;
 
-    std::unique_ptr<AudioEffect> transientPool[5];
-    std::unique_ptr<AudioEffect> tonalPool[5];
-    std::unique_ptr<AudioEffect> fullMixPool[5];
+    std::unique_ptr<AudioEffect> transientPool[6];
+    std::unique_ptr<AudioEffect> tonalPool[6];
+    std::unique_ptr<AudioEffect> fullMixPool[6];
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnatomyAudioProcessor)
 };

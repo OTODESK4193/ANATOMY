@@ -8,6 +8,7 @@
 #include "../DSP/Effects/BitCrusher.h"
 #include "../DSP/Effects/NoiseGenerator.h"
 #include "../DSP/Effects/OTT_Multiband.h"
+#include "../DSP/Effects/GlueCompressor.h"
 #include "../DSP/Effects/Limiter.h"
 #include <vector>
 #include <memory>
@@ -94,6 +95,7 @@ public:
         slider2.setVisible(false); lbl2.setVisible(false);
         slider3.setVisible(false); lbl3.setVisible(false);
         slider4.setVisible(false); lbl4.setVisible(false);
+        slider5.setVisible(false); lbl5.setVisible(false);
         sliderMix.setVisible(false); lblMix.setVisible(false);
         lblInfo.setVisible(false);
         for (auto& btn : noiseTypeButtons) btn->setVisible(false);
@@ -172,11 +174,10 @@ public:
         }
         else if (auto* noise = dynamic_cast<NoiseGenerator*>(currentFx))
         {
-            // 横型スライダーに統一してスペース効率を上げる
-            setupHorizontalSlider(slider1, lbl1, "DECAY (ms)",   1.0,  1000.0, 100.0);
-            setupHorizontalSlider(slider2, lbl2, "GAIN (dB)",  -60.0,     0.0,   0.0);
-            setupHorizontalSlider(slider3, lbl3, "ATTACK (ms)",  0.0,    50.0,   0.0);
-            setupHorizontalSlider(slider4, lbl4, "BP FREQ (Hz)", 0.0,  4000.0,   0.0);
+            setupKnob(slider1, lbl1, "DECAY (ms)",   1.0,  1000.0, 100.0);
+            setupKnob(slider2, lbl2, "GAIN (dB)",  -60.0,     0.0,   0.0);
+            setupKnob(slider3, lbl3, "ATTACK (ms)",  0.0,    50.0,   0.0);
+            setupKnob(slider4, lbl4, "BP FREQ (Hz)", 0.0,  4000.0,   0.0);
 
             slider1.onValueChange = [this] {
                 if (auto* pParam = processor.apvts.getParameter(getResolvedID("NsDecay")))
@@ -199,6 +200,39 @@ public:
 
             sliderMix.onValueChange = [this] {
                 if (auto* pParam = processor.apvts.getParameter(getResolvedID("NsMix")))
+                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(sliderMix.getValue())));
+                };
+        }
+        else if (auto* glue = dynamic_cast<GlueCompressor*>(currentFx))
+        {
+            setupHorizontalSlider(slider1, lbl1, "THRESHOLD (dBFS)", -40.0, 0.0,   -18.0);
+            setupHorizontalSlider(slider2, lbl2, "RATIO",              1.0, 20.0,     2.0);
+            setupHorizontalSlider(slider3, lbl3, "ATTACK (ms)",        1.0, 100.0,   30.0);
+            setupHorizontalSlider(slider4, lbl4, "RELEASE (ms)",      10.0, 1000.0, 200.0);
+            setupHorizontalSlider(slider5, lbl5, "MAKEUP (dB)",      -12.0,  12.0,    0.0);
+
+            slider1.onValueChange = [this] {
+                if (auto* pParam = processor.apvts.getParameter(getResolvedID("GlueThr")))
+                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider1.getValue())));
+                };
+            slider2.onValueChange = [this] {
+                if (auto* pParam = processor.apvts.getParameter(getResolvedID("GlueRatio")))
+                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider2.getValue())));
+                };
+            slider3.onValueChange = [this] {
+                if (auto* pParam = processor.apvts.getParameter(getResolvedID("GlueAtk")))
+                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider3.getValue())));
+                };
+            slider4.onValueChange = [this] {
+                if (auto* pParam = processor.apvts.getParameter(getResolvedID("GlueRel")))
+                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider4.getValue())));
+                };
+            slider5.onValueChange = [this] {
+                if (auto* pParam = processor.apvts.getParameter(getResolvedID("GlueMkp")))
+                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider5.getValue())));
+                };
+            sliderMix.onValueChange = [this] {
+                if (auto* pParam = processor.apvts.getParameter(getResolvedID("GlueDepth")))
                     pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(sliderMix.getValue())));
                 };
         }
@@ -290,6 +324,15 @@ public:
                     noiseTypeButtons[i]->setToggleState(i == typeIdx, juce::dontSendNotification);
             }
         }
+        else if (dynamic_cast<GlueCompressor*>(currentFx))
+        {
+            slider1.setValue(processor.apvts.getRawParameterValue(getResolvedID("GlueThr"))->load(),   juce::dontSendNotification);
+            slider2.setValue(processor.apvts.getRawParameterValue(getResolvedID("GlueRatio"))->load(), juce::dontSendNotification);
+            slider3.setValue(processor.apvts.getRawParameterValue(getResolvedID("GlueAtk"))->load(),   juce::dontSendNotification);
+            slider4.setValue(processor.apvts.getRawParameterValue(getResolvedID("GlueRel"))->load(),   juce::dontSendNotification);
+            slider5.setValue(processor.apvts.getRawParameterValue(getResolvedID("GlueMkp"))->load(),   juce::dontSendNotification);
+            sliderMix.setValue(processor.apvts.getRawParameterValue(getResolvedID("GlueDepth"))->load(), juce::dontSendNotification);
+        }
         else if (dynamic_cast<Limiter*>(currentFx))
         {
             slider1.setValue(processor.apvts.getRawParameterValue(getResolvedID("LimCeil"))->load(), juce::dontSendNotification);
@@ -347,9 +390,27 @@ public:
         sliderMix.setBounds(mixArea);
 
         bool isNoiseActive = (currentFx != nullptr && dynamic_cast<NoiseGenerator*>(currentFx) != nullptr);
-        bool isOttActive = (currentFx != nullptr && dynamic_cast<OTT_Multiband*>(currentFx) != nullptr);
+        bool isOttActive   = (currentFx != nullptr && dynamic_cast<OTT_Multiband*>(currentFx) != nullptr);
+        bool isGlueActive  = (currentFx != nullptr && dynamic_cast<GlueCompressor*>(currentFx) != nullptr);
 
-        if (isOttActive)
+        if (isGlueActive)
+        {
+            // 残りエリア(4×kw)を5段に分割: THRESHOLD / RATIO / ATTACK / RELEASE / MAKEUP
+            auto glueArea = area;
+            const auto rh = glueArea.getHeight() / 5;
+
+            auto r0 = glueArea.removeFromTop(rh);
+            lbl1.setBounds(r0.removeFromTop(11)); slider1.setBounds(r0.reduced(2, 0));
+            auto r1 = glueArea.removeFromTop(rh);
+            lbl2.setBounds(r1.removeFromTop(11)); slider2.setBounds(r1.reduced(2, 0));
+            auto r2 = glueArea.removeFromTop(rh);
+            lbl3.setBounds(r2.removeFromTop(11)); slider3.setBounds(r2.reduced(2, 0));
+            auto r3 = glueArea.removeFromTop(rh);
+            lbl4.setBounds(r3.removeFromTop(11)); slider4.setBounds(r3.reduced(2, 0));
+            auto r4 = glueArea;
+            lbl5.setBounds(r4.removeFromTop(11)); slider5.setBounds(r4.reduced(2, 0));
+        }
+        else if (isOttActive)
         {
             // 左1列: slider1〜4 を4段積み (TIME / LOW-MID XOVER / MID-HI XOVER / GATE FLOOR)
             auto leftCoreArea = area.removeFromLeft(kw);
@@ -381,20 +442,18 @@ public:
         }
         else if (isNoiseActive && noiseTypeButtons.size() >= 4 && noiseTypeButtons[0]->isVisible())
         {
-            // 左3列: slider1〜4 を4段積み (DECAY / GAIN / ATTACK / BP FREQ)
-            auto sliderArea = area.removeFromLeft(kw * 3);
-            auto sh = sliderArea.getHeight() / 4;
-
-            { auto r = sliderArea.removeFromTop(sh); lbl1.setBounds(r.removeFromTop(10)); slider1.setBounds(r.reduced(2, 0)); }
-            { auto r = sliderArea.removeFromTop(sh); lbl2.setBounds(r.removeFromTop(10)); slider2.setBounds(r.reduced(2, 0)); }
-            { auto r = sliderArea.removeFromTop(sh); lbl3.setBounds(r.removeFromTop(10)); slider3.setBounds(r.reduced(2, 0)); }
-            { auto r = sliderArea;                   lbl4.setBounds(r.removeFromTop(10)); slider4.setBounds(r.reduced(2, 0)); }
-
-            // 残り1列: ノイズタイプ4ボタンを縦1列に配置
-            auto btnArea = area.reduced(2, 2);
-            auto bh = btnArea.getHeight() / 4;
+            // 上段16px: WHITE/PINK/BROWN/BLUE ボタンを横1列に配置
+            const int btnH = 16;
+            auto topStrip = area.removeFromTop(btnH);
+            const int bw = topStrip.getWidth() / 4;
             for (int i = 0; i < 4; ++i)
-                noiseTypeButtons[i]->setBounds(btnArea.getX(), btnArea.getY() + i * bh, btnArea.getWidth(), bh - 1);
+                noiseTypeButtons[i]->setBounds(topStrip.getX() + i * bw, topStrip.getY(), bw - 2, btnH);
+
+            // 下段: 4ノブ (DECAY / GAIN / ATTACK / BP FREQ) を横1列に配置
+            if (slider1.isVisible()) { auto s = area.removeFromLeft(kw); lbl1.setBounds(s.removeFromTop(13)); slider1.setBounds(s); }
+            if (slider2.isVisible()) { auto s = area.removeFromLeft(kw); lbl2.setBounds(s.removeFromTop(13)); slider2.setBounds(s); }
+            if (slider3.isVisible()) { auto s = area.removeFromLeft(kw); lbl3.setBounds(s.removeFromTop(13)); slider3.setBounds(s); }
+            if (slider4.isVisible()) { auto s = area.removeFromLeft(kw); lbl4.setBounds(s.removeFromTop(13)); slider4.setBounds(s); }
         }
         else
         {
@@ -455,8 +514,8 @@ private:
     AudioEffect* currentFx = nullptr;
 
     juce::Label lblInfo;
-    juce::Slider slider1, slider2, slider3, slider4, sliderMix;
-    juce::Label lbl1, lbl2, lbl3, lbl4, lblMix;
+    juce::Slider slider1, slider2, slider3, slider4, slider5, sliderMix;
+    juce::Label lbl1, lbl2, lbl3, lbl4, lbl5, lblMix;
 
     std::vector<std::unique_ptr<juce::TextButton>> noiseTypeButtons;
 
