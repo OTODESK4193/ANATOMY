@@ -102,6 +102,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "SatDrive", 1 }, pre + " Saturation Drive", 1.0f, 16.0f, 2.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "SatMix", 1 }, pre + " Saturation Mix", 0.0f, 1.0f, 0.5f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "SatAsym", 1 }, pre + " Saturation Asymmetry", 0.0f, 1.0f, 0.0f));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "SatTrim", 1 }, pre + " Saturation Output Trim (dB)", -12.0f, 12.0f, 0.0f));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "SatPre", 1 }, pre + " Saturation Pre HPF (Hz)", 20.0f, 2000.0f, 20.0f));
 
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "BcBits", 1 }, pre + " Bitcrusher Bits", 2.0f, 24.0f, 8.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "BcDown", 1 }, pre + " Bitcrusher Downsample", 1.0f, 32.0f, 4.0f));
@@ -112,11 +114,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "NsMix", 1 }, pre + " Noise Mix", 0.0f, 1.0f, 0.3f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "NsType", 1 }, pre + " Noise Type", 0.0f, 3.0f, 0.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "NsGain", 1 }, pre + " Noise Gain (dB)", -60.0f, 0.0f, 0.0f));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "NsAttack", 1 }, pre + " Noise Attack (ms)", 0.0f, 50.0f, 0.0f));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "NsBpFreq", 1 }, pre + " Noise BP Freq (Hz)", 0.0f, 4000.0f, 0.0f));
 
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "OttDepth", 1 }, pre + " OTT Depth", 0.0f, 1.0f, 0.35f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "OttTime", 1 }, pre + " OTT Time Multiplier", 0.1f, 10.0f, 1.35f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "OttLowMidXOver", 1 }, pre + " OTT Low/Mid X-Over", 40.0f, 1000.0f, 140.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "OttMidHighXOver", 1 }, pre + " OTT Mid/High X-Over", 1000.0f, 15000.0f, 3800.0f));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "OttGateFloor", 1 }, pre + " OTT Gate Floor (dBFS)", -70.0f, -20.0f, -45.0f));
 
         juce::StringArray bands{ "Low", "Mid", "High" };
         for (const auto& b : bands)
@@ -172,6 +177,8 @@ void AnatomyAudioProcessor::synchronizePoolParameters() noexcept
             sat->setDrive(apvts.getRawParameterValue(pre + "SatDrive")->load());
             sat->setMix(apvts.getRawParameterValue(pre + "SatMix")->load());
             sat->setAsymmetry(apvts.getRawParameterValue(pre + "SatAsym")->load());
+            sat->setOutputTrimDb(apvts.getRawParameterValue(pre + "SatTrim")->load());
+            sat->setPreCutoffHz(apvts.getRawParameterValue(pre + "SatPre")->load());
         }
         if (auto* bc = dynamic_cast<BitCrusher*>(pool[1].get())) {
             bc->setBits(apvts.getRawParameterValue(pre + "BcBits")->load());
@@ -184,12 +191,15 @@ void AnatomyAudioProcessor::synchronizePoolParameters() noexcept
             ns->setMix(apvts.getRawParameterValue(pre + "NsMix")->load());
             ns->setNoiseType(static_cast<int>(apvts.getRawParameterValue(pre + "NsType")->load()));
             ns->setGainDb(apvts.getRawParameterValue(pre + "NsGain")->load());
+            ns->setAttack(apvts.getRawParameterValue(pre + "NsAttack")->load());
+            ns->setBpCenterHz(apvts.getRawParameterValue(pre + "NsBpFreq")->load());
         }
         if (auto* ott = dynamic_cast<OTT_Multiband*>(pool[3].get())) {
             ott->setMix(apvts.getRawParameterValue(pre + "OttDepth")->load());
             ott->setTimeMultiplier(apvts.getRawParameterValue(pre + "OttTime")->load());
             ott->setLowMidXOver(apvts.getRawParameterValue(pre + "OttLowMidXOver")->load());
             ott->setMidHighXOver(apvts.getRawParameterValue(pre + "OttMidHighXOver")->load());
+            ott->setGateFloorDb(apvts.getRawParameterValue(pre + "OttGateFloor")->load());
             for (int b = 0; b < 3; ++b) {
                 juce::String bName = (b == 0) ? "Low" : ((b == 1) ? "Mid" : "High");
                 ott->setBandUpward(b, apvts.getRawParameterValue(pre + "Ott" + bName + "Up")->load());
