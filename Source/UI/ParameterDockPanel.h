@@ -14,83 +14,119 @@
 #include <memory>
 
 /**
- * ParameterDockPanel (Phase 2 Ultimate Edition)
- * OTT選択時に丸型ノブから「横型スライダーマトリクス」へ動的形状変貌を遂げ、
- * 狭小な縦幅制限の中で12個の全深層ダイナミクスパラメータを完璧に描画するプロフェッショナルドック。
+ * ParameterDockPanel (All-Knob Edition)
+ * 全パラメーターをロータリーノブで表示。
+ * OTT は BANDS ボタンで3バンドの詳細パラメーターへ切り替え可能。
  */
 class ParameterDockPanel final : public juce::Component
 {
 public:
     ParameterDockPanel(AnatomyAudioProcessor& p) : processor(p)
     {
-        lblInfo.setText("Select an active effect card from the rack to tweak parameters", juce::dontSendNotification);
-        lblInfo.setFont(juce::Font(12.0f, juce::Font::italic));
+        // 情報ラベル（エフェクト未選択時）
+        lblInfo.setText("Select an effect to edit parameters", juce::dontSendNotification);
+        lblInfo.setFont(juce::Font(11.5f, juce::Font::italic));
         lblInfo.setJustificationType(juce::Justification::centred);
-        lblInfo.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.4f));
+        lblInfo.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.3f));
         addAndMakeVisible(lblInfo);
 
-        // Noise Generator専用 4連相互点灯ボタン
+        // ── Noise Generator: WHITE / PINK / BROWN / BLUE ──────────────────
         juce::StringArray typeNames{ "WHITE", "PINK", "BROWN", "BLUE" };
         for (int i = 0; i < 4; ++i)
         {
             auto btn = std::make_unique<juce::TextButton>(typeNames[i]);
             btn->setClickingTogglesState(true);
             btn->setRadioGroupId(100);
-            btn->setColour(juce::TextButton::buttonOnColourId, juce::Colours::cyan);
-            btn->setColour(juce::TextButton::textColourOnId, juce::Colours::black);
-            btn->setColour(juce::TextButton::buttonColourId, juce::Colours::darkgrey.darker());
-            btn->setColour(juce::TextButton::textColourOffId, juce::Colours::white.withAlpha(0.5f));
-
-            btn->onClick = [this, i] {
+            btn->setColour(juce::TextButton::buttonOnColourId,  juce::Colours::cyan);
+            btn->setColour(juce::TextButton::textColourOnId,    juce::Colours::black);
+            btn->setColour(juce::TextButton::buttonColourId,    juce::Colours::darkgrey.darker());
+            btn->setColour(juce::TextButton::textColourOffId,   juce::Colours::white.withAlpha(0.5f));
+            btn->onClick = [this, i]
+            {
                 if (currentFx != nullptr)
-                {
                     if (auto* pParam = processor.apvts.getParameter(getResolvedID("NsType")))
                         pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(i)));
-                }
-                };
-
+            };
             noiseTypeButtons.push_back(std::move(btn));
             addAndMakeVisible(*noiseTypeButtons.back());
         }
 
-        // 自作OTT専用：9連独立Dynamicsスライダー＆ラベルの生成マウント
+        // ── OTT バンド詳細トグルボタン ────────────────────────────────────
+        bandDetailBtn.setButtonText("BANDS");
+        bandDetailBtn.setClickingTogglesState(true);
+        bandDetailBtn.setColour(juce::TextButton::buttonOnColourId,  juce::Colours::cyan.darker(0.3f));
+        bandDetailBtn.setColour(juce::TextButton::textColourOnId,    juce::Colours::white);
+        bandDetailBtn.setColour(juce::TextButton::buttonColourId,    juce::Colour(0xff3a3a3a));
+        bandDetailBtn.setColour(juce::TextButton::textColourOffId,   juce::Colours::white.withAlpha(0.55f));
+        bandDetailBtn.onClick = [this]
+        {
+            showOttBands = bandDetailBtn.getToggleState();
+            setTargetEffect(currentFx);   // バンド/メインビューを切り替え
+        };
+        addChildComponent(bandDetailBtn);
+
+        // ── OTT バンドセレクター: LOW / MID / HIGH ────────────────────────
+        juce::StringArray bandLabels{ "LOW", "MID", "HIGH" };
+        for (int i = 0; i < 3; ++i)
+        {
+            ottBandSelectBtns[i].setButtonText(bandLabels[i]);
+            ottBandSelectBtns[i].setClickingTogglesState(true);
+            ottBandSelectBtns[i].setRadioGroupId(200);
+            ottBandSelectBtns[i].setColour(juce::TextButton::buttonOnColourId,  juce::Colours::cyan);
+            ottBandSelectBtns[i].setColour(juce::TextButton::textColourOnId,    juce::Colours::black);
+            ottBandSelectBtns[i].setColour(juce::TextButton::buttonColourId,    juce::Colour(0xff2e2e2e));
+            ottBandSelectBtns[i].setColour(juce::TextButton::textColourOffId,   juce::Colours::white.withAlpha(0.5f));
+            ottBandSelectBtns[i].onClick = [this, i]
+            {
+                selectedOttBand = i;
+                updateOttBandKnobs();
+                synchronizeSlidersFromParameters();
+                resized();
+            };
+            addChildComponent(ottBandSelectBtns[i]);
+        }
+        ottBandSelectBtns[0].setToggleState(true, juce::dontSendNotification);
+
+        // OTT 旧バンドスライダー（非表示専用・ロジック保持）
         juce::StringArray bandPrefixes{ "Low", "Mid", "High" };
         for (int b = 0; b < 3; ++b)
         {
             juce::String bName = bandPrefixes[b];
-
-            // 💥 狭小縦幅対応：初期設定として横型フェーダー形式で鉄壁マウント
-            setupHorizontalSlider(ottUpSliders[b], ottUpLabels[b], bName.toUpperCase() + " UP", 0.0, 1.0, 1.0);
-            setupHorizontalSlider(ottDownSliders[b], ottDownLabels[b], bName.toUpperCase() + " DOWN", 0.0, 1.0, 1.0);
-            setupHorizontalSlider(ottGainSliders[b], ottGainLabels[b], bName.toUpperCase() + " GAIN", -24.0, 24.0, 0.0);
+            setupKnob(ottUpSliders[b],   ottUpLabels[b],   bName + " UP",   0.0,   1.0,   1.0);
+            setupKnob(ottDownSliders[b], ottDownLabels[b], bName + " DOWN", 0.0,   1.0,   1.0);
+            setupKnob(ottGainSliders[b], ottGainLabels[b], bName + " GAIN", -24.0, 24.0, 0.0);
 
             ottUpSliders[b].onValueChange = [this, b, bName] {
-                if (currentFx != nullptr) {
-                    if (auto* pParam = processor.apvts.getParameter(getResolvedID("Ott" + bName + "Up")))
-                        pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(ottUpSliders[b].getValue())));
-                }
-                };
+                if (currentFx)
+                    if (auto* pp = processor.apvts.getParameter(getResolvedID("Ott" + bName + "Up")))
+                        pp->setValueNotifyingHost(pp->convertTo0to1((float)ottUpSliders[b].getValue()));
+            };
             ottDownSliders[b].onValueChange = [this, b, bName] {
-                if (currentFx != nullptr) {
-                    if (auto* pParam = processor.apvts.getParameter(getResolvedID("Ott" + bName + "Down")))
-                        pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(ottDownSliders[b].getValue())));
-                }
-                };
+                if (currentFx)
+                    if (auto* pp = processor.apvts.getParameter(getResolvedID("Ott" + bName + "Down")))
+                        pp->setValueNotifyingHost(pp->convertTo0to1((float)ottDownSliders[b].getValue()));
+            };
             ottGainSliders[b].onValueChange = [this, b, bName] {
-                if (currentFx != nullptr) {
-                    if (auto* pParam = processor.apvts.getParameter(getResolvedID("Ott" + bName + "Gain")))
-                        pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(ottGainSliders[b].getValue())));
-                }
-                };
+                if (currentFx)
+                    if (auto* pp = processor.apvts.getParameter(getResolvedID("Ott" + bName + "Gain")))
+                        pp->setValueNotifyingHost(pp->convertTo0to1((float)ottGainSliders[b].getValue()));
+            };
+
+            // 旧バンドスライダーは常に非表示
+            ottUpSliders[b].setVisible(false);   ottUpLabels[b].setVisible(false);
+            ottDownSliders[b].setVisible(false); ottDownLabels[b].setVisible(false);
+            ottGainSliders[b].setVisible(false); ottGainLabels[b].setVisible(false);
         }
     }
 
     ~ParameterDockPanel() override = default;
 
+    // ─────────────────────────────────────────────────────────────────────────
     void setTargetEffect(AudioEffect* newFx)
     {
         currentFx = newFx;
 
+        // ── 全コントロールを初期非表示 ────────────────────────────────────
         slider1.setVisible(false); lbl1.setVisible(false);
         slider2.setVisible(false); lbl2.setVisible(false);
         slider3.setVisible(false); lbl3.setVisible(false);
@@ -99,12 +135,14 @@ public:
         sliderMix.setVisible(false); lblMix.setVisible(false);
         lblInfo.setVisible(false);
         for (auto& btn : noiseTypeButtons) btn->setVisible(false);
+        bandDetailBtn.setVisible(false);
+        for (auto& b : ottBandSelectBtns) b.setVisible(false);
 
-        for (int b = 0; b < 3; ++b)
+        // OTT切り替え時にバンドビューをリセット
+        if (!dynamic_cast<OTT_Multiband*>(newFx))
         {
-            ottUpSliders[b].setVisible(false);   ottUpLabels[b].setVisible(false);
-            ottDownSliders[b].setVisible(false); ottDownLabels[b].setVisible(false);
-            ottGainSliders[b].setVisible(false); ottGainLabels[b].setVisible(false);
+            showOttBands = false;
+            bandDetailBtn.setToggleState(false, juce::dontSendNotification);
         }
 
         if (currentFx == nullptr || !currentFx->isActive())
@@ -114,174 +152,105 @@ public:
             return;
         }
 
-        // DRY/WETは十分なスペースがあるため、常に美しい丸型（Rotary）ノブで統一保持
-        setupKnob(sliderMix, lblMix, "DRY / WET", 0.0, 1.0, static_cast<double>(currentFx->getMix()));
+        // ── DRY/WET ノブ（全エフェクト共通）──────────────────────────────
+        setupKnob(sliderMix, lblMix, "DRY/WET", 0.0, 1.0, (double)currentFx->getMix());
         sliderMix.onValueChange = [this] {
-            if (auto* pParam = processor.apvts.getParameter(getResolvedID("Mix")))
-                pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(sliderMix.getValue())));
-            };
+            if (auto* pp = processor.apvts.getParameter(getResolvedID("Mix")))
+                pp->setValueNotifyingHost(pp->convertTo0to1((float)sliderMix.getValue()));
+        };
 
+        // ── Saturation ────────────────────────────────────────────────────
         if (auto* sat = dynamic_cast<ADAA_Saturation*>(currentFx))
         {
-            setupKnob(slider1, lbl1, "DRIVE",      1.0,   16.0,  2.0);
-            setupKnob(slider2, lbl2, "ASYMMETRY",  0.0,    1.0,  0.0);
-            setupKnob(slider3, lbl3, "OUT TRIM dB",-12.0, 12.0,  0.0);
-            setupKnob(slider4, lbl4, "PRE HPF Hz", 20.0, 2000.0, 20.0);
+            setupKnob(slider1, lbl1, "DRIVE",     1.0,   16.0,   2.0);
+            setupKnob(slider2, lbl2, "ASYMMETRY", 0.0,    1.0,   0.0);
+            setupKnob(slider3, lbl3, "OUT TRIM",  -12.0, 12.0,   0.0);
+            setupKnob(slider4, lbl4, "PRE HPF",   20.0, 2000.0, 20.0);
 
-            slider1.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("SatDrive")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider1.getValue())));
-                };
-            slider2.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("SatAsym")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider2.getValue())));
-                };
-            slider3.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("SatTrim")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider3.getValue())));
-                };
-            slider4.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("SatPre")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider4.getValue())));
-                };
-            sliderMix.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("SatMix")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(sliderMix.getValue())));
-                };
+            slider1.onValueChange = [this] { setParam("SatDrive", slider1); };
+            slider2.onValueChange = [this] { setParam("SatAsym",  slider2); };
+            slider3.onValueChange = [this] { setParam("SatTrim",  slider3); };
+            slider4.onValueChange = [this] { setParam("SatPre",   slider4); };
+            sliderMix.onValueChange = [this] { setParam("SatMix", sliderMix); };
         }
+        // ── BitCrusher ────────────────────────────────────────────────────
         else if (auto* crusher = dynamic_cast<BitCrusher*>(currentFx))
         {
-            setupKnob(slider1, lbl1, "BITS", 2.0, 24.0, 8.0);
+            setupKnob(slider1, lbl1, "BITS",       2.0, 24.0, 8.0);
             setupKnob(slider2, lbl2, "DOWNSAMPLE", 1.0, 32.0, 4.0);
-            setupKnob(slider3, lbl3, "JITTER", 0.0, 1.0, 0.0);
+            setupKnob(slider3, lbl3, "JITTER",     0.0,  1.0, 0.0);
 
-            slider1.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("BcBits")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider1.getValue())));
-                };
-            slider2.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("BcDown")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider2.getValue())));
-                };
-            slider3.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("BcJitter")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider3.getValue())));
-                };
-            sliderMix.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("BcMix")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(sliderMix.getValue())));
-                };
+            slider1.onValueChange = [this] { setParam("BcBits",   slider1); };
+            slider2.onValueChange = [this] { setParam("BcDown",   slider2); };
+            slider3.onValueChange = [this] { setParam("BcJitter", slider3); };
+            sliderMix.onValueChange = [this] { setParam("BcMix",  sliderMix); };
         }
+        // ── Noise Generator ───────────────────────────────────────────────
         else if (auto* noise = dynamic_cast<NoiseGenerator*>(currentFx))
         {
-            setupKnob(slider1, lbl1, "DECAY (ms)",   1.0,  1000.0, 100.0);
-            setupKnob(slider2, lbl2, "GAIN (dB)",  -60.0,     0.0,   0.0);
-            setupKnob(slider3, lbl3, "ATTACK (ms)",  0.0,    50.0,   0.0);
-            setupKnob(slider4, lbl4, "BP FREQ (Hz)", 0.0,  4000.0,   0.0);
+            setupKnob(slider1, lbl1, "DECAY ms",  1.0,  1000.0, 100.0);
+            setupKnob(slider2, lbl2, "GAIN dB",  -60.0,    0.0,   0.0);
+            setupKnob(slider3, lbl3, "ATTACK ms",  0.0,   50.0,   0.0);
+            setupKnob(slider4, lbl4, "BP FREQ",    0.0, 4000.0,   0.0);
 
-            slider1.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("NsDecay")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider1.getValue())));
-                };
-            slider2.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("NsGain")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider2.getValue())));
-                };
-            slider3.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("NsAttack")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider3.getValue())));
-                };
-            slider4.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("NsBpFreq")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider4.getValue())));
-                };
+            slider1.onValueChange = [this] { setParam("NsDecay",  slider1); };
+            slider2.onValueChange = [this] { setParam("NsGain",   slider2); };
+            slider3.onValueChange = [this] { setParam("NsAttack", slider3); };
+            slider4.onValueChange = [this] { setParam("NsBpFreq", slider4); };
+            sliderMix.onValueChange = [this] { setParam("NsMix",  sliderMix); };
 
             for (auto& btn : noiseTypeButtons) btn->setVisible(true);
-
-            sliderMix.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("NsMix")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(sliderMix.getValue())));
-                };
         }
-        else if (auto* glue = dynamic_cast<GlueCompressor*>(currentFx))
-        {
-            setupHorizontalSlider(slider1, lbl1, "THRESHOLD (dBFS)", -40.0, 0.0,   -18.0);
-            setupHorizontalSlider(slider2, lbl2, "RATIO",              1.0, 20.0,     2.0);
-            setupHorizontalSlider(slider3, lbl3, "ATTACK (ms)",        1.0, 100.0,   30.0);
-            setupHorizontalSlider(slider4, lbl4, "RELEASE (ms)",      10.0, 1000.0, 200.0);
-            setupHorizontalSlider(slider5, lbl5, "MAKEUP (dB)",      -12.0,  12.0,    0.0);
-
-            slider1.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("GlueThr")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider1.getValue())));
-                };
-            slider2.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("GlueRatio")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider2.getValue())));
-                };
-            slider3.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("GlueAtk")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider3.getValue())));
-                };
-            slider4.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("GlueRel")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider4.getValue())));
-                };
-            slider5.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("GlueMkp")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider5.getValue())));
-                };
-            sliderMix.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("GlueDepth")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(sliderMix.getValue())));
-                };
-        }
-        else if (auto* limiter = dynamic_cast<Limiter*>(currentFx))
-        {
-            setupKnob(slider1, lbl1, "CEILING (dB)", -24.0, 0.0, -0.1);
-            slider1.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("LimCeil")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider1.getValue())));
-                };
-            sliderMix.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("LimMix")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(sliderMix.getValue())));
-                };
-        }
+        // ── OTT Multiband ─────────────────────────────────────────────────
         else if (dynamic_cast<OTT_Multiband*>(currentFx))
         {
-            setupHorizontalSlider(slider1, lbl1, "TIME MULTI",    0.1,  10.0,  1.0);
-            setupHorizontalSlider(slider2, lbl2, "LOW/MID XOVER", 40.0, 1000.0, 200.0);
-            setupHorizontalSlider(slider3, lbl3, "MID/HI XOVER",  1000.0, 15000.0, 2500.0);
-            setupHorizontalSlider(slider4, lbl4, "GATE FLOOR dB", -70.0, -20.0, -45.0);
+            bandDetailBtn.setVisible(true);
+            bandDetailBtn.setToggleState(showOttBands, juce::dontSendNotification);
 
-            slider1.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("OttTime")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider1.getValue())));
-                };
-            slider2.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("OttLowMidXOver")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider2.getValue())));
-                };
-            slider3.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("OttMidHighXOver")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider3.getValue())));
-                };
-            slider4.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("OttGateFloor")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(slider4.getValue())));
-                };
-            sliderMix.onValueChange = [this] {
-                if (auto* pParam = processor.apvts.getParameter(getResolvedID("OttDepth")))
-                    pParam->setValueNotifyingHost(pParam->convertTo0to1(static_cast<float>(sliderMix.getValue())));
-                };
+            sliderMix.onValueChange = [this] { setParam("OttDepth", sliderMix); };
 
-            for (int b = 0; b < 3; ++b)
+            if (!showOttBands)
             {
-                ottUpSliders[b].setVisible(true);   ottUpLabels[b].setVisible(true);
-                ottDownSliders[b].setVisible(true); ottDownLabels[b].setVisible(true);
-                ottGainSliders[b].setVisible(true); ottGainLabels[b].setVisible(true);
+                // ── メインビュー: TIME / XOVER×2 / GATE ─────────────────
+                setupKnob(slider1, lbl1, "TIME",     0.1,   10.0,    1.0);
+                setupKnob(slider2, lbl2, "LO/MI XO", 40.0, 1000.0, 200.0);
+                setupKnob(slider3, lbl3, "MI/HI XO", 1000.0, 15000.0, 2500.0);
+                setupKnob(slider4, lbl4, "GATE dB",  -70.0,  -20.0,  -45.0);
+
+                slider1.onValueChange = [this] { setParam("OttTime",        slider1); };
+                slider2.onValueChange = [this] { setParam("OttLowMidXOver", slider2); };
+                slider3.onValueChange = [this] { setParam("OttMidHighXOver",slider3); };
+                slider4.onValueChange = [this] { setParam("OttGateFloor",   slider4); };
             }
+            else
+            {
+                // ── バンドビュー: LOW / MID / HIGH セレクター + 3ノブ ─────
+                for (auto& b : ottBandSelectBtns) b.setVisible(true);
+                updateOttBandKnobs();
+            }
+        }
+        // ── Glue Compressor ───────────────────────────────────────────────
+        else if (auto* glue = dynamic_cast<GlueCompressor*>(currentFx))
+        {
+            setupKnob(slider1, lbl1, "THR dBFS",  -40.0,   0.0, -18.0);
+            setupKnob(slider2, lbl2, "RATIO",        1.0,  20.0,   2.0);
+            setupKnob(slider3, lbl3, "ATK ms",        1.0, 100.0,  30.0);
+            setupKnob(slider4, lbl4, "REL ms",       10.0, 1000.0, 200.0);
+            setupKnob(slider5, lbl5, "MAKEUP dB",   -12.0,  12.0,   0.0);
+
+            slider1.onValueChange = [this] { setParam("GlueThr",   slider1); };
+            slider2.onValueChange = [this] { setParam("GlueRatio", slider2); };
+            slider3.onValueChange = [this] { setParam("GlueAtk",   slider3); };
+            slider4.onValueChange = [this] { setParam("GlueRel",   slider4); };
+            slider5.onValueChange = [this] { setParam("GlueMkp",   slider5); };
+            sliderMix.onValueChange = [this] { setParam("GlueDepth", sliderMix); };
+        }
+        // ── Limiter ───────────────────────────────────────────────────────
+        else if (auto* limiter = dynamic_cast<Limiter*>(currentFx))
+        {
+            setupKnob(slider1, lbl1, "CEILING dB", -24.0, 0.0, -0.1);
+            slider1.onValueChange = [this] { setParam("LimCeil", slider1); };
+            sliderMix.onValueChange = [this] { setParam("LimMix", sliderMix); };
         }
 
         synchronizeSlidersFromParameters();
@@ -289,237 +258,277 @@ public:
         repaint();
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
     void synchronizeSlidersFromParameters() noexcept
     {
         if (currentFx == nullptr) return;
 
+        auto load = [this](const juce::String& id) -> float
+        {
+            auto* p = processor.apvts.getRawParameterValue(getResolvedID(id));
+            return p ? p->load() : 0.0f;
+        };
+
         if (dynamic_cast<ADAA_Saturation*>(currentFx))
         {
-            slider1.setValue(processor.apvts.getRawParameterValue(getResolvedID("SatDrive"))->load(), juce::dontSendNotification);
-            slider2.setValue(processor.apvts.getRawParameterValue(getResolvedID("SatAsym"))->load(),  juce::dontSendNotification);
-            slider3.setValue(processor.apvts.getRawParameterValue(getResolvedID("SatTrim"))->load(),  juce::dontSendNotification);
-            slider4.setValue(processor.apvts.getRawParameterValue(getResolvedID("SatPre"))->load(),   juce::dontSendNotification);
-            sliderMix.setValue(processor.apvts.getRawParameterValue(getResolvedID("SatMix"))->load(), juce::dontSendNotification);
+            slider1.setValue(load("SatDrive"), juce::dontSendNotification);
+            slider2.setValue(load("SatAsym"),  juce::dontSendNotification);
+            slider3.setValue(load("SatTrim"),  juce::dontSendNotification);
+            slider4.setValue(load("SatPre"),   juce::dontSendNotification);
+            sliderMix.setValue(load("SatMix"), juce::dontSendNotification);
         }
         else if (dynamic_cast<BitCrusher*>(currentFx))
         {
-            slider1.setValue(processor.apvts.getRawParameterValue(getResolvedID("BcBits"))->load(), juce::dontSendNotification);
-            slider2.setValue(processor.apvts.getRawParameterValue(getResolvedID("BcDown"))->load(), juce::dontSendNotification);
-            sliderMix.setValue(processor.apvts.getRawParameterValue(getResolvedID("BcMix"))->load(), juce::dontSendNotification);
-            slider3.setValue(processor.apvts.getRawParameterValue(getResolvedID("BcJitter"))->load(), juce::dontSendNotification);
+            slider1.setValue(load("BcBits"),   juce::dontSendNotification);
+            slider2.setValue(load("BcDown"),   juce::dontSendNotification);
+            slider3.setValue(load("BcJitter"), juce::dontSendNotification);
+            sliderMix.setValue(load("BcMix"),  juce::dontSendNotification);
         }
         else if (dynamic_cast<NoiseGenerator*>(currentFx))
         {
-            slider1.setValue(processor.apvts.getRawParameterValue(getResolvedID("NsDecay"))->load(),   juce::dontSendNotification);
-            slider2.setValue(processor.apvts.getRawParameterValue(getResolvedID("NsGain"))->load(),    juce::dontSendNotification);
-            slider3.setValue(processor.apvts.getRawParameterValue(getResolvedID("NsAttack"))->load(),  juce::dontSendNotification);
-            slider4.setValue(processor.apvts.getRawParameterValue(getResolvedID("NsBpFreq"))->load(),  juce::dontSendNotification);
-            sliderMix.setValue(processor.apvts.getRawParameterValue(getResolvedID("NsMix"))->load(),   juce::dontSendNotification);
+            slider1.setValue(load("NsDecay"),  juce::dontSendNotification);
+            slider2.setValue(load("NsGain"),   juce::dontSendNotification);
+            slider3.setValue(load("NsAttack"), juce::dontSendNotification);
+            slider4.setValue(load("NsBpFreq"), juce::dontSendNotification);
+            sliderMix.setValue(load("NsMix"),  juce::dontSendNotification);
 
-            auto* pParam = processor.apvts.getRawParameterValue(getResolvedID("NsType"));
-            if (pParam != nullptr && noiseTypeButtons.size() >= 4)
+            auto* pType = processor.apvts.getRawParameterValue(getResolvedID("NsType"));
+            if (pType && noiseTypeButtons.size() >= 4)
             {
-                int typeIdx = static_cast<int>(pParam->load());
+                int idx = static_cast<int>(pType->load());
                 for (int i = 0; i < 4; ++i)
-                    noiseTypeButtons[i]->setToggleState(i == typeIdx, juce::dontSendNotification);
+                    noiseTypeButtons[i]->setToggleState(i == idx, juce::dontSendNotification);
+            }
+        }
+        else if (dynamic_cast<OTT_Multiband*>(currentFx))
+        {
+            sliderMix.setValue(load("OttDepth"), juce::dontSendNotification);
+
+            if (!showOttBands)
+            {
+                slider1.setValue(load("OttTime"),         juce::dontSendNotification);
+                slider2.setValue(load("OttLowMidXOver"),  juce::dontSendNotification);
+                slider3.setValue(load("OttMidHighXOver"), juce::dontSendNotification);
+                slider4.setValue(load("OttGateFloor"),    juce::dontSendNotification);
+            }
+            else
+            {
+                juce::StringArray bns{ "Low", "Mid", "High" };
+                auto bn = bns[selectedOttBand];
+                slider1.setValue(load("Ott" + bn + "Up"),   juce::dontSendNotification);
+                slider2.setValue(load("Ott" + bn + "Down"), juce::dontSendNotification);
+                slider3.setValue(load("Ott" + bn + "Gain"), juce::dontSendNotification);
             }
         }
         else if (dynamic_cast<GlueCompressor*>(currentFx))
         {
-            slider1.setValue(processor.apvts.getRawParameterValue(getResolvedID("GlueThr"))->load(),   juce::dontSendNotification);
-            slider2.setValue(processor.apvts.getRawParameterValue(getResolvedID("GlueRatio"))->load(), juce::dontSendNotification);
-            slider3.setValue(processor.apvts.getRawParameterValue(getResolvedID("GlueAtk"))->load(),   juce::dontSendNotification);
-            slider4.setValue(processor.apvts.getRawParameterValue(getResolvedID("GlueRel"))->load(),   juce::dontSendNotification);
-            slider5.setValue(processor.apvts.getRawParameterValue(getResolvedID("GlueMkp"))->load(),   juce::dontSendNotification);
-            sliderMix.setValue(processor.apvts.getRawParameterValue(getResolvedID("GlueDepth"))->load(), juce::dontSendNotification);
+            slider1.setValue(load("GlueThr"),    juce::dontSendNotification);
+            slider2.setValue(load("GlueRatio"),  juce::dontSendNotification);
+            slider3.setValue(load("GlueAtk"),    juce::dontSendNotification);
+            slider4.setValue(load("GlueRel"),    juce::dontSendNotification);
+            slider5.setValue(load("GlueMkp"),    juce::dontSendNotification);
+            sliderMix.setValue(load("GlueDepth"),juce::dontSendNotification);
         }
         else if (dynamic_cast<Limiter*>(currentFx))
         {
-            slider1.setValue(processor.apvts.getRawParameterValue(getResolvedID("LimCeil"))->load(), juce::dontSendNotification);
-            sliderMix.setValue(processor.apvts.getRawParameterValue(getResolvedID("LimMix"))->load(), juce::dontSendNotification);
-        }
-        else if (dynamic_cast<OTT_Multiband*>(currentFx))
-        {
-            slider1.setValue(processor.apvts.getRawParameterValue(getResolvedID("OttTime"))->load(),        juce::dontSendNotification);
-            slider2.setValue(processor.apvts.getRawParameterValue(getResolvedID("OttLowMidXOver"))->load(), juce::dontSendNotification);
-            slider3.setValue(processor.apvts.getRawParameterValue(getResolvedID("OttMidHighXOver"))->load(),juce::dontSendNotification);
-            slider4.setValue(processor.apvts.getRawParameterValue(getResolvedID("OttGateFloor"))->load(),   juce::dontSendNotification);
-            sliderMix.setValue(processor.apvts.getRawParameterValue(getResolvedID("OttDepth"))->load(),     juce::dontSendNotification);
-
-            juce::StringArray bandNames{ "Low", "Mid", "High" };
-            for (int b = 0; b < 3; ++b)
-            {
-                ottUpSliders[b].setValue(processor.apvts.getRawParameterValue(getResolvedID("Ott" + bandNames[b] + "Up"))->load(),   juce::dontSendNotification);
-                ottDownSliders[b].setValue(processor.apvts.getRawParameterValue(getResolvedID("Ott" + bandNames[b] + "Down"))->load(),juce::dontSendNotification);
-                ottGainSliders[b].setValue(processor.apvts.getRawParameterValue(getResolvedID("Ott" + bandNames[b] + "Gain"))->load(),juce::dontSendNotification);
-            }
+            slider1.setValue(load("LimCeil"),   juce::dontSendNotification);
+            sliderMix.setValue(load("LimMix"),  juce::dontSendNotification);
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
     void paint(juce::Graphics& g) override
     {
-        g.fillAll(juce::Colours::darkgrey.darker().darker().darker());
-        g.setColour(juce::Colours::cyan.withAlpha(0.3f));
+        g.fillAll(juce::Colour(0xff1c1c1c));
+        g.setColour(juce::Colours::white.withAlpha(0.07f));
         g.drawRect(getLocalBounds(), 1);
 
         if (currentFx != nullptr)
         {
-            g.setFont(juce::Font(10.0f, juce::Font::bold));
-            g.setColour(juce::Colours::cyan);
-            g.drawText(currentFx->getName().toUpperCase() + " PRO-DYNAMIC MATRIX", 10, 8, getWidth(), 12, juce::Justification::left);
+            g.setFont(juce::Font(9.5f, juce::Font::bold));
+            g.setColour(juce::Colours::cyan.withAlpha(0.7f));
+            juce::String title = currentFx->getName().toUpperCase();
+            if (dynamic_cast<OTT_Multiband*>(currentFx))
+                title += showOttBands ? "  —  BANDS" : "  —  MAIN";
+            g.drawText(title, 10, 6, getWidth() - 20, 13, juce::Justification::left);
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
     void resized() override
     {
         auto area = getLocalBounds();
-        if (lblInfo.isVisible())
+        if (lblInfo.isVisible()) { lblInfo.setBounds(area); return; }
+
+        area.removeFromTop(22);
+        area.reduce(8, 4);
+
+        const bool isNoise = (currentFx && dynamic_cast<NoiseGenerator*>(currentFx));
+        const bool isOtt   = (currentFx && dynamic_cast<OTT_Multiband*>(currentFx));
+        const bool isGlue  = (currentFx && dynamic_cast<GlueCompressor*>(currentFx));
+
+        // Glue は6ノブ(5+mix)、それ以外は5ノブ(4+mix) でkwを計算
+        const int totalCols = isGlue ? 6 : 5;
+        const int kw = area.getWidth() / totalCols;
+
+        // DRY/WET ノブは常に右端
+        if (sliderMix.isVisible())
         {
-            lblInfo.setBounds(area);
-            return;
+            auto mx = area.removeFromRight(kw);
+            lblMix.setBounds(mx.removeFromTop(15));
+            sliderMix.setBounds(mx);
         }
 
-        area.removeFromTop(25);
-        area.reduce(10, 5);
-
-        auto kw = area.getWidth() / 5;
-
-        // DRY/WETノブは右端固定
-        auto mixArea = area.removeFromRight(kw);
-        lblMix.setBounds(mixArea.removeFromTop(15));
-        sliderMix.setBounds(mixArea);
-
-        bool isNoiseActive = (currentFx != nullptr && dynamic_cast<NoiseGenerator*>(currentFx) != nullptr);
-        bool isOttActive   = (currentFx != nullptr && dynamic_cast<OTT_Multiband*>(currentFx) != nullptr);
-        bool isGlueActive  = (currentFx != nullptr && dynamic_cast<GlueCompressor*>(currentFx) != nullptr);
-
-        if (isGlueActive)
+        // ── Noise ──────────────────────────────────────────────────────────
+        if (isNoise && noiseTypeButtons.size() >= 4 && noiseTypeButtons[0]->isVisible())
         {
-            // 残りエリア(4×kw)を5段に分割: THRESHOLD / RATIO / ATTACK / RELEASE / MAKEUP
-            auto glueArea = area;
-            const auto rh = glueArea.getHeight() / 5;
-
-            auto r0 = glueArea.removeFromTop(rh);
-            lbl1.setBounds(r0.removeFromTop(11)); slider1.setBounds(r0.reduced(2, 0));
-            auto r1 = glueArea.removeFromTop(rh);
-            lbl2.setBounds(r1.removeFromTop(11)); slider2.setBounds(r1.reduced(2, 0));
-            auto r2 = glueArea.removeFromTop(rh);
-            lbl3.setBounds(r2.removeFromTop(11)); slider3.setBounds(r2.reduced(2, 0));
-            auto r3 = glueArea.removeFromTop(rh);
-            lbl4.setBounds(r3.removeFromTop(11)); slider4.setBounds(r3.reduced(2, 0));
-            auto r4 = glueArea;
-            lbl5.setBounds(r4.removeFromTop(11)); slider5.setBounds(r4.reduced(2, 0));
-        }
-        else if (isOttActive)
-        {
-            // 左1列: slider1〜4 を4段積み (TIME / LOW-MID XOVER / MID-HI XOVER / GATE FLOOR)
-            auto leftCoreArea = area.removeFromLeft(kw);
-            auto rh = leftCoreArea.getHeight() / 4;
-
-            auto r0 = leftCoreArea.removeFromTop(rh);
-            lbl1.setBounds(r0.removeFromTop(11)); slider1.setBounds(r0.reduced(2, 0));
-            auto r1 = leftCoreArea.removeFromTop(rh);
-            lbl2.setBounds(r1.removeFromTop(11)); slider2.setBounds(r1.reduced(2, 0));
-            auto r2 = leftCoreArea.removeFromTop(rh);
-            lbl3.setBounds(r2.removeFromTop(11)); slider3.setBounds(r2.reduced(2, 0));
-            auto r3 = leftCoreArea;
-            lbl4.setBounds(r3.removeFromTop(11)); slider4.setBounds(r3.reduced(2, 0));
-
-            // 残り3列: LOW / MID / HIGH 帯域タワー
-            auto towerWidth = area.getWidth() / 3;
-            for (int b = 0; b < 3; ++b)
-            {
-                auto bandArea = area.removeFromLeft(towerWidth).reduced(6, 0);
-                auto th = bandArea.getHeight() / 3;
-
-                auto t0 = bandArea.removeFromTop(th);
-                ottUpLabels[b].setBounds(t0.removeFromTop(11));   ottUpSliders[b].setBounds(t0.reduced(2, 0));
-                auto t1 = bandArea.removeFromTop(th);
-                ottDownLabels[b].setBounds(t1.removeFromTop(11)); ottDownSliders[b].setBounds(t1.reduced(2, 0));
-                auto t2 = bandArea;
-                ottGainLabels[b].setBounds(t2.removeFromTop(11)); ottGainSliders[b].setBounds(t2.reduced(2, 0));
-            }
-        }
-        else if (isNoiseActive && noiseTypeButtons.size() >= 4 && noiseTypeButtons[0]->isVisible())
-        {
-            // 上段16px: WHITE/PINK/BROWN/BLUE ボタンを横1列に配置
-            const int btnH = 16;
-            auto topStrip = area.removeFromTop(btnH);
-            const int bw = topStrip.getWidth() / 4;
+            const int btnH = 18;
+            auto topRow = area.removeFromTop(btnH);
+            const int bw = topRow.getWidth() / 4;
             for (int i = 0; i < 4; ++i)
-                noiseTypeButtons[i]->setBounds(topStrip.getX() + i * bw, topStrip.getY(), bw - 2, btnH);
+                noiseTypeButtons[i]->setBounds(topRow.getX() + i * bw, topRow.getY(), bw - 2, btnH);
 
-            // 下段: 4ノブ (DECAY / GAIN / ATTACK / BP FREQ) を横1列に配置
-            if (slider1.isVisible()) { auto s = area.removeFromLeft(kw); lbl1.setBounds(s.removeFromTop(13)); slider1.setBounds(s); }
-            if (slider2.isVisible()) { auto s = area.removeFromLeft(kw); lbl2.setBounds(s.removeFromTop(13)); slider2.setBounds(s); }
-            if (slider3.isVisible()) { auto s = area.removeFromLeft(kw); lbl3.setBounds(s.removeFromTop(13)); slider3.setBounds(s); }
-            if (slider4.isVisible()) { auto s = area.removeFromLeft(kw); lbl4.setBounds(s.removeFromTop(13)); slider4.setBounds(s); }
+            auto placeKnob = [&](juce::Slider& s, juce::Label& l) {
+                if (!s.isVisible()) return;
+                auto c = area.removeFromLeft(kw); l.setBounds(c.removeFromTop(15)); s.setBounds(c);
+            };
+            placeKnob(slider1, lbl1); placeKnob(slider2, lbl2);
+            placeKnob(slider3, lbl3); placeKnob(slider4, lbl4);
         }
+        // ── OTT メインビュー ───────────────────────────────────────────────
+        else if (isOtt && !showOttBands)
+        {
+            // [TIME][LO/MI][MI/HI][GATE] → 各 kw 幅, 残りに BANDS ボタン
+            auto placeKnob = [&](juce::Slider& s, juce::Label& l) {
+                if (!s.isVisible()) return;
+                auto c = area.removeFromLeft(kw); l.setBounds(c.removeFromTop(15)); s.setBounds(c);
+            };
+            placeKnob(slider1, lbl1); placeKnob(slider2, lbl2);
+            placeKnob(slider3, lbl3); placeKnob(slider4, lbl4);
+            if (bandDetailBtn.isVisible())
+                bandDetailBtn.setBounds(area.reduced(4, 18));
+        }
+        // ── OTT バンドビュー ──────────────────────────────────────────────
+        else if (isOtt && showOttBands)
+        {
+            // [LOW/MID/HIGH ボタン縦積み] [UP][DOWN][GAIN] [BANDS▴]
+            auto selCol = area.removeFromLeft(kw);
+            const int sh = selCol.getHeight() / 3;
+            for (int i = 0; i < 3; ++i)
+                ottBandSelectBtns[i].setBounds(selCol.removeFromTop(sh).reduced(2, 3));
+
+            auto placeKnob = [&](juce::Slider& s, juce::Label& l) {
+                if (!s.isVisible()) return;
+                auto c = area.removeFromLeft(kw); l.setBounds(c.removeFromTop(15)); s.setBounds(c);
+            };
+            placeKnob(slider1, lbl1); placeKnob(slider2, lbl2); placeKnob(slider3, lbl3);
+            if (bandDetailBtn.isVisible())
+                bandDetailBtn.setBounds(area.reduced(4, 18));
+        }
+        // ── Glue: 5ノブ横1列 ─────────────────────────────────────────────
+        else if (isGlue)
+        {
+            auto placeKnob = [&](juce::Slider& s, juce::Label& l) {
+                if (!s.isVisible()) return;
+                auto c = area.removeFromLeft(kw); l.setBounds(c.removeFromTop(15)); s.setBounds(c);
+            };
+            placeKnob(slider1, lbl1); placeKnob(slider2, lbl2); placeKnob(slider3, lbl3);
+            placeKnob(slider4, lbl4); placeKnob(slider5, lbl5);
+        }
+        // ── その他 (Sat / Crusher / Limiter): ノブ横1列 ─────────────────
         else
         {
-            if (slider1.isVisible()) { auto s = area.removeFromLeft(kw); lbl1.setBounds(s.removeFromTop(15)); slider1.setBounds(s); }
-            if (slider2.isVisible()) { auto s = area.removeFromLeft(kw); lbl2.setBounds(s.removeFromTop(15)); slider2.setBounds(s); }
-            if (slider3.isVisible()) { auto s = area.removeFromLeft(kw); lbl3.setBounds(s.removeFromTop(15)); slider3.setBounds(s); }
-            if (slider4.isVisible()) { auto s = area.removeFromLeft(kw); lbl4.setBounds(s.removeFromTop(15)); slider4.setBounds(s); }
+            auto placeKnob = [&](juce::Slider& s, juce::Label& l) {
+                if (!s.isVisible()) return;
+                auto c = area.removeFromLeft(kw); l.setBounds(c.removeFromTop(15)); s.setBounds(c);
+            };
+            placeKnob(slider1, lbl1); placeKnob(slider2, lbl2);
+            placeKnob(slider3, lbl3); placeKnob(slider4, lbl4);
         }
     }
 
 private:
-    juce::String getResolvedID(const juce::String& baseName) const noexcept
+    // ── ヘルパー ──────────────────────────────────────────────────────────────
+    juce::String getResolvedID(const juce::String& base) const noexcept
     {
         if (currentFx == nullptr) return {};
         auto r = currentFx->getTargetRoute();
-        juce::String prefix = (r == TargetRoute::Transient) ? "trans" : ((r == TargetRoute::Tonal) ? "tonal" : "full");
-        return prefix + baseName;
+        juce::String pre = (r == TargetRoute::Transient) ? "trans" :
+                           (r == TargetRoute::Tonal)     ? "tonal" : "full";
+        return pre + base;
     }
 
-    void setupKnob(juce::Slider& s, juce::Label& l, const juce::String& name, double minV, double maxV, double defV)
+    void setParam(const juce::String& id, juce::Slider& s) noexcept
+    {
+        if (auto* pp = processor.apvts.getParameter(getResolvedID(id)))
+            pp->setValueNotifyingHost(pp->convertTo0to1((float)s.getValue()));
+    }
+
+    void setupKnob(juce::Slider& s, juce::Label& l,
+                   const juce::String& name,
+                   double minV, double maxV, double defV)
     {
         addAndMakeVisible(s); addAndMakeVisible(l);
         s.setVisible(true);  l.setVisible(true);
 
         s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 14);
+        s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 52, 13);
         s.setRange(minV, maxV, 0.01);
         s.setValue(defV, juce::dontSendNotification);
         s.setColour(juce::Slider::rotarySliderFillColourId, juce::Colours::cyan);
-        s.setColour(juce::Slider::thumbColourId, juce::Colours::white);
-
-        l.setText(name, juce::dontSendNotification);
-        l.setFont(juce::Font(9.0f, juce::Font::bold));
-        l.setJustificationType(juce::Justification::centred);
-        l.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.6f));
-    }
-
-    // 💥【新設】超省スペース環境でも100%美しく描画される横型フェーダー専用の初期化関数
-    void setupHorizontalSlider(juce::Slider& s, juce::Label& l, const juce::String& name, double minV, double maxV, double defV)
-    {
-        addAndMakeVisible(s); addAndMakeVisible(l);
-        s.setVisible(true);  l.setVisible(true);
-
-        s.setSliderStyle(juce::Slider::LinearHorizontal);
-        s.setTextBoxStyle(juce::Slider::TextBoxRight, false, 40, 11); // 右側に数値をコンパクト配置
-        s.setRange(minV, maxV, 0.01);
-        s.setValue(defV, juce::dontSendNotification);
-        s.setColour(juce::Slider::trackColourId, juce::Colours::cyan.withAlpha(0.3f));
-        s.setColour(juce::Slider::thumbColourId, juce::Colours::cyan);
+        s.setColour(juce::Slider::thumbColourId,            juce::Colours::white);
 
         l.setText(name, juce::dontSendNotification);
         l.setFont(juce::Font(8.5f, juce::Font::bold));
-        l.setJustificationType(juce::Justification::centredLeft);
-        l.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.5f));
+        l.setJustificationType(juce::Justification::centred);
+        l.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.55f));
     }
 
+    // OTT バンドビュー: 選択バンドの knob を slider1/2/3 に割り当て
+    void updateOttBandKnobs()
+    {
+        if (currentFx == nullptr) return;
+
+        juce::StringArray bns{ "Low", "Mid", "High" };
+        const juce::String bn = bns[selectedOttBand];
+
+        setupKnob(slider1, lbl1, "UP",      0.0, 1.0,    1.0);
+        setupKnob(slider2, lbl2, "DOWN",    0.0, 1.0,    1.0);
+        setupKnob(slider3, lbl3, "GAIN dB", -24.0, 24.0, 0.0);
+
+        slider4.setVisible(false); lbl4.setVisible(false);
+
+        slider1.onValueChange = [this, bn] { setParam("Ott" + bn + "Up",   slider1); };
+        slider2.onValueChange = [this, bn] { setParam("Ott" + bn + "Down", slider2); };
+        slider3.onValueChange = [this, bn] { setParam("Ott" + bn + "Gain", slider3); };
+
+        // 現在値をロード
+        auto load = [this](const juce::String& id) -> float {
+            auto* p = processor.apvts.getRawParameterValue(getResolvedID(id));
+            return p ? p->load() : 0.0f;
+        };
+        slider1.setValue(load("Ott" + bn + "Up"),   juce::dontSendNotification);
+        slider2.setValue(load("Ott" + bn + "Down"),  juce::dontSendNotification);
+        slider3.setValue(load("Ott" + bn + "Gain"),  juce::dontSendNotification);
+    }
+
+    // ── メンバー ──────────────────────────────────────────────────────────────
     AnatomyAudioProcessor& processor;
     AudioEffect* currentFx = nullptr;
 
-    juce::Label lblInfo;
+    juce::Label  lblInfo;
     juce::Slider slider1, slider2, slider3, slider4, slider5, sliderMix;
-    juce::Label lbl1, lbl2, lbl3, lbl4, lbl5, lblMix;
+    juce::Label  lbl1, lbl2, lbl3, lbl4, lbl5, lblMix;
 
     std::vector<std::unique_ptr<juce::TextButton>> noiseTypeButtons;
 
-    // 自作OTT専用プロマトリクスパーツコンテナ [0=Low, 1=Mid, 2=High]
+    // OTT バンド詳細UI
+    juce::TextButton bandDetailBtn;
+    juce::TextButton ottBandSelectBtns[3];
+    bool showOttBands    = false;
+    int  selectedOttBand = 0;      // 0=Low, 1=Mid, 2=High
+
+    // 旧バンドスライダー（常時非表示・APVTS接続保持用）
     juce::Slider ottUpSliders[3];   juce::Label ottUpLabels[3];
     juce::Slider ottDownSliders[3]; juce::Label ottDownLabels[3];
     juce::Slider ottGainSliders[3]; juce::Label ottGainLabels[3];

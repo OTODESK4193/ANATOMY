@@ -150,7 +150,7 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
         }
     }
 
-    setSize(1150, 720);
+    setSize(980, 660);
     startTimer(40);
 }
 
@@ -342,25 +342,25 @@ void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
     g.setFont(juce::Font(10.5f, juce::Font::bold));
 
     auto area = getLocalBounds();
-    area.removeFromRight(250); // 幅変更と同期
-    area.removeFromTop(155);
-    area.removeFromBottom(130);
+    area.removeFromRight(165); // ラックパネル幅
+    area.removeFromTop(145);   // ボタン(35) + ノブ(110)
+    area.removeFromBottom(115); // ドック高さ
 
     g.setColour(juce::Colours::white.withAlpha(0.4f));
-    g.drawText("1. CURRENT FULL MIX PRE-VIEW (2-COLOR RATIO DISPLAY)", 15, 155, area.getWidth(), 12, juce::Justification::left);
+    g.drawText("1. CURRENT FULL MIX PRE-VIEW (2-COLOR RATIO DISPLAY)", 15, 145, area.getWidth(), 12, juce::Justification::left);
 
     g.setColour(juce::Colours::cyan.withAlpha(0.5f));
-    g.drawText("2. TRANSIENT COMPONENT BROWSER (CLICK / ATTACK)", 15, 155 + 130, area.getWidth(), 12, juce::Justification::left);
+    g.drawText("2. TRANSIENT COMPONENT BROWSER (CLICK / ATTACK)", 15, 145 + 120, area.getWidth(), 12, juce::Justification::left);
 
     g.setColour(juce::Colours::magenta.withAlpha(0.5f));
-    g.drawText("3. TONAL COMPONENT BROWSER (BODY / HARMONICS)", 15, 155 + 130 * 2, area.getWidth(), 12, juce::Justification::left);
+    g.drawText("3. TONAL COMPONENT BROWSER (BODY / HARMONICS)", 15, 145 + 120 * 2, area.getWidth(), 12, juce::Justification::left);
 
     if (audioProcessor.isCurrentlyProcessing() &&
         !sliderClickLength.isMouseOverOrDragging() &&
         !sliderClickCurve.isMouseOverOrDragging())
     {
         g.setColour(juce::Colours::black.withAlpha(0.5f));
-        g.fillRect(0, 155, area.getWidth(), 130 * 3);
+        g.fillRect(0, 145, area.getWidth(), 120 * 3);
 
         float progress = audioProcessor.getHpssProgress();
         int percent = static_cast<int> (std::round(progress * 100.0f));
@@ -377,11 +377,12 @@ void AnatomyAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds();
 
-    // エフェクトラックカードのスリム化に伴い幅を350➔250へ縮小
-    auto rackArea = area.removeFromRight(250);
+    // ラックパネル: コンパクト化で 250 → 165px
+    auto rackArea = area.removeFromRight(165);
     effectRackPanel.setBounds(rackArea.reduced(2));
 
-    auto dockArea = area.removeFromBottom(130).reduced(5, 2);
+    // ドック高さ: 130 → 115px
+    auto dockArea = area.removeFromBottom(115).reduced(5, 2);
     parameterDockPanel.setBounds(dockArea);
 
     auto buttonArea = area.removeFromTop(35).reduced(10, 3);
@@ -391,7 +392,8 @@ void AnatomyAudioProcessorEditor::resized()
     btnTonal.setBounds(buttonArea.removeFromLeft(btnWidth).reduced(3, 0));
     btnBefore.setBounds(buttonArea.reduced(3, 0));
 
-    auto controlArea = area.removeFromTop(120).reduced(5, 2);
+    // メインノブエリア: 120 → 110px
+    auto controlArea = area.removeFromTop(110).reduced(5, 2);
 
     auto transCtrlArea = controlArea.removeFromLeft(controlArea.getWidth() / 2).reduced(5, 0);
     auto tcWidth = transCtrlArea.getWidth() / 3;
@@ -406,20 +408,21 @@ void AnatomyAudioProcessorEditor::resized()
     auto tn2 = tonalCtrlArea.removeFromLeft(tnHWidth); lblTonalPitch.setBounds(tn2.removeFromTop(14));     sliderTonalPitch.setBounds(tn2);
     auto tn3 = tonalCtrlArea;                          lblTonalGain.setBounds(tn3.removeFromTop(14));      sliderTonalGain.setBounds(tn3);
 
-    auto fMixArea = area.removeFromTop(130).reduced(10, 14);
-    auto fMixExportArea = fMixArea.removeFromRight(135);
+    // 波形エリア: 130 → 120px × 3
+    auto fMixArea = area.removeFromTop(120).reduced(10, 14);
+    auto fMixExportArea = fMixArea.removeFromRight(125);
     waveFullMix.setBounds(fMixArea);
     btnExportFull.setBounds(fMixExportArea.removeFromBottom(24).reduced(0, 2));
 
-    auto transArea = area.removeFromTop(130).reduced(10, 14);
-    auto transBrowserArea = transArea.removeFromRight(135);
+    auto transArea = area.removeFromTop(120).reduced(10, 14);
+    auto transBrowserArea = transArea.removeFromRight(125);
     waveTransient.setBounds(transArea);
-    transientBrowserPanel.setBounds(transBrowserArea.removeFromTop(75));
+    transientBrowserPanel.setBounds(transBrowserArea.removeFromTop(62));
     btnExportTransient.setBounds(transBrowserArea.removeFromBottom(24).reduced(0, 2));
 
-    auto tonalArea = area.removeFromTop(130).reduced(10, 14);
-    auto tonalBrowserArea = tonalArea.removeFromRight(135);
+    auto tonalArea = area.removeFromTop(120).reduced(10, 14);
+    auto tonalBrowserArea = tonalArea.removeFromRight(125);
     waveTonal.setBounds(tonalArea);
-    tonalBrowserPanel.setBounds(tonalBrowserArea.removeFromTop(75));
+    tonalBrowserPanel.setBounds(tonalBrowserArea.removeFromTop(62));
     btnExportTonal.setBounds(tonalBrowserArea.removeFromBottom(24).reduced(0, 2));
 }
