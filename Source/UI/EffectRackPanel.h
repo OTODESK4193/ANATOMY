@@ -9,114 +9,351 @@
 #include <algorithm>
 
 /**
- * EffectRackPanel  (UX Fix Edition)
+ * EffectRackPanel  (Order Strip Edition)
  *
- * ■ クリック動作の修正:
- *   OFF → 左クリック → チェーン追加 + Dock 表示選択
- *   ON  → 左クリック → 選択のみ (ONのままキープ)
- *   ON  → 右クリック → ポップアップ (チェーンから削除 / 順序変更)
+ * ■ 上部 (3×2 グリッド) : エフェクトのON/OFF
+ *   左クリック: OFF→チェーン追加, ON→Dock表示切り替え (OFFにはならない)
  *
- * ■ D&D 復元:
- *   ONのボタンをドラッグ → 別レーンへ移動 (レーン間の移動)
- *   DropTarget: EffectRackPanel 自身
- *
- * ■ 選択インジケーター:
- *   現在 Dock 表示中のボタンに白い枠線を描画
+ * ■ 下部 (ChipBar) : アクティブエフェクトを処理順で縦表示
+ *   左クリック      : Dock に表示 (選択)
+ *   縦ドラッグ      : 処理順の並び替え
+ *   右クリック      : 削除 / Move up / Move down
  */
 class EffectRackPanel final : public juce::Component,
-    public juce::DragAndDropTarget,
     public juce::ChangeBroadcaster
 {
 public:
     // =========================================================================
-    // 右クリック + D&D ドラッグに対応したカスタムボタン
+    // FxBtn: ON/OFF トグルボタン
     // =========================================================================
     class FxBtn final : public juce::TextButton
     {
     public:
-        FxBtn() : juce::TextButton("") {}   // MSVC: ネストクラスは明示的に宣言が必要
+        FxBtn() : juce::TextButton("") {}  // MSVC ネストクラス用に明示
+    private:
+        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FxBtn)
+    };
 
-        std::function<void()> onRightClicked;
-        TargetRoute lane  = TargetRoute::FullMix;
-        int         fxIdx = -1;
+    // =========================================================================
+    // ChipBar: 処理順チップリスト + D&D 並び替え
+    // =========================================================================
+    class ChipBar final : public juce::Component,
+        public juce::DragAndDropTarget
+    {
+    public:
+        ChipBar(TargetRoute r, juce::Colour c)
+            : route(r), accentColor(c)
+        {}
 
-        void mouseDown(const juce::MouseEvent& e) override
+        /** 表示を更新 (EffectRackPanel から呼ぶ) */
+        void update(const std::vector<int>& indices, int selFxIdx)
         {
-            dragStarted = false;
-            if (e.mods.isRightButtonDown())
+            activeIndices = indices;
+            selectedFxIdx = selFxIdx;
+            repaint();
+        }
+
+        // EffectRackPanel が購読するコールバック
+        std::function<void(int fxIdx)> onChipClicked;   // クリック→Dock選択
+        std::function<void()>          onOrderChanged;  // 並び替え/削除後
+
+        std::vector<int> activeIndices;  // ChipBar が管理する処理順
+
+        // ---- paint ----------------------------------------------------------
+        void paint(juce::Graphics& g) override
+        {
+            g.setColour(juce::Colour(0xff161616));
+            g.fillRect(getLocalBounds());
+
+            if (activeIndices.empty())
             {
-                if (onRightClicked) onRightClicked();
+                g.setColour(juce::Colours::white.withAlpha(0.08f));
+                g.setFont(juce::Font(8.0f));
+                g.drawText("─  no effects  ─",
+                           getLocalBounds().reduced(0, 4),
+                           juce::Justification::centred);
                 return;
             }
-            juce::TextButton::mouseDown(e);
+
+            const int chipH = 21, gap = 3;
+            int y = 5;
+
+            for (int i = 0; i < (int)activeIndices.size(); ++i)
+            {
+                if (i == dragIndicatorPos)
+                    drawInsertLine(g, y - 2);
+
+                int fxIdx = activeIndices[i];
+                juce::String name = (fxIdx >= 0 && fxIdx < 6)
+                                    ? kFxNames[fxIdx] : "?";
+
+                juce::Rectangle<int> chip(6, y, getWidth() - 12, chipH);
+                bool isSel  = (fxIdx == selectedFxIdx);
+                bool isHov  = (i == hoveredPos && !isDragging);
+
+                float bgA = isSel ? 0.42f : (isHov ? 0.22f : 0.13f);
+                g.setColour(accentColor.withAlpha(bgA));
+                g.fillRoundedRectangle(chip.toFloat(), 3.0f);
+
+                if (isSel)
+                {
+                    g.setColour(juce::Colours::white.withAlpha(0.65f));
+                    g.drawRoundedRectangle(chip.toFloat(), 3.0f, 1.0f);
+                }
+
+                // ≡ ドラッグハンドル
+                int hx = chip.getX() + 5, cy = chip.getCentreY();
+                g.setColour(juce::Colours::white.withAlpha(isSel ? 0.55f : 0.25f));
+                for (int dl = -3; dl <= 3; dl += 3)
+                    g.fillRect(hx, cy + dl, 7, 1);
+
+                // エフェクト名
+                g.setFont(juce::Font(8.5f, juce::Font::bold));
+                g.setColour(isSel ? juce::Colours::white
+                                  : juce::Colours::white.withAlpha(0.55f));
+                g.drawText(name,
+                           chip.withLeft(chip.getX() + 18)
+                               .withRight(chip.getRight() - 18),
+                           juce::Justification::centredLeft);
+
+                // 順番番号 (右端)
+                g.setFont(juce::Font(7.5f));
+                g.setColour(accentColor.withAlpha(isSel ? 0.9f : 0.4f));
+                g.drawText(juce::String(i + 1),
+                           chip.withLeft(chip.getRight() - 16),
+                           juce::Justification::centred);
+
+                y += chipH + gap;
+            }
+
+            // 末尾インジケーター
+            if (dragIndicatorPos == (int)activeIndices.size())
+                drawInsertLine(g, y - 2);
+        }
+
+        // ---- mouse ----------------------------------------------------------
+        void mouseDown(const juce::MouseEvent& e) override
+        {
+            isDragging  = false;
+            dragChipPos = -1;
+
+            int pos = chipAtY((int)e.position.y);
+            if (pos < 0) return;
+
+            dragChipPos = pos;
+
+            if (e.mods.isRightButtonDown())
+            {
+                juce::PopupMenu menu;
+                menu.addItem(1, "Remove from chain");
+                menu.addSeparator();
+                if (pos > 0)
+                    menu.addItem(2, "Move up");
+                if (pos < (int)activeIndices.size() - 1)
+                    menu.addItem(3, "Move down");
+
+                menu.showMenuAsync(juce::PopupMenu::Options{},
+                    [this, pos](int result)
+                    {
+                        if (result == 0) return;
+
+                        if (result == 1)          // 削除
+                        {
+                            if (pos < (int)activeIndices.size())
+                            {
+                                activeIndices.erase(activeIndices.begin() + pos);
+                            }
+                        }
+                        else if (result == 2)     // Move up
+                        {
+                            if (pos > 0 && pos < (int)activeIndices.size())
+                                std::swap(activeIndices[pos], activeIndices[pos - 1]);
+                        }
+                        else if (result == 3)     // Move down
+                        {
+                            if (pos + 1 < (int)activeIndices.size())
+                                std::swap(activeIndices[pos], activeIndices[pos + 1]);
+                        }
+
+                        if (onOrderChanged) onOrderChanged();
+                        repaint();
+                    });
+                return;
+            }
+
+            // 左クリック: 選択
+            if (onChipClicked) onChipClicked(activeIndices[pos]);
         }
 
         void mouseDrag(const juce::MouseEvent& e) override
         {
-            // ON 状態のボタンのみ D&D ソースとして機能
-            if (!dragStarted && getToggleState() && e.getDistanceFromDragStart() > 8)
+            if (!isDragging && dragChipPos >= 0
+                && !e.mods.isRightButtonDown()
+                && e.getDistanceFromDragStart() > 6)
             {
-                dragStarted = true;
+                isDragging = true;
                 if (auto* dc = juce::DragAndDropContainer::findParentDragContainerFor(this))
                 {
-                    int laneInt = (lane == TargetRoute::Transient) ? 0 :
-                                  (lane == TargetRoute::Tonal)     ? 1 : 2;
-                    juce::String data = "FX:" + juce::String(laneInt) + ":" + juce::String(fxIdx);
+                    int laneInt = (route == TargetRoute::Transient) ? 0 :
+                                  (route == TargetRoute::Tonal)     ? 1 : 2;
+                    juce::String data = "CHIP:" + juce::String(laneInt)
+                                        + ":" + juce::String(dragChipPos);
 
-                    // ドラッグイメージ (ボタン名をゴースト表示)
-                    juce::Image img(juce::Image::ARGB, getWidth(), getHeight(), true);
+                    int fxIdx = activeIndices[dragChipPos];
+                    juce::String nm = (fxIdx >= 0 && fxIdx < 6) ? kFxNames[fxIdx] : "?";
+
+                    int imgW = juce::jmax(60, getWidth() - 12);
+                    juce::Image img(juce::Image::ARGB, imgW, 21, true);
                     juce::Graphics ig(img);
-                    ig.setColour(juce::Colours::white.withAlpha(0.35f));
+                    ig.setColour(accentColor.withAlpha(0.72f));
                     ig.fillRoundedRectangle(img.getBounds().toFloat(), 3.0f);
-                    ig.setColour(juce::Colours::black);
+                    ig.setColour(juce::Colours::white);
                     ig.setFont(juce::Font(8.5f, juce::Font::bold));
-                    ig.drawText(getButtonText(), img.getBounds(), juce::Justification::centred);
+                    ig.drawText("≡  " + nm, img.getBounds(), juce::Justification::centred);
 
                     dc->startDragging(data, this, img, false);
                 }
             }
         }
 
-        void mouseUp(const juce::MouseEvent& e) override
+        void mouseUp(const juce::MouseEvent&) override
         {
-            dragStarted = false;
-            juce::TextButton::mouseUp(e);
+            isDragging  = false;
+            dragChipPos = -1;
+        }
+
+        void mouseMove(const juce::MouseEvent& e) override
+        {
+            int h = chipAtY((int)e.position.y);
+            if (h != hoveredPos) { hoveredPos = h; repaint(); }
+        }
+
+        void mouseExit(const juce::MouseEvent&) override
+        {
+            hoveredPos = -1; repaint();
+        }
+
+        // ---- DragAndDropTarget ----------------------------------------------
+        bool isInterestedInDragSource(const SourceDetails& d) override
+        {
+            auto str = d.description.toString();
+            if (!str.startsWith("CHIP:")) return false;
+            auto parts = juce::StringArray::fromTokens(str, ":", "");
+            if (parts.size() != 3) return false;
+            int src = parts[1].getIntValue();
+            int my  = (route == TargetRoute::Transient) ? 0 :
+                      (route == TargetRoute::Tonal)     ? 1 : 2;
+            return src == my;    // 同レーンのみ
+        }
+
+        void itemDragEnter(const SourceDetails& d) override
+        {
+            dragIndicatorPos = insertPosAtY(d.localPosition.y);
+            repaint();
+        }
+
+        void itemDragMove(const SourceDetails& d) override
+        {
+            int p = insertPosAtY(d.localPosition.y);
+            if (p != dragIndicatorPos) { dragIndicatorPos = p; repaint(); }
+        }
+
+        void itemDragExit(const SourceDetails&) override
+        {
+            dragIndicatorPos = -1; repaint();
+        }
+
+        void itemDropped(const SourceDetails& d) override
+        {
+            dragIndicatorPos = -1;
+            auto parts = juce::StringArray::fromTokens(d.description.toString(), ":", "");
+            if (parts.size() != 3) { repaint(); return; }
+
+            int fromPos = parts[2].getIntValue();
+            int toPos   = insertPosAtY(d.localPosition.y);
+
+            if (fromPos < 0 || fromPos >= (int)activeIndices.size())
+            { repaint(); return; }
+
+            if (toPos != fromPos && toPos != fromPos + 1)
+            {
+                int val = activeIndices[fromPos];
+                activeIndices.erase(activeIndices.begin() + fromPos);
+                int ins = juce::jlimit(0, (int)activeIndices.size(),
+                                       toPos > fromPos ? toPos - 1 : toPos);
+                activeIndices.insert(activeIndices.begin() + ins, val);
+            }
+
+            if (onOrderChanged) onOrderChanged();
+            repaint();
         }
 
     private:
-        bool dragStarted = false;
-        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FxBtn)
+        void drawInsertLine(juce::Graphics& g, int y) const
+        {
+            g.setColour(accentColor.withAlpha(0.85f));
+            g.fillRect(10, y, getWidth() - 20, 2);
+        }
+
+        int chipAtY(int y) const noexcept
+        {
+            const int chipH = 21, gap = 3;
+            int top = 5;
+            for (int i = 0; i < (int)activeIndices.size(); ++i)
+            {
+                if (y >= top && y < top + chipH) return i;
+                top += chipH + gap;
+            }
+            return -1;
+        }
+
+        int insertPosAtY(int y) const noexcept
+        {
+            const int chipH = 21, gap = 3;
+            int top = 5;
+            for (int i = 0; i < (int)activeIndices.size(); ++i)
+            {
+                if (y < top + chipH / 2) return i;
+                top += chipH + gap;
+            }
+            return (int)activeIndices.size();
+        }
+
+        static constexpr const char* kFxNames[6] = {
+            "SATU", "CRUSH", "NOISE", "OTT", "GLUE", "LIMIT"
+        };
+
+        TargetRoute  route;
+        juce::Colour accentColor;
+
+        int  selectedFxIdx    = -1;
+        int  hoveredPos       = -1;
+        int  dragChipPos      = -1;
+        int  dragIndicatorPos = -1;
+        bool isDragging       = false;
+
+        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChipBar)
     };
 
     // =========================================================================
     EffectRackPanel(AnatomyAudioProcessor& p) : processor(p)
     {
-        juce::StringArray fxNames{ "Satu", "Crush", "Noise", "OTT", "Glue", "Limit" };
+        const juce::StringArray fxNames { "Satu","Crush","Noise","OTT","Glue","Limit" };
 
         auto setupLane = [&](std::vector<std::unique_ptr<FxBtn>>& btns,
-                              juce::Colour activeColor,
-                              TargetRoute  route)
+                              juce::Colour activeColor, TargetRoute route)
         {
             btns.clear();
             for (int i = 0; i < 6; ++i)
             {
                 auto b = std::make_unique<FxBtn>();
                 b->setButtonText(fxNames[i]);
-                b->setClickingTogglesState(false);  // 自動トグル OFF — 手動管理
-                b->lane  = route;
-                b->fxIdx = i;
-
+                b->setClickingTogglesState(false);
                 b->setColour(juce::TextButton::buttonOnColourId,  activeColor.withAlpha(0.85f));
                 b->setColour(juce::TextButton::textColourOnId,    juce::Colours::black);
                 b->setColour(juce::TextButton::buttonColourId,    juce::Colour(0xff2a2a2a));
                 b->setColour(juce::TextButton::textColourOffId,   juce::Colours::white.withAlpha(0.38f));
-
-                // 左クリック: 選択 (OFF→追加+選択、ON→選択のみ)
                 b->onClick = [this, i, route] { handleButtonClick(route, i); };
-
-                // 右クリック: 削除 / 順序変更メニュー
-                b->onRightClicked = [this, i, route] { handleRightClick(route, i); };
-
                 btns.push_back(std::move(b));
                 addAndMakeVisible(*btns.back());
             }
@@ -125,110 +362,83 @@ public:
         setupLane(transButtons,   juce::Colours::cyan,    TargetRoute::Transient);
         setupLane(tonalButtons,   juce::Colours::magenta, TargetRoute::Tonal);
         setupLane(fullMixButtons, juce::Colours::white,   TargetRoute::FullMix);
+
+        // ChipBar 生成
+        transChipBar   = std::make_unique<ChipBar>(TargetRoute::Transient, juce::Colours::cyan);
+        tonalChipBar   = std::make_unique<ChipBar>(TargetRoute::Tonal,     juce::Colours::magenta);
+        fullMixChipBar = std::make_unique<ChipBar>(TargetRoute::FullMix,   juce::Colours::white);
+
+        // ChipBar コールバック設定
+        auto wireChipBar = [this](ChipBar& bar, TargetRoute route, std::vector<int>& indices)
+        {
+            // クリック → Dock 選択
+            bar.onChipClicked = [this, route](int fxIdx)
+            {
+                currentSelectedFX = getPoolInstance(route, fxIdx);
+                refreshAllChipBars();
+                sendChangeMessage();
+            };
+
+            // 並び替え/削除後 → EffectRackPanel の indices を ChipBar に合わせる
+            bar.onOrderChanged = [this, &bar, route, &indices]()
+            {
+                // ① ChipBar が activeIndices を既に更新済み → EffectRackPanel に反映
+                indices = bar.activeIndices;
+
+                // ② チェーンから外れたエフェクトを非アクティブに
+                for (int i = 0; i < 6; ++i)
+                {
+                    bool inChain = std::find(indices.begin(), indices.end(), i) != indices.end();
+                    if (auto* fx = getPoolInstance(route, i))
+                        if (!inChain) fx->setActive(false);
+                }
+
+                // ③ 選択中 FX がまだチェーンにあるか確認
+                if (currentSelectedFX)
+                {
+                    bool found = false;
+                    for (auto r : { TargetRoute::Transient, TargetRoute::Tonal, TargetRoute::FullMix })
+                        for (int idx : getIndices(r))
+                            if (getPoolInstance(r, idx) == currentSelectedFX)
+                                found = true;
+                    if (!found) currentSelectedFX = nullptr;
+                }
+
+                processor.updateRouteOrder(route, indices);
+                syncBtnStates(transButtons,   transIndices);
+                syncBtnStates(tonalButtons,   tonalIndices);
+                syncBtnStates(fullMixButtons, fullMixIndices);
+                refreshAllChipBars();
+                sendChangeMessage();
+            };
+        };
+
+        wireChipBar(*transChipBar,   TargetRoute::Transient, transIndices);
+        wireChipBar(*tonalChipBar,   TargetRoute::Tonal,     tonalIndices);
+        wireChipBar(*fullMixChipBar, TargetRoute::FullMix,   fullMixIndices);
+
+        addAndMakeVisible(*transChipBar);
+        addAndMakeVisible(*tonalChipBar);
+        addAndMakeVisible(*fullMixChipBar);
     }
 
     ~EffectRackPanel() override = default;
 
-    /** タイマーから呼ばれる: チェーン状態とボタン表示を同期 */
+    /** タイマーから呼ぶ: ボタン状態を同期 */
     void updateCardSlidersFromParameters() noexcept
     {
-        syncStates(transButtons,   transIndices);
-        syncStates(tonalButtons,   tonalIndices);
-        syncStates(fullMixButtons, fullMixIndices);
+        syncBtnStates(transButtons,   transIndices);
+        syncBtnStates(tonalButtons,   tonalIndices);
+        syncBtnStates(fullMixButtons, fullMixIndices);
+        refreshAllChipBars();
     }
 
     AudioEffect* getSelectedEffect() const noexcept { return currentSelectedFX; }
 
     // =========================================================================
-    // DragAndDropTarget — レーン間の移動
-    // =========================================================================
-    bool isInterestedInDragSource(const SourceDetails& details) override
-    {
-        return details.description.toString().startsWith("FX:");
-    }
-
-    void itemDragEnter(const SourceDetails&) override { repaint(); }
-    void itemDragExit(const SourceDetails&)  override { repaint(); }
-
-    void itemDropped(const SourceDetails& details) override
-    {
-        auto parts = juce::StringArray::fromTokens(details.description.toString(), ":", "");
-        if (parts.size() != 3 || parts[0] != "FX") return;
-
-        int fromLaneInt = parts[1].getIntValue();
-        int typeIdx     = parts[2].getIntValue();
-        int toLaneInt   = getLaneForY(details.localPosition.y);
-
-        auto fromRoute = intToRoute(fromLaneInt);
-        auto toRoute   = intToRoute(toLaneInt);
-
-        auto& fromIdxs = getIndices(fromRoute);
-        auto& toIdxs   = getIndices(toRoute);
-
-        auto it = std::find(fromIdxs.begin(), fromIdxs.end(), typeIdx);
-        if (it == fromIdxs.end()) return;
-
-        if (fromRoute == toRoute)
-        {
-            // 同レーン内: ドロップY位置から挿入位置を計算して並び替え
-            auto& btns = getButtons(toRoute);
-            int baseY  = getSectionBaseY(toLaneInt);
-            int insertPos = (int)fromIdxs.size();
-            int fromPos   = (int)(it - fromIdxs.begin());
-
-            for (int i = 0; i < 6 && i < (int)fromIdxs.size(); ++i)
-            {
-                // activeIndices 内の各要素に対応するボタン位置と比較
-                int btnIdx = fromIdxs[i];
-                if (btnIdx < 6 && btns[btnIdx]->getY() - baseY > details.localPosition.y - baseY)
-                {
-                    insertPos = i;
-                    break;
-                }
-            }
-
-            if (fromPos != insertPos && insertPos <= (int)fromIdxs.size())
-            {
-                fromIdxs.erase(it);
-                int adj = (insertPos > fromPos) ? insertPos - 1 : insertPos;
-                adj = juce::jlimit(0, (int)fromIdxs.size(), adj);
-                fromIdxs.insert(fromIdxs.begin() + adj, typeIdx);
-            }
-            processor.updateRouteOrder(fromRoute, fromIdxs);
-        }
-        else
-        {
-            // 別レーンへ移動
-            if (auto* fxFrom = getPoolInstance(fromRoute, typeIdx)) fxFrom->setActive(false);
-            fromIdxs.erase(it);
-
-            if (std::find(toIdxs.begin(), toIdxs.end(), typeIdx) == toIdxs.end())
-            {
-                if (auto* fxTo = getPoolInstance(toRoute, typeIdx))
-                {
-                    fxTo->setActive(true);
-                    toIdxs.push_back(typeIdx);
-                    currentSelectedFX = fxTo;
-                    selectedRoute     = toRoute;
-                    selectedIdx       = typeIdx;
-                }
-            }
-
-            processor.updateRouteOrder(fromRoute, fromIdxs);
-            processor.updateRouteOrder(toRoute,   toIdxs);
-        }
-
-        syncStates(transButtons,   transIndices);
-        syncStates(tonalButtons,   tonalIndices);
-        syncStates(fullMixButtons, fullMixIndices);
-        repaint();
-        sendChangeMessage();
-    }
-
-    // =========================================================================
     void paint(juce::Graphics& g) override
     {
-        g.fillAll(juce::Colour(0xff1e1e1e));
+        g.fillAll(juce::Colour(0xff1a1a1a));
 
         const int sh = getHeight() / 3;
         g.setColour(juce::Colours::white.withAlpha(0.06f));
@@ -242,47 +452,39 @@ public:
         g.drawText("TONAL",     6, sh+3,    getWidth()-8, 11, juce::Justification::left);
         g.setColour(juce::Colours::white.withAlpha(0.5f));
         g.drawText("FULL MIX",  6, sh*2+3,  getWidth()-8, 11, juce::Justification::left);
-
-        // 現在選択中のボタンに白枠インジケーター
-        if (selectedIdx >= 0 && selectedIdx < 6)
-        {
-            auto& btns = getButtons(selectedRoute);
-            if (btns[selectedIdx]->getToggleState())
-            {
-                g.setColour(juce::Colours::white.withAlpha(0.85f));
-                g.drawRoundedRectangle(
-                    btns[selectedIdx]->getBounds().toFloat().expanded(1.5f), 3.0f, 1.5f);
-            }
-        }
     }
 
     void resized() override
     {
-        const int sh    = getHeight() / 3;
-        const int padX  = 5;
-        const int padTop = 16;
-        const int gap   = 3;
-        const int btnH  = 18;
-        const int btnW  = (getWidth() - padX*2 - gap*2) / 3;
+        const int sh      = getHeight() / 3;
+        const int padX    = 5;
+        const int padTop  = 15;
+        const int gap     = 3;
+        const int btnH    = 18;
+        const int btnW    = (getWidth() - padX*2 - gap*2) / 3;
+        const int btnsEnd = padTop + 2 * (btnH + gap);   // ≈ 15+18+3+18=54 px
 
-        auto posGrid = [&](std::vector<std::unique_ptr<FxBtn>>& btns, int baseY)
+        auto posSection = [&](std::vector<std::unique_ptr<FxBtn>>& btns,
+                               ChipBar& bar, int baseY)
         {
             for (int i = 0; i < 6; ++i)
             {
-                const int col = i % 3, row = i / 3;
-                btns[i]->setBounds(padX + col*(btnW+gap),
-                                   baseY + padTop + row*(btnH+gap),
+                int col = i % 3, row = i / 3;
+                btns[i]->setBounds(padX + col * (btnW + gap),
+                                   baseY + padTop + row * (btnH + gap),
                                    btnW, btnH);
             }
+            int barY = baseY + btnsEnd + 4;
+            int barH = sh - btnsEnd - 7;
+            bar.setBounds(padX, barY, getWidth() - padX*2, barH);
         };
-        posGrid(transButtons,   0);
-        posGrid(tonalButtons,   sh);
-        posGrid(fullMixButtons, sh*2);
+
+        posSection(transButtons,   *transChipBar,   0);
+        posSection(tonalButtons,   *tonalChipBar,   sh);
+        posSection(fullMixButtons, *fullMixChipBar, sh*2);
     }
 
 private:
-    // =========================================================================
-    // クリック処理: OFF→追加+選択、ON→選択のみ
     // =========================================================================
     void handleButtonClick(TargetRoute route, int typeIdx)
     {
@@ -292,84 +494,38 @@ private:
 
         if (it == indices.end())
         {
-            // OFF → チェーンに追加
+            // OFF → チェーン追加
             indices.push_back(typeIdx);
             if (fxPtr) fxPtr->setActive(true);
         }
-        // ON でも OFF でも: 常にこのエフェクトを Dock 表示として選択
+        // 常に Dock 表示を更新 (ON のままキープ)
         currentSelectedFX = fxPtr;
-        selectedRoute     = route;
-        selectedIdx       = typeIdx;
 
         processor.updateRouteOrder(route, indices);
-        syncStates(transButtons,   transIndices);
-        syncStates(tonalButtons,   tonalIndices);
-        syncStates(fullMixButtons, fullMixIndices);
-        repaint();
+        syncBtnStates(transButtons,   transIndices);
+        syncBtnStates(tonalButtons,   tonalIndices);
+        syncBtnStates(fullMixButtons, fullMixIndices);
+        refreshAllChipBars();
         sendChangeMessage();
     }
 
-    // =========================================================================
-    // 右クリックメニュー: 削除 / 順序変更
-    // =========================================================================
-    void handleRightClick(TargetRoute route, int typeIdx)
+    void refreshAllChipBars()
     {
-        auto& indices = getIndices(route);
-        auto  it      = std::find(indices.begin(), indices.end(), typeIdx);
-        if (it == indices.end()) return;  // 未アクティブ → 何もしない
-
-        int pos = (int)(it - indices.begin());
-
-        juce::PopupMenu menu;
-        menu.addItem(1, "Remove from chain");
-        menu.addSeparator();
-        if (pos > 0)                             menu.addItem(2, "Move earlier in chain");
-        if (pos < (int)indices.size() - 1)       menu.addItem(3, "Move later in chain");
-
-        menu.showMenuAsync(juce::PopupMenu::Options{}, [this, route, typeIdx](int result)
+        int selFxIdx = -1;
+        if (currentSelectedFX)
         {
-            if (result == 0) return;
-
-            auto& idxs = getIndices(route);
-            auto  it2  = std::find(idxs.begin(), idxs.end(), typeIdx);
-            if (it2 == idxs.end()) return;
-
-            auto* fxPtr = getPoolInstance(route, typeIdx);
-
-            if (result == 1)  // Remove
-            {
-                idxs.erase(it2);
-                if (fxPtr) fxPtr->setActive(false);
-                if (currentSelectedFX == fxPtr)
-                {
-                    currentSelectedFX = nullptr;
-                    selectedIdx       = -1;
-                }
-            }
-            else if (result == 2)  // Move earlier
-            {
-                if (it2 != idxs.begin()) std::iter_swap(it2, it2 - 1);
-            }
-            else if (result == 3)  // Move later
-            {
-                auto next = std::next(it2);
-                if (next != idxs.end()) std::iter_swap(it2, next);
-            }
-
-            processor.updateRouteOrder(route, idxs);
-            syncStates(transButtons,   transIndices);
-            syncStates(tonalButtons,   tonalIndices);
-            syncStates(fullMixButtons, fullMixIndices);
-            repaint();
-            sendChangeMessage();
-        });
+            for (auto r : { TargetRoute::Transient, TargetRoute::Tonal, TargetRoute::FullMix })
+                for (int i = 0; i < 6; ++i)
+                    if (getPoolInstance(r, i) == currentSelectedFX)
+                        selFxIdx = i;
+        }
+        transChipBar->update(transIndices,    selFxIdx);
+        tonalChipBar->update(tonalIndices,    selFxIdx);
+        fullMixChipBar->update(fullMixIndices, selFxIdx);
     }
 
-    // =========================================================================
-    // ヘルパー
-    // =========================================================================
-    void syncStates(std::vector<std::unique_ptr<FxBtn>>& btns,
-                    const std::vector<int>& indices) noexcept
+    void syncBtnStates(std::vector<std::unique_ptr<FxBtn>>& btns,
+                       const std::vector<int>& indices) noexcept
     {
         for (int i = 0; i < 6; ++i)
         {
@@ -384,12 +540,6 @@ private:
                (r == TargetRoute::Tonal)     ? tonalIndices : fullMixIndices;
     }
 
-    std::vector<std::unique_ptr<FxBtn>>& getButtons(TargetRoute r) noexcept
-    {
-        return (r == TargetRoute::Transient) ? transButtons :
-               (r == TargetRoute::Tonal)     ? tonalButtons : fullMixButtons;
-    }
-
     AudioEffect* getPoolInstance(TargetRoute r, int idx) noexcept
     {
         return (r == TargetRoute::Transient) ? processor.getTransientPoolInstance(idx) :
@@ -397,29 +547,9 @@ private:
                                                processor.getFullMixPoolInstance(idx);
     }
 
-    static TargetRoute intToRoute(int i) noexcept
-    {
-        return (i == 0) ? TargetRoute::Transient :
-               (i == 1) ? TargetRoute::Tonal : TargetRoute::FullMix;
-    }
-
-    int getLaneForY(int y) const noexcept
-    {
-        const int sh = getHeight() / 3;
-        return (y < sh) ? 0 : (y < sh*2) ? 1 : 2;
-    }
-
-    int getSectionBaseY(int lane) const noexcept
-    {
-        return lane * (getHeight() / 3);
-    }
-
     // =========================================================================
     AnatomyAudioProcessor& processor;
-
     AudioEffect* currentSelectedFX = nullptr;
-    TargetRoute  selectedRoute     = TargetRoute::FullMix;
-    int          selectedIdx       = -1;
 
     std::vector<std::unique_ptr<FxBtn>> transButtons;
     std::vector<std::unique_ptr<FxBtn>> tonalButtons;
@@ -428,6 +558,10 @@ private:
     std::vector<int> transIndices;
     std::vector<int> tonalIndices;
     std::vector<int> fullMixIndices;
+
+    std::unique_ptr<ChipBar> transChipBar;
+    std::unique_ptr<ChipBar> tonalChipBar;
+    std::unique_ptr<ChipBar> fullMixChipBar;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EffectRackPanel)
 };
