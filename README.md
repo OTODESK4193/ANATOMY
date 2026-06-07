@@ -203,23 +203,6 @@ Comprehensive user manuals covering every control, effect parameter, stem export
 [ ![Manual Markdown (JP)](https://img.shields.io/badge/Manual-Markdown_(JP)-blue?style=for-the-badge&logo=markdown) ](Source/Assets/ANATOMY_UserManual_JP.md)
 [ ![Manual Markdown (EN)](https://img.shields.io/badge/Manual-Markdown_(EN)-blue?style=for-the-badge&logo=markdown) ](Source/Assets/ANATOMY_UserManual_EN.md)
 
-### Build Requirements
-
-To build from source, you need:
-
-* **JUCE** 8.0.x — place at `C:/JUCE` or update the path in `CMakeLists.txt`
-* **CMake** 3.24 or higher
-* **Visual Studio 2022** (MSVC, C++20)
-* **AVX2-capable CPU** (required for SIMD-optimized DSP)
-
-```bash
-git clone https://github.com/OTODESK4193/ANATOMY.git
-cd ANATOMY
-cmake -S . -B out/build/x64-Release -DCMAKE_BUILD_TYPE=Release
-cmake --build out/build/x64-Release --config Release
-```
-
-The built `.vst3` will appear in `out/build/x64-Release/ANATOMY_artefacts/Release/VST3/`.
 
 ---
 
