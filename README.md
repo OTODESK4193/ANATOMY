@@ -27,9 +27,12 @@
 
 ## Overview
 
-**ANATOMY** is a high-performance, open-source VST3 plugin that performs **real-time Transient/Tonal audio separation**, routing each component through its own independent multi-effect chain. Designed for drum processing, sound design, and stem-level mastering in Ableton Live, ANATOMY gives you surgical control over the *anatomy* of your sound — transient click, tonal sustain, and the full mix — each with a dedicated suite of 6 professional-grade effects.
+**ANATOMY** is a high-performance, open-source VST3 plugin that performs **real-time Transient/Tonal audio separation**, routing each component through its own independent multi-effect chain. ANATOMY gives you surgical control over the *anatomy* of your sound — transient click, tonal sustain, and the full mix — each with a dedicated suite of 6 professional-grade effects.
 
-Process each layer with **ADAA Saturation**, **BitCrusher**, **Noise Generator**, **OTT Multiband Compression**, **Glue Compressor**, and **Limiter** independently, then **drag finished stems directly into your DAW timeline** via one-click WAV export. ANATOMY is engineered for extreme real-time safety and Ableton Live stability.
+> ⚠️ **ANATOMY is a sound design tool — not a real-time mix insert.**
+> The intended workflow is: **shape your sound → export as WAV via EXPORT → load into a high-quality sampler** (Ableton Simpler / Sampler, Native Instruments Kontakt, etc.) for playback. It is not designed for continuous real-time processing on a live mix bus.
+
+Process each layer with **ADAA Saturation**, **BitCrusher**, **Noise Generator**, **OTT Multiband Compression**, **Glue Compressor**, and **Limiter** independently, then **export finished stems as WAV** and load them into your sampler of choice. ANATOMY is engineered for extreme real-time safety and Ableton Live stability.
 
 ## 🎬 Demo Videos
 
@@ -70,9 +73,9 @@ Every lane has access to the same 6 professional-grade DSP modules. Effects are 
 
 The Effect Rack displays active effects as a **vertically ordered chip list** showing the exact processing chain. Simply drag chips up or down to rearrange the processing order in real time — no menus, no guessing. Right-click any chip for **Remove**, **Move Up**, or **Move Down** options.
 
-### 📤 One-Click Stem Export
+### 📤 One-Click Stem Export → Sampler Ready
 
-Each lane has a dedicated **EXPORT** button. Press once to record the next note/clip playback, then **drag the rendered WAV directly into your Ableton Live timeline** — or any folder on your desktop. Zero plugin freezing, zero rendering dialogs.
+Each lane has a dedicated **EXPORT** button. Press once to record the next playback, then **drag the rendered WAV into a sampler** (Ableton Simpler / Sampler, Kontakt, etc.) for instant playback and further use. This export-to-sampler workflow is the core intended use of ANATOMY. Zero plugin freezing, zero rendering dialogs.
 
 ### 🎨 Real-Time Waveform Visualization
 
@@ -193,6 +196,33 @@ Stereo Input (L/R)
 
 ---
 
+## 📚 User Guide
+
+Comprehensive user manuals covering every control, effect parameter, stem export workflow, and advanced techniques are included in this repository.
+
+[ ![Manual Markdown (JP)](https://img.shields.io/badge/Manual-Markdown_(JP)-blue?style=for-the-badge&logo=markdown) ](Source/Assets/ANATOMY_UserManual_JP.md)
+[ ![Manual Markdown (EN)](https://img.shields.io/badge/Manual-Markdown_(EN)-blue?style=for-the-badge&logo=markdown) ](Source/Assets/ANATOMY_UserManual_EN.md)
+
+### Build Requirements
+
+To build from source, you need:
+
+* **JUCE** 8.0.x — place at `C:/JUCE` or update the path in `CMakeLists.txt`
+* **CMake** 3.24 or higher
+* **Visual Studio 2022** (MSVC, C++20)
+* **AVX2-capable CPU** (required for SIMD-optimized DSP)
+
+```bash
+git clone https://github.com/OTODESK4193/ANATOMY.git
+cd ANATOMY
+cmake -S . -B out/build/x64-Release -DCMAKE_BUILD_TYPE=Release
+cmake --build out/build/x64-Release --config Release
+```
+
+The built `.vst3` will appear in `out/build/x64-Release/ANATOMY_artefacts/Release/VST3/`.
+
+---
+
 ## Installation
 
 ### VST3 Plugin Installation
@@ -203,8 +233,6 @@ Stereo Input (L/R)
    C:\Program Files\Common Files\VST3\
    ```
 3. Rescan plugins in Ableton Live (or your DAW of choice).
-
----
 
 ---
 
