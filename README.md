@@ -78,14 +78,6 @@ Each lane has a dedicated **EXPORT** button. Press once to record the next note/
 
 Three high-resolution waveform displays (FULL MIX / TRANSIENT / TONAL) update in real time as audio plays. A **BEFORE** button allows instant A/B comparison against the unprocessed signal.
 
-### 🔊 Professional Audio Architecture
-
-* **Zero heap allocation on audio thread** — all buffers pre-allocated in `prepareToPlay()`
-* **Lock-free SPSC queues** for UI→audio parameter communication
-* **`juce::ScopedNoDenormals`** applied at every `processBlock` entry
-* **`juce::SmoothedValue`** on all gain parameters to eliminate zipper noise
-* Full **Ableton Live** compatibility with VST3 parameter sync and safe destructor ordering
-
 ---
 
 ## 🖥️ Signal Flow
@@ -212,38 +204,14 @@ Stereo Input (L/R)
    ```
 3. Rescan plugins in Ableton Live (or your DAW of choice).
 
-### Standalone Application
-
-A standalone executable is also provided. Run `ANATOMY.exe` directly — no DAW required.
-
 ---
-
-## Build from Source
-
-### Requirements
-
-* **JUCE** 8.0.x — place at `C:/JUCE` or update the path in `CMakeLists.txt`
-* **CMake** 3.24 or higher
-* **Visual Studio 2022** (MSVC, C++20)
-* **AVX2-capable CPU** (required for SIMD-optimized DSP)
-
-### Build Steps
-
-```bash
-git clone https://github.com/OTODESK4193/ANATOMY.git
-cd ANATOMY
-cmake -S . -B out/build/x64-Release -DCMAKE_BUILD_TYPE=Release
-cmake --build out/build/x64-Release --config Release
-```
-
-The built `.vst3` will appear in `out/build/x64-Release/ANATOMY_artefacts/Release/VST3/`.
 
 ---
 
 ## System Requirements
 
 * **OS:** Windows 10 / Windows 11 (64-bit)
-* **Format:** VST3 / Standalone
+* **Format:** VST3 
 * **CPU:** AVX2 support required (Intel Haswell 2013+ / AMD Ryzen 2017+)
 * **RAM:** 256 MB minimum
 * **Disk:** 50 MB
@@ -254,17 +222,6 @@ The built `.vst3` will appear in `out/build/x64-Release/ANATOMY_artefacts/Releas
 
 ## Technical Architecture
 
-### Real-Time Safety
-
-ANATOMY adheres to the strictest real-time audio thread constraints:
-
-* **Zero Heap Allocation on Audio Thread** — all buffers pre-allocated in `prepareToPlay()`. No `new`, `malloc`, or `std::vector::push_back` in `processBlock()`.
-* **Lock-Free Thread Communication** — `juce::AbstractFifo`-based SPSC queues and `std::atomic` for all UI→audio data transfer.
-* **Sample Rate Guard** — `processBlock` validates the current sample rate against the initialized rate on every callback; mismatches trigger an immediate safe re-initialization (Ableton Live protection).
-* **Buffer Zero-Clear** — explicit `juce::FloatVectorOperations::clear` on every buffer resize regardless of whether size changed, preventing residual data click artifacts.
-* **`ScopedNoDenormals`** — applied at the top of every `processBlock` call to suppress denormal-induced CPU spikes.
-* **`juce::SmoothedValue`** — all gain and mix parameters are sample-accurate interpolated to eliminate zipper noise under automation.
-* **Safe Destructor Ordering** — `AudioProcessorEditor` explicitly calls `stopTimer()` and `removeAllChildren()` in its destructor to survive Ableton Live's non-standard plugin removal sequence.
 
 ### DSP Modules
 
@@ -327,12 +284,6 @@ This project is free and open-source, distributed under the **GPLv3 License** (i
 **Target DAW:** Ableton Live 11 / 12
 
 **Framework:** JUCE 8.0.x
-
-**DSP References:**
-- Zavalishin — *"The Art of VA Filter Design"* (2018)
-- Parker & Bilbao — *"Field of a Hamiltonian Tonebender"*, DAFx (2013)
-- Esqueda, Välimäki & Pekonen — *"Aliasing Reduction in Clipped Signals"*, IEEE (2016)
-- Germain & Kronland-Martinet — *"Multiband Compression in the Perceptual Domain"* (2006)
 
 ---
 
