@@ -340,14 +340,10 @@ void HpssSeparator::performSeparation(
         }
 
         // 逆FFT → 時間領域信号
+        // ★ JUCE FFT の逆変換は 1/N 正規化を行わない（IFFT(FFT(x)) = N*x）
+        //   N倍の振幅膨張は最終出力時に一括で補正する（下記 Phase 4 参照）
         fft->performRealOnlyInverseTransform(transFftBuf.data());
         fft->performRealOnlyInverseTransform(tonalFftBuf.data());
-
-        // ★ JUCE FFT の逆変換は 1/N 正規化を行わない（IFFT(FFT(x)) = N*x）
-        //   これを補正しないと fftSize 倍（2048→+66dB）の振幅膨張が発生する
-        const float invN = 1.0f / static_cast<float>(fftSize);
-        juce::FloatVectorOperations::multiply(transFftBuf.data(), invN, fftSize);
-        juce::FloatVectorOperations::multiply(tonalFftBuf.data(), invN, fftSize);
 
         // Overlap-Add: 合成窓（解析窓と同一の Hann 窓）を適用して累積
         const int offset = frame * hopSize;
