@@ -103,7 +103,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalMixGain", 1 }, "Tonal Mix Gain (dB)", -60.0f, 6.0f, 0.0f));
 
     // Tonal の再生開始位置を前後にずらす（負=前、正=後ろ）
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalDelay", 1 }, "Tonal Offset (ms)", -500.0f, 500.0f, 0.0f));
+    // symmetricSkew=true, skew=0.3 → ±50ms付近がスライダー中央の広い範囲を占め微調整しやすい
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{ "tonalDelay", 1 }, "Tonal Offset (ms)",
+        juce::NormalisableRange<float>(-500.0f, 500.0f, 0.1f, 0.3f, true),
+        0.0f));
 
     juce::StringArray prefixes{ "trans", "tonal", "full" };
     for (const auto& pre : prefixes)
