@@ -947,9 +947,9 @@ void AnatomyAudioProcessor::run()
 
 void AnatomyAudioProcessor::setSoloMode(int mode)
 {
-    if (currentSoloMode != mode)
+    if (currentSoloMode.load(std::memory_order_acquire) != mode)
     {
-        currentSoloMode = mode;
+        currentSoloMode.store(mode, std::memory_order_release);
         updateActiveSampleData();
         offlineMixRenderer.triggerRender();
     }

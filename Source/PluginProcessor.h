@@ -62,7 +62,7 @@ public:
     bool isCurrentlyProcessing() const { return isThreadRunning() || needsReanalysis.load(std::memory_order_acquire); }
     float getHpssProgress() const { return separator.getProgress(); }
 
-    int getSoloMode() const { return currentSoloMode; }
+    int getSoloMode() const { return currentSoloMode.load(std::memory_order_acquire); }
     void setSoloMode(int mode);
 
     void getCallbackBuffersSecure(juce::AudioBuffer<float>& transDest, juce::AudioBuffer<float>& tonalDest)
@@ -168,7 +168,7 @@ private:
     juce::AudioBuffer<float> transBufferUI;
     juce::AudioBuffer<float> tonalBufferUI;
 
-    int currentSoloMode = 0;
+    std::atomic<int> currentSoloMode{ 0 };
 
     // ⑥ ジッパーノイズ防止: ミックスゲインのサンプル精度スムージング
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedTransGain { 1.0f };
