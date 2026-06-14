@@ -12,7 +12,7 @@
 
 namespace ExportRecordingCore
 {
-    enum class State { Idle, Request, Recording, Ready };
+    enum class State { Idle, Request, Recording, PendingWrite, Ready };
     struct Lane {
         std::atomic<State> state{ State::Idle };
         juce::AudioBuffer<float> buffer;
@@ -101,8 +101,9 @@ public:
 
         if (s == ExportRecordingCore::State::Ready)
             g.setColour(juce::Colour::fromRGB(0, 180, 100)); // Drag OK (Green)
-        else if (s == ExportRecordingCore::State::Request || s == ExportRecordingCore::State::Recording)
-            g.setColour(juce::Colour::fromRGB(220, 130, 0)); // Recording (Orange)
+        else if (s == ExportRecordingCore::State::Request || s == ExportRecordingCore::State::Recording
+                 || s == ExportRecordingCore::State::PendingWrite)
+            g.setColour(juce::Colour::fromRGB(220, 130, 0)); // Recording/Writing (Orange)
         else
             g.setColour(juce::Colour(0xff3a3a3a));           // Ableton風フラットグレー
 
@@ -113,7 +114,8 @@ public:
         g.setColour(juce::Colours::white);
         g.setFont(juce::Font(10.0f, juce::Font::bold));
 
-        if (s == ExportRecordingCore::State::Request || s == ExportRecordingCore::State::Recording)
+        if (s == ExportRecordingCore::State::Request || s == ExportRecordingCore::State::Recording
+            || s == ExportRecordingCore::State::PendingWrite)
             g.drawText("RECORDING...", getLocalBounds(), juce::Justification::centred);
         else if (s == ExportRecordingCore::State::Ready)
             g.drawText("DRAG OK!", getLocalBounds(), juce::Justification::centred);

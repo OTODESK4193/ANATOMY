@@ -3,16 +3,20 @@
 #include "AudioEffect.h"
 #include <cmath>
 #include <algorithm>
-#include <random>
+#include <cstdint>
 
 /**
  * BitCrusher
  * ビットリダクション、ダウンサンプリング、時間軸ジッターを内包したグリッチモジュール。
+ *
+ * RT安全設計:
+ *   std::mt19937 / std::random_device はシステムコールやメモリ確保を行う可能性があるため、
+ *   オーディオスレッドでは使用不可。xorshift32 による決定論的PRNGに置換。
  */
 class BitCrusher final : public AudioEffect
 {
 public:
-    BitCrusher() : rd(), gen(rd()), dis(-1.0f, 1.0f) {}
+    BitCrusher() = default;
     ~BitCrusher() override = default;
 
     void prepare(double sampleRate, int /*maxBlockSize*/) override
@@ -54,7 +58,7 @@ public:
                 float input = channelData[s];
                 float processed = input;
 
-                float noiseComponent = dis(gen) * jitter * (baseDownsample * 0.5f);
+                float noiseComponent = nextRandomBipolar() * jitter * (baseDownsample * 0.5f);
                 int dynamicFactor = std::max(1, static_cast<int>(std::round(baseDownsample + noiseComponent)));
 
                 if (count % dynamicFactor == 0)
@@ -110,9 +114,17 @@ private:
     float lastSample[2] = { 0.0f, 0.0f };
     int holdCounter[2] = { 0, 0 };
 
-    std::random_device rd;
-    std::mt19937 gen;
-    std::uniform_real_distribution<float> dis;
+    // RT安全な xorshift32 PRNG（メモリ確保・システムコール一切なし）
+    uint32_t rngState = 0x12345678u;
+
+    float nextRandomBipolar() noexcept
+    {
+        rngState ^= rngState << 13;
+        rngState ^= rngState >> 17;
+        rngState ^= rngState << 5;
+        // [0, 1) → [-1, 1)
+        return (static_cast<float>(rngState) / static_cast<float>(0xFFFFFFFFu)) * 2.0f - 1.0f;
+    }
 
     float currentBits = 8.0f;
     float currentDownsample = 4.0f;

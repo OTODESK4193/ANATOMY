@@ -257,6 +257,7 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
 void AnatomyAudioProcessorEditor::timerCallback()
 {
     audioProcessor.handleAsyncReanalysis();
+    audioProcessor.flushPendingExports();
 
     effectRackPanel.updateCardSlidersFromParameters();
     parameterDockPanel.synchronizeSlidersFromParameters();

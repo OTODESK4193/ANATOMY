@@ -48,6 +48,8 @@ AnatomyAudioProcessor::AnatomyAudioProcessor()
     instantiatePool(tonalPool, TargetRoute::Tonal);
     instantiatePool(fullMixPool, TargetRoute::FullMix);
 
+    initParamCache();
+
     apvts.addParameterListener("clickLength", this);
     apvts.addParameterListener("clickCurve", this);
 
@@ -175,63 +177,124 @@ void AnatomyAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     transientChain.prepare(sampleRate, safetyBufferSize);
     tonalChain.prepare(sampleRate, safetyBufferSize);
     fullMixChain.prepare(sampleRate, safetyBufferSize);
+
+    // SmoothedValue: ~5ms のランプタイムでジッパーノイズを排除
+    smoothedTransGain.reset(sampleRate, 0.005);
+    smoothedTonalGain.reset(sampleRate, 0.005);
 }
 
 void AnatomyAudioProcessor::releaseResources() {}
 
+void AnatomyAudioProcessor::initParamCache()
+{
+    // エフェクト型ポインタとAPVTSパラメータポインタを一括キャッシュ。
+    // コンストラクタで1回だけ呼ばれ、processBlock毎のdynamic_cast/ハッシュ検索を完全排除。
+    std::unique_ptr<AudioEffect>* pools[3] = { transientPool, tonalPool, fullMixPool };
+    const juce::String prefixes[3] = { "trans", "tonal", "full" };
+    const juce::String bandNames[3] = { "Low", "Mid", "High" };
+
+    for (int i = 0; i < 3; ++i)
+    {
+        auto& c = cachedLanes[i];
+        const auto& pre = prefixes[i];
+        auto* pool = pools[i];
+
+        c.sat  = static_cast<ADAA_Saturation*>(pool[0].get());
+        c.bc   = static_cast<BitCrusher*>(pool[1].get());
+        c.ns   = static_cast<NoiseGenerator*>(pool[2].get());
+        c.ott  = static_cast<OTT_Multiband*>(pool[3].get());
+        c.glue = static_cast<GlueCompressor*>(pool[4].get());
+        c.lim  = static_cast<Limiter*>(pool[5].get());
+
+        c.satDrive = apvts.getRawParameterValue(pre + "SatDrive");
+        c.satMix   = apvts.getRawParameterValue(pre + "SatMix");
+        c.satAsym  = apvts.getRawParameterValue(pre + "SatAsym");
+        c.satTrim  = apvts.getRawParameterValue(pre + "SatTrim");
+        c.satPre   = apvts.getRawParameterValue(pre + "SatPre");
+
+        c.bcBits   = apvts.getRawParameterValue(pre + "BcBits");
+        c.bcDown   = apvts.getRawParameterValue(pre + "BcDown");
+        c.bcMix    = apvts.getRawParameterValue(pre + "BcMix");
+        c.bcJitter = apvts.getRawParameterValue(pre + "BcJitter");
+
+        c.nsDecay  = apvts.getRawParameterValue(pre + "NsDecay");
+        c.nsMix    = apvts.getRawParameterValue(pre + "NsMix");
+        c.nsType   = apvts.getRawParameterValue(pre + "NsType");
+        c.nsGain   = apvts.getRawParameterValue(pre + "NsGain");
+        c.nsAttack = apvts.getRawParameterValue(pre + "NsAttack");
+        c.nsBpFreq = apvts.getRawParameterValue(pre + "NsBpFreq");
+
+        c.ottDepth      = apvts.getRawParameterValue(pre + "OttDepth");
+        c.ottTime       = apvts.getRawParameterValue(pre + "OttTime");
+        c.ottLowMidXOver = apvts.getRawParameterValue(pre + "OttLowMidXOver");
+        c.ottMidHighXOver = apvts.getRawParameterValue(pre + "OttMidHighXOver");
+        c.ottGateFloor  = apvts.getRawParameterValue(pre + "OttGateFloor");
+        for (int b = 0; b < 3; ++b)
+        {
+            c.ottBandUp[b]   = apvts.getRawParameterValue(pre + "Ott" + bandNames[b] + "Up");
+            c.ottBandDown[b] = apvts.getRawParameterValue(pre + "Ott" + bandNames[b] + "Down");
+            c.ottBandGain[b] = apvts.getRawParameterValue(pre + "Ott" + bandNames[b] + "Gain");
+        }
+
+        c.glueDepth = apvts.getRawParameterValue(pre + "GlueDepth");
+        c.glueThr   = apvts.getRawParameterValue(pre + "GlueThr");
+        c.glueRatio = apvts.getRawParameterValue(pre + "GlueRatio");
+        c.glueAtk   = apvts.getRawParameterValue(pre + "GlueAtk");
+        c.glueRel   = apvts.getRawParameterValue(pre + "GlueRel");
+        c.glueMkp   = apvts.getRawParameterValue(pre + "GlueMkp");
+
+        c.limCeil = apvts.getRawParameterValue(pre + "LimCeil");
+        c.limMix  = apvts.getRawParameterValue(pre + "LimMix");
+    }
+}
+
 void AnatomyAudioProcessor::synchronizePoolParameters() noexcept
 {
-    auto syncLane = [this](std::unique_ptr<AudioEffect>* pool, const juce::String& pre) noexcept {
-        if (auto* sat = dynamic_cast<ADAA_Saturation*>(pool[0].get())) {
-            sat->setDrive(apvts.getRawParameterValue(pre + "SatDrive")->load());
-            sat->setMix(apvts.getRawParameterValue(pre + "SatMix")->load());
-            sat->setAsymmetry(apvts.getRawParameterValue(pre + "SatAsym")->load());
-            sat->setOutputTrimDb(apvts.getRawParameterValue(pre + "SatTrim")->load());
-            sat->setPreCutoffHz(apvts.getRawParameterValue(pre + "SatPre")->load());
+    // キャッシュ済みポインタからの直接ロード。dynamic_cast・ハッシュ検索ゼロ。
+    for (int i = 0; i < 3; ++i)
+    {
+        const auto& c = cachedLanes[i];
+
+        c.sat->setDrive(c.satDrive->load());
+        c.sat->setMix(c.satMix->load());
+        c.sat->setAsymmetry(c.satAsym->load());
+        c.sat->setOutputTrimDb(c.satTrim->load());
+        c.sat->setPreCutoffHz(c.satPre->load());
+
+        c.bc->setBits(c.bcBits->load());
+        c.bc->setDownsample(c.bcDown->load());
+        c.bc->setMix(c.bcMix->load());
+        c.bc->setJitter(c.bcJitter->load());
+
+        c.ns->setDecay(c.nsDecay->load());
+        c.ns->setMix(c.nsMix->load());
+        c.ns->setNoiseType(static_cast<int>(c.nsType->load()));
+        c.ns->setGainDb(c.nsGain->load());
+        c.ns->setAttack(c.nsAttack->load());
+        c.ns->setBpCenterHz(c.nsBpFreq->load());
+
+        c.ott->setMix(c.ottDepth->load());
+        c.ott->setTimeMultiplier(c.ottTime->load());
+        c.ott->setLowMidXOver(c.ottLowMidXOver->load());
+        c.ott->setMidHighXOver(c.ottMidHighXOver->load());
+        c.ott->setGateFloorDb(c.ottGateFloor->load());
+        for (int b = 0; b < 3; ++b)
+        {
+            c.ott->setBandUpward(b, c.ottBandUp[b]->load());
+            c.ott->setBandDownward(b, c.ottBandDown[b]->load());
+            c.ott->setBandGainDb(b, c.ottBandGain[b]->load());
         }
-        if (auto* bc = dynamic_cast<BitCrusher*>(pool[1].get())) {
-            bc->setBits(apvts.getRawParameterValue(pre + "BcBits")->load());
-            bc->setDownsample(apvts.getRawParameterValue(pre + "BcDown")->load());
-            bc->setMix(apvts.getRawParameterValue(pre + "BcMix")->load());
-            bc->setJitter(apvts.getRawParameterValue(pre + "BcJitter")->load());
-        }
-        if (auto* ns = dynamic_cast<NoiseGenerator*>(pool[2].get())) {
-            ns->setDecay(apvts.getRawParameterValue(pre + "NsDecay")->load());
-            ns->setMix(apvts.getRawParameterValue(pre + "NsMix")->load());
-            ns->setNoiseType(static_cast<int>(apvts.getRawParameterValue(pre + "NsType")->load()));
-            ns->setGainDb(apvts.getRawParameterValue(pre + "NsGain")->load());
-            ns->setAttack(apvts.getRawParameterValue(pre + "NsAttack")->load());
-            ns->setBpCenterHz(apvts.getRawParameterValue(pre + "NsBpFreq")->load());
-        }
-        if (auto* ott = dynamic_cast<OTT_Multiband*>(pool[3].get())) {
-            ott->setMix(apvts.getRawParameterValue(pre + "OttDepth")->load());
-            ott->setTimeMultiplier(apvts.getRawParameterValue(pre + "OttTime")->load());
-            ott->setLowMidXOver(apvts.getRawParameterValue(pre + "OttLowMidXOver")->load());
-            ott->setMidHighXOver(apvts.getRawParameterValue(pre + "OttMidHighXOver")->load());
-            ott->setGateFloorDb(apvts.getRawParameterValue(pre + "OttGateFloor")->load());
-            for (int b = 0; b < 3; ++b) {
-                juce::String bName = (b == 0) ? "Low" : ((b == 1) ? "Mid" : "High");
-                ott->setBandUpward(b, apvts.getRawParameterValue(pre + "Ott" + bName + "Up")->load());
-                ott->setBandDownward(b, apvts.getRawParameterValue(pre + "Ott" + bName + "Down")->load());
-                ott->setBandGainDb(b, apvts.getRawParameterValue(pre + "Ott" + bName + "Gain")->load());
-            }
-        }
-        if (auto* glue = dynamic_cast<GlueCompressor*>(pool[4].get())) {
-            glue->setMix(apvts.getRawParameterValue(pre + "GlueDepth")->load());
-            glue->setThresholdDb(apvts.getRawParameterValue(pre + "GlueThr")->load());
-            glue->setRatio(apvts.getRawParameterValue(pre + "GlueRatio")->load());
-            glue->setAttackMs(apvts.getRawParameterValue(pre + "GlueAtk")->load());
-            glue->setReleaseMs(apvts.getRawParameterValue(pre + "GlueRel")->load());
-            glue->setMakeupDb(apvts.getRawParameterValue(pre + "GlueMkp")->load());
-        }
-        if (auto* lim = dynamic_cast<Limiter*>(pool[5].get())) {
-            lim->setCeiling(apvts.getRawParameterValue(pre + "LimCeil")->load());
-            lim->setMix(apvts.getRawParameterValue(pre + "LimMix")->load());
-        }
-        };
-    syncLane(transientPool, "trans");
-    syncLane(tonalPool, "tonal");
-    syncLane(fullMixPool, "full");
+
+        c.glue->setMix(c.glueDepth->load());
+        c.glue->setThresholdDb(c.glueThr->load());
+        c.glue->setRatio(c.glueRatio->load());
+        c.glue->setAttackMs(c.glueAtk->load());
+        c.glue->setReleaseMs(c.glueRel->load());
+        c.glue->setMakeupDb(c.glueMkp->load());
+
+        c.lim->setCeiling(c.limCeil->load());
+        c.lim->setMix(c.limMix->load());
+    }
 }
 
 void AnatomyAudioProcessor::updateRouteOrder(TargetRoute route, const std::vector<int>& activeEffectIndices)
@@ -502,15 +565,24 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     transientChain.process(transientBlockBuffer);
     tonalChain.process(tonalBlockBuffer);
 
-    const float transLinearGain = (currentSoloMode == 2) ? 0.0f : std::pow(10.0f, apvts.getRawParameterValue("transMixGain")->load() / 20.0f);
-    const float tonalLinearGain = (currentSoloMode == 1) ? 0.0f : std::pow(10.0f, apvts.getRawParameterValue("tonalMixGain")->load() / 20.0f);
-
-    for (int sample = 0; sample < numSamples; ++sample)
+    // ⑥ SmoothedValue によるジッパーノイズ防止
     {
-        outL[sample] = (transL[sample] * transLinearGain) + (tonalL[sample] * tonalLinearGain);
-        if (outR != nullptr && transR != nullptr && tonalR != nullptr)
+        const float transTargetGain = (currentSoloMode == 2) ? 0.0f : std::pow(10.0f, apvts.getRawParameterValue("transMixGain")->load() / 20.0f);
+        const float tonalTargetGain = (currentSoloMode == 1) ? 0.0f : std::pow(10.0f, apvts.getRawParameterValue("tonalMixGain")->load() / 20.0f);
+
+        smoothedTransGain.setTargetValue(transTargetGain);
+        smoothedTonalGain.setTargetValue(tonalTargetGain);
+
+        for (int sample = 0; sample < numSamples; ++sample)
         {
-            outR[sample] = (transR[sample] * transLinearGain) + (tonalR[sample] * tonalLinearGain);
+            const float tg = smoothedTransGain.getNextValue();
+            const float ng = smoothedTonalGain.getNextValue();
+
+            outL[sample] = (transL[sample] * tg) + (tonalL[sample] * ng);
+            if (outR != nullptr && transR != nullptr && tonalR != nullptr)
+            {
+                outR[sample] = (transR[sample] * tg) + (tonalR[sample] * ng);
+            }
         }
     }
 
@@ -569,28 +641,9 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
             if (shouldStop)
             {
-                juce::File tempDir = juce::File::getSpecialLocation(juce::File::SpecialLocationType::tempDirectory);
-                ExportRecordingCore::lanes[l].file = tempDir.getChildFile("ANATOMY_Export_" + juce::String(juce::Random::getSystemRandom().nextInt64()) + ".wav");
-
-                int finalLength = ExportRecordingCore::lanes[l].writePos;
-                juce::AudioBuffer<float> trimmed(2, finalLength);
-                for (int ch = 0; ch < 2; ++ch)
-                    trimmed.copyFrom(ch, 0, ExportRecordingCore::lanes[l].buffer, ch, 0, finalLength);
-
-                juce::WavAudioFormat wavFormat;
-                std::unique_ptr<juce::AudioFormatWriter> writer(wavFormat.createWriterFor(
-                    new juce::FileOutputStream(ExportRecordingCore::lanes[l].file), currentSampleRate, 2, 24, {}, 0));
-
-                if (writer != nullptr)
-                {
-                    writer->writeFromAudioSampleBuffer(trimmed, 0, finalLength);
-                    writer.reset();
-                    ExportRecordingCore::lanes[l].state.store(ExportRecordingCore::State::Ready);
-                }
-                else
-                {
-                    ExportRecordingCore::lanes[l].state.store(ExportRecordingCore::State::Idle);
-                }
+                // RT安全: ファイルI/Oをオーディオスレッドから排除。
+                // PendingWrite に遷移し、メッセージスレッド（timerCallback）で書き出す。
+                ExportRecordingCore::lanes[l].state.store(ExportRecordingCore::State::PendingWrite);
             }
         }
     }
@@ -928,6 +981,41 @@ void AnatomyAudioProcessor::cleanUpGarbageBin()
     }
     for (auto* oldFxSnapshot : fxGarbageBin) if (oldFxSnapshot != nullptr) delete oldFxSnapshot;
     fxGarbageBin.clear();
+}
+
+void AnatomyAudioProcessor::flushPendingExports()
+{
+    // メッセージスレッドから呼ばれる。PendingWrite状態のレーンをWAVに書き出す。
+    for (int l = 0; l < 3; ++l)
+    {
+        if (ExportRecordingCore::lanes[l].state.load() != ExportRecordingCore::State::PendingWrite)
+            continue;
+
+        juce::File tempDir = juce::File::getSpecialLocation(juce::File::SpecialLocationType::tempDirectory);
+        ExportRecordingCore::lanes[l].file = tempDir.getChildFile(
+            "ANATOMY_Export_" + juce::String(juce::Random::getSystemRandom().nextInt64()) + ".wav");
+
+        int finalLength = ExportRecordingCore::lanes[l].writePos;
+        juce::AudioBuffer<float> trimmed(2, finalLength);
+        for (int ch = 0; ch < 2; ++ch)
+            trimmed.copyFrom(ch, 0, ExportRecordingCore::lanes[l].buffer, ch, 0, finalLength);
+
+        juce::WavAudioFormat wavFormat;
+        std::unique_ptr<juce::AudioFormatWriter> writer(wavFormat.createWriterFor(
+            new juce::FileOutputStream(ExportRecordingCore::lanes[l].file),
+            currentSampleRate, 2, 24, {}, 0));
+
+        if (writer != nullptr)
+        {
+            writer->writeFromAudioSampleBuffer(trimmed, 0, finalLength);
+            writer.reset();
+            ExportRecordingCore::lanes[l].state.store(ExportRecordingCore::State::Ready);
+        }
+        else
+        {
+            ExportRecordingCore::lanes[l].state.store(ExportRecordingCore::State::Idle);
+        }
+    }
 }
 
 juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)

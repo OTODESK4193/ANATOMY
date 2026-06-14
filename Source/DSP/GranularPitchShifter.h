@@ -12,6 +12,39 @@
  */
 class GranularPitchShifter
 {
+    /**
+     * Hermite 4点補間（3次）
+     * 線形補間に比べ高周波のエイリアシングを大幅に低減。
+     * 4点 (y[-1], y[0], y[1], y[2]) から t ∈ [0,1) の位置を補間。
+     */
+    static float hermiteInterp(float ym1, float y0, float y1, float y2, float t) noexcept
+    {
+        const float c0 = y0;
+        const float c1 = 0.5f * (y1 - ym1);
+        const float c2 = ym1 - 2.5f * y0 + 2.0f * y1 - 0.5f * y2;
+        const float c3 = 0.5f * (y2 - ym1) + 1.5f * (y0 - y1);
+        return ((c3 * t + c2) * t + c1) * t + c0;
+    }
+
+    /**
+     * ソースバッファからHermite補間で読み出し。
+     * 境界はクランプで安全に処理。
+     */
+    static float readHermite(const float* src, int maxSamples, float srcPos) noexcept
+    {
+        if (srcPos < 0.0f) srcPos = 0.0f;
+        if (srcPos >= static_cast<float>(maxSamples - 1)) srcPos = static_cast<float>(maxSamples - 1) - 0.0001f;
+
+        int idx0 = static_cast<int>(srcPos);
+        float frac = srcPos - static_cast<float>(idx0);
+
+        int idxM1 = std::max(0, idx0 - 1);
+        int idx1  = std::min(idx0 + 1, maxSamples - 1);
+        int idx2  = std::min(idx0 + 2, maxSamples - 1);
+
+        return hermiteInterp(src[idxM1], src[idx0], src[idx1], src[idx2], frac);
+    }
+
 public:
     GranularPitchShifter()
     {
@@ -71,15 +104,10 @@ public:
         if (isTransientMode)
         {
             float srcPos = static_cast<float>(currentTimelineIdx) * scaleFactor;
-
             if (srcPos < 0.0f) srcPos = 0.0f;
             if (srcPos >= static_cast<float>(maxSamples - 1)) return 0.0f;
 
-            int idx0 = static_cast<int>(srcPos);
-            int idx1 = std::min(idx0 + 1, maxSamples - 1);
-            float frac = srcPos - static_cast<float>(idx0);
-
-            return src[idx0] + frac * (src[idx1] - src[idx0]);
+            return readHermite(src, maxSamples, srcPos);
         }
 
         // ==============================================================================
@@ -110,23 +138,9 @@ public:
         float weightA = getHannWeight(tapAPhase);
         float weightB = getHannWeight(tapBPhase);
 
-        // 2つの波形位置から高品質に線形補間読み出し
-        auto readSourceInterpolated = [src, maxSamples, currentTimelineIdx](float delay) noexcept -> float
-            {
-                float srcPos = static_cast<float>(currentTimelineIdx) - delay;
-
-                if (srcPos < 0.0f) srcPos = 0.0f;
-                if (srcPos >= static_cast<float>(maxSamples - 1)) srcPos = static_cast<float>(maxSamples - 1);
-
-                int idx0 = static_cast<int>(srcPos);
-                int idx1 = std::min(idx0 + 1, maxSamples - 1);
-                float frac = srcPos - static_cast<float>(idx0);
-
-                return src[idx0] + frac * (src[idx1] - src[idx0]);
-            };
-
-        float sampleA = readSourceInterpolated(delayA);
-        float sampleB = readSourceInterpolated(delayB);
+        // 2つの波形位置からHermite 4点補間で高品質に読み出し
+        float sampleA = readHermite(src, maxSamples, static_cast<float>(currentTimelineIdx) - delayA);
+        float sampleB = readHermite(src, maxSamples, static_cast<float>(currentTimelineIdx) - delayB);
 
         // 重ね合わせ（Overlap-Add）して滑らかに出力
         return (sampleA * weightA) + (sampleB * weightB);

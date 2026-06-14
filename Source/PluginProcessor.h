@@ -13,6 +13,12 @@
 #include "DSP/TonalReplacer.h"
 #include "DSP/Effects/AudioEffect.h"
 #include "DSP/Effects/EffectChain.h"
+#include "DSP/Effects/ADAA_Saturation.h"
+#include "DSP/Effects/BitCrusher.h"
+#include "DSP/Effects/NoiseGenerator.h"
+#include "DSP/Effects/OTT_Multiband.h"
+#include "DSP/Effects/GlueCompressor.h"
+#include "DSP/Effects/Limiter.h"
 #include "DSP/BeforeAfterBypasser.h"
 #include "DSP/OfflineMixRenderer.h"
 
@@ -83,6 +89,7 @@ public:
     float tonalStartOffsetMs = 0.0f;
     float tonalEndOffsetMs = 0.0f;
 
+    void flushPendingExports();
     juce::File createTemporaryWavForExport(int laneIndex);
     void setOffsetsFromUI(bool isTransient, float startMs, float endMs) noexcept;
 
@@ -163,9 +170,66 @@ private:
 
     int currentSoloMode = 0;
 
+    // ⑥ ジッパーノイズ防止: ミックスゲインのサンプル精度スムージング
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedTransGain { 1.0f };
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedTonalGain { 1.0f };
+
     std::unique_ptr<AudioEffect> transientPool[6];
     std::unique_ptr<AudioEffect> tonalPool[6];
     std::unique_ptr<AudioEffect> fullMixPool[6];
+
+    // ③ パラメータポインタキャッシュ — processBlock毎のハッシュ検索とdynamic_castを排除
+    struct LaneParamCache
+    {
+        // エフェクト型ポインタ（static_cast済み、所有権なし）
+        ADAA_Saturation* sat = nullptr;
+        BitCrusher*      bc  = nullptr;
+        NoiseGenerator*  ns  = nullptr;
+        OTT_Multiband*   ott = nullptr;
+        GlueCompressor*  glue = nullptr;
+        Limiter*         lim = nullptr;
+
+        // APVTS パラメータの std::atomic<float>* キャッシュ
+        std::atomic<float>* satDrive = nullptr;
+        std::atomic<float>* satMix   = nullptr;
+        std::atomic<float>* satAsym  = nullptr;
+        std::atomic<float>* satTrim  = nullptr;
+        std::atomic<float>* satPre   = nullptr;
+
+        std::atomic<float>* bcBits   = nullptr;
+        std::atomic<float>* bcDown   = nullptr;
+        std::atomic<float>* bcMix    = nullptr;
+        std::atomic<float>* bcJitter = nullptr;
+
+        std::atomic<float>* nsDecay  = nullptr;
+        std::atomic<float>* nsMix    = nullptr;
+        std::atomic<float>* nsType   = nullptr;
+        std::atomic<float>* nsGain   = nullptr;
+        std::atomic<float>* nsAttack = nullptr;
+        std::atomic<float>* nsBpFreq = nullptr;
+
+        std::atomic<float>* ottDepth      = nullptr;
+        std::atomic<float>* ottTime       = nullptr;
+        std::atomic<float>* ottLowMidXOver = nullptr;
+        std::atomic<float>* ottMidHighXOver = nullptr;
+        std::atomic<float>* ottGateFloor  = nullptr;
+        std::atomic<float>* ottBandUp[3]   = {};
+        std::atomic<float>* ottBandDown[3] = {};
+        std::atomic<float>* ottBandGain[3] = {};
+
+        std::atomic<float>* glueDepth = nullptr;
+        std::atomic<float>* glueThr   = nullptr;
+        std::atomic<float>* glueRatio = nullptr;
+        std::atomic<float>* glueAtk   = nullptr;
+        std::atomic<float>* glueRel   = nullptr;
+        std::atomic<float>* glueMkp   = nullptr;
+
+        std::atomic<float>* limCeil = nullptr;
+        std::atomic<float>* limMix  = nullptr;
+    };
+
+    LaneParamCache cachedLanes[3]; // 0=trans, 1=tonal, 2=full
+    void initParamCache();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnatomyAudioProcessor)
 };
