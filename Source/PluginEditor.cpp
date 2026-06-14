@@ -92,6 +92,22 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     configureSlider(sliderTonalPitch, lblTonalPitch, "TONAL PITCH (st)", juce::Colours::magenta);
     configureSlider(sliderTonalGain, lblTonalGain, "TONAL GAIN (dB)", juce::Colours::magenta);
 
+    // Tonal Offset: FullMix波形右側に縦スライダーとして設置
+    sliderTonalDelay.setSliderStyle(juce::Slider::LinearVertical);
+    sliderTonalDelay.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 14);
+    sliderTonalDelay.setColour(juce::Slider::thumbColourId, juce::Colours::lightgrey);
+    sliderTonalDelay.setColour(juce::Slider::trackColourId, juce::Colour(0xff3a3a3a));
+    sliderTonalDelay.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff1a1a1a));
+    sliderTonalDelay.setColour(juce::Slider::textBoxTextColourId, juce::Colours::white);
+    sliderTonalDelay.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+    addAndMakeVisible(sliderTonalDelay);
+
+    lblTonalDelay.setText("TONAL OFFSET", juce::dontSendNotification);
+    lblTonalDelay.setFont(juce::Font(9.0f, juce::Font::bold));
+    lblTonalDelay.setJustificationType(juce::Justification::centred);
+    lblTonalDelay.setColour(juce::Label::textColourId, juce::Colours::lightgrey.withAlpha(0.9f));
+    addAndMakeVisible(lblTonalDelay);
+
     // エフェクトラックパネルおよびパラメータドック全体にルックアンドフィールを伝播
     effectRackPanel.setLookAndFeel(&arcLookAndFeel);
     parameterDockPanel.setLookAndFeel(&arcLookAndFeel);
@@ -103,6 +119,7 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     attachSustainRelease = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "sustainRelease", sliderSustainRelease);
     attachTransMixGain = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "transMixGain", sliderTransGain);
     attachTonalMixGain = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "tonalMixGain", sliderTonalGain);
+    attachTonalDelay = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "tonalDelay", sliderTonalDelay);
 
     for (auto* child : transientBrowserPanel.getChildren())
     {
@@ -414,6 +431,8 @@ void AnatomyAudioProcessorEditor::resized()
     auto fMixExportArea = fMixArea.removeFromRight(125);
     waveFullMix.setBounds(fMixArea);
     btnExportFull.setBounds(fMixExportArea.removeFromBottom(24).reduced(0, 2));
+    lblTonalDelay.setBounds(fMixExportArea.removeFromTop(14));
+    sliderTonalDelay.setBounds(fMixExportArea.reduced(25, 0));
 
     auto transArea = area.removeFromTop(120).reduced(10, 14);
     auto transBrowserArea = transArea.removeFromRight(125);

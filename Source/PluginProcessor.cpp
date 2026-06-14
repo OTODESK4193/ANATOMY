@@ -56,7 +56,8 @@ AnatomyAudioProcessor::AnatomyAudioProcessor()
     juce::StringArray ottParams{ "transOttDepth", "transOttTime", "transOttLowMidXOver", "transOttMidHighXOver",
                                  "tonalOttDepth", "tonalOttTime", "tonalOttLowMidXOver", "tonalOttMidHighXOver",
                                  "fullOttDepth", "fullOttTime", "fullOttLowMidXOver", "fullOttMidHighXOver",
-                                 "transPitch", "tonalPitch", "transMixGain", "tonalMixGain" };
+                                 "transPitch", "tonalPitch", "transMixGain", "tonalMixGain",
+                                 "tonalDelay" };
     for (const auto& pid : ottParams) apvts.addParameterListener(pid, this);
 
     synchronizePoolParameters();
@@ -71,7 +72,8 @@ AnatomyAudioProcessor::~AnatomyAudioProcessor()
     juce::StringArray ottParams{ "transOttDepth", "transOttTime", "transOttLowMidXOver", "transOttMidHighXOver",
                                  "tonalOttDepth", "tonalOttTime", "tonalOttLowMidXOver", "tonalOttMidHighXOver",
                                  "fullOttDepth", "fullOttTime", "fullOttLowMidXOver", "fullOttMidHighXOver",
-                                 "transPitch", "tonalPitch", "transMixGain", "tonalMixGain" };
+                                 "transPitch", "tonalPitch", "transMixGain", "tonalMixGain",
+                                 "tonalDelay" };
     for (const auto& pid : ottParams) apvts.removeParameterListener(pid, this);
 
     signalThreadShouldExit();
@@ -99,6 +101,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transMixGain", 1 }, "Transient Mix Gain (dB)", -60.0f, 6.0f, 0.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalMixGain", 1 }, "Tonal Mix Gain (dB)", -60.0f, 6.0f, 0.0f));
+
+    // Tonal の再生開始位置を前後にずらす（負=前、正=後ろ）
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalDelay", 1 }, "Tonal Offset (ms)", -500.0f, 500.0f, 0.0f));
 
     juce::StringArray prefixes{ "trans", "tonal", "full" };
     for (const auto& pre : prefixes)
@@ -350,7 +355,11 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
             {
                 activeVoice.sampleData = currentDataSnapshot;
                 activeVoice.clickReadIndex = 0.0;
-                activeVoice.sustainReadIndex = 0.0;
+                {
+                    float tdMs = apvts.getRawParameterValue("tonalDelay")->load();
+                    double tdSmp = -(static_cast<double>(tdMs) / 1000.0) * fileSampleRate;
+                    activeVoice.sustainReadIndex = tdSmp;
+                }
                 activeVoice.triggerVelocity = 1.0f;
                 activeVoice.isActive = true;
                 activeVoice.isReleasing = false;
@@ -406,7 +415,13 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
             {
                 activeVoice.sampleData = currentDataSnapshot;
                 activeVoice.clickReadIndex = 0.0;
-                activeVoice.sustainReadIndex = 0.0;
+
+                // tonalDelay: 正=後ろにずらす(遅延)、負=前にずらす(先行)
+                // sustainReadIndex を負にすると readInterpolated が 0 を返し遅延になる。
+                // 正にするとバッファの先を読み、先行になる。
+                float tonalDelayMs = apvts.getRawParameterValue("tonalDelay")->load();
+                double tonalOffsetSamples = -(static_cast<double>(tonalDelayMs) / 1000.0) * fileSampleRate;
+                activeVoice.sustainReadIndex = tonalOffsetSamples;
 
                 activeVoice.triggerVelocity = msg.getFloatVelocity();
                 activeVoice.isActive = true;
@@ -730,11 +745,11 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     }
     voice.clickReadIndex += voice.pitchRatio;
 
-    if (tonalGateOpen && currentSoloMode != 1)
+    if (tonalGateOpen && currentSoloMode != 1 && exactSustainIdx >= 0.0)
     {
         if (hasCustomTonal)
             shiftedSustain = customTonalReplacer.processSample(voice.sustainReadIndex, voice.pitchRatio, tonalScale, clickHold, clickCurve, hostSampleRate, currentSoloMode);
-        else if (voice.tonalShifter && sIdx < sustain.getNumSamples())
+        else if (voice.tonalShifter && sIdx >= 0 && sIdx < sustain.getNumSamples())
             shiftedSustain = voice.tonalShifter->processSample(sustain, sIdx, tonalScale);
     }
     voice.sustainReadIndex += voice.pitchRatio;
@@ -1139,20 +1154,24 @@ void OfflineMixRenderer::executeRender()
     int oStartSmp = static_cast<int>((tonalStart / 1000.0) * sr);
     int oEndSmp = static_cast<int>((tonalEnd / 1000.0) * sr);
 
+    // tonalDelay: 正=後ろにずらす → 読み位置を前にずらす(負のオフセット)
+    float tonalDelayMs = processor.apvts.getRawParameterValue("tonalDelay")->load();
+    int tonalOffsetSmp = static_cast<int>(-(tonalDelayMs / 1000.0) * sr);
+
     for (int s = 0; s < maxSamples; ++s)
     {
         float tL = 0.0f, tR = 0.0f;
         float oL = 0.0f, oR = 0.0f;
 
         int exactClick = tStartSmp + s;
-        int exactSustain = oStartSmp + s;
+        int exactSustain = oStartSmp + s + tonalOffsetSmp;
 
         if (s < tHoldSmp && exactClick < tEndSmp && exactClick < transSamples)
         {
             tL = workTrans.getSample(0, exactClick) * transGain;
             tR = workTrans.getSample(1, exactClick) * transGain;
         }
-        if (exactSustain < oEndSmp && exactSustain < tonalSamples)
+        if (exactSustain >= 0 && exactSustain < oEndSmp && exactSustain < tonalSamples)
         {
             oL = workTonal.getSample(0, exactSustain) * tonalGain;
             oR = workTonal.getSample(1, exactSustain) * tonalGain;

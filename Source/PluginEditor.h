@@ -230,6 +230,10 @@ private:
     juce::Label lblTonalGain;
     juce::Label lblSustainRelease;
 
+    // Tonal Offset スライダー（FullMix波形右側）
+    juce::Slider sliderTonalDelay;
+    juce::Label lblTonalDelay;
+
     // 各レーン専用のリアルタイムエクスポートトリガーボタン
     ExportButton btnExportFull{ 0, audioProcessor };
     ExportButton btnExportTransient{ 1, audioProcessor };
@@ -243,6 +247,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachSustainRelease;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTransMixGain;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTonalMixGain;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTonalDelay;
 
     // 各レーンブラウザ
     TransientBrowserPanel transientBrowserPanel{ audioProcessor, waveTransient };
