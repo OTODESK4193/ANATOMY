@@ -45,7 +45,8 @@ float WaveformComponent::getMsFromX(float x) const noexcept
     if (numSamples == 0 || sampleRate <= 0.0 || getWidth() <= 0) return 0.0f;
 
     double totalMs = (static_cast<double>(numSamples) / sampleRate) * 1000.0;
-    return static_cast<float>((x / static_cast<float>(getWidth())) * totalMs);
+    double visibleMs = totalMs / static_cast<double>(zoomLevel);
+    return static_cast<float>((x / static_cast<float>(getWidth())) * visibleMs);
 }
 
 float WaveformComponent::getXFromMs(float ms) const noexcept
@@ -54,7 +55,8 @@ float WaveformComponent::getXFromMs(float ms) const noexcept
     if (numSamples == 0 || sampleRate <= 0.0 || getWidth() <= 0) return 0.0f;
 
     double totalMs = (static_cast<double>(numSamples) / sampleRate) * 1000.0;
-    return static_cast<float>((ms / totalMs) * static_cast<double>(getWidth()));
+    double visibleMs = totalMs / static_cast<double>(zoomLevel);
+    return static_cast<float>((ms / visibleMs) * static_cast<double>(getWidth()));
 }
 
 void WaveformComponent::paint(juce::Graphics& g)
@@ -77,7 +79,11 @@ void WaveformComponent::paint(juce::Graphics& g)
     }
 
     const float* data = internalBuffer.getReadPointer(0);
-    int step = std::max(1, numSamples / static_cast<int>(w));
+
+    // ズーム対応: 表示するサンプル範囲を計算
+    int visibleSamples = static_cast<int>(static_cast<float>(numSamples) / zoomLevel);
+    visibleSamples = juce::jlimit(1, numSamples, visibleSamples);
+    int step = std::max(1, visibleSamples / static_cast<int>(w));
 
     bool isBeforeMode = (processor != nullptr && processor->beforeAfterBypasser.julesIsBeforeBypassed());
 
@@ -85,7 +91,7 @@ void WaveformComponent::paint(juce::Graphics& g)
     {
         for (int xPix = 0; xPix < static_cast<int>(w); ++xPix)
         {
-            int srcIdx = static_cast<int>((static_cast<float>(xPix) / w) * static_cast<float>(numSamples));
+            int srcIdx = static_cast<int>((static_cast<float>(xPix) / w) * static_cast<float>(visibleSamples));
             srcIdx = juce::jlimit(0, numSamples - 1, srcIdx);
 
             float peak = 0.0f;
@@ -111,9 +117,9 @@ void WaveformComponent::paint(juce::Graphics& g)
         juce::Path p;
         p.startNewSubPath(0.0f, mid);
 
-        for (int i = 0; i < numSamples; i += step)
+        for (int i = 0; i < visibleSamples; i += step)
         {
-            float x = (static_cast<float>(i) / static_cast<float>(numSamples)) * w;
+            float x = (static_cast<float>(i) / static_cast<float>(visibleSamples)) * w;
             float y = data[i] * mid;
             p.lineTo(x, mid - y);
         }
@@ -149,16 +155,68 @@ void WaveformComponent::paint(juce::Graphics& g)
     g.drawRect(exportButtonArea, 1);
     g.setFont(juce::Font(9.0f, juce::Font::bold));
     g.drawText("DRAG EXPORT", exportButtonArea, juce::Justification::centred, false);
+
+    // ズームボタン描画（FullMixレーンのみ、右下角）
+    if (laneIndex == 0 && numSamples > 0)
+    {
+        auto drawZoomBtn = [&](const juce::Rectangle<int>& area, const juce::String& label, bool enabled) {
+            g.setColour(enabled ? juce::Colour(0xff3a3a3a) : juce::Colour(0xff2a2a2a));
+            g.fillRoundedRectangle(area.toFloat(), 2.0f);
+            g.setColour(enabled ? juce::Colours::white : juce::Colours::grey.withAlpha(0.4f));
+            g.drawRoundedRectangle(area.toFloat(), 2.0f, 1.0f);
+            g.setFont(juce::Font(12.0f, juce::Font::bold));
+            g.drawText(label, area, juce::Justification::centred, false);
+        };
+
+        drawZoomBtn(zoomOutArea, "-", zoomLevel > zoomMin);
+        drawZoomBtn(zoomInArea, "+", zoomLevel < zoomMax);
+
+        // ズーム倍率表示
+        if (zoomLevel > 1.01f)
+        {
+            juce::String zoomText = "x" + juce::String(zoomLevel, 0);
+            auto textArea = juce::Rectangle<int>(zoomOutArea.getX() - 30, zoomOutArea.getY(), 28, zoomOutArea.getHeight());
+            g.setColour(juce::Colours::white.withAlpha(0.6f));
+            g.setFont(juce::Font(9.0f, juce::Font::bold));
+            g.drawText(zoomText, textArea, juce::Justification::centredRight, false);
+        }
+    }
 }
 
 void WaveformComponent::resized()
 {
     exportButtonArea = juce::Rectangle<int>(getWidth() - 82, 3, 78, 14);
+
+    // ズームボタン: 右下角に配置
+    int btnSize = 18;
+    int margin = 4;
+    int btnY = getHeight() - btnSize - margin;
+    zoomInArea  = juce::Rectangle<int>(getWidth() - btnSize - margin, btnY, btnSize, btnSize);
+    zoomOutArea = juce::Rectangle<int>(getWidth() - btnSize * 2 - margin - 3, btnY, btnSize, btnSize);
 }
 
 void WaveformComponent::mouseDown(const juce::MouseEvent& e)
 {
     if (internalBuffer.getNumSamples() == 0) return;
+
+    // ズームボタン判定（FullMixレーンのみ）
+    if (laneIndex == 0)
+    {
+        if (zoomInArea.contains(e.getPosition()) && zoomLevel < zoomMax)
+        {
+            zoomLevel *= 2.0f;
+            zoomLevel = juce::jmin(zoomLevel, zoomMax);
+            repaint();
+            return;
+        }
+        if (zoomOutArea.contains(e.getPosition()) && zoomLevel > zoomMin)
+        {
+            zoomLevel /= 2.0f;
+            zoomLevel = juce::jmax(zoomLevel, zoomMin);
+            repaint();
+            return;
+        }
+    }
 
     if (exportButtonArea.contains(e.getPosition()))
     {

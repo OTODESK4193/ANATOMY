@@ -53,5 +53,12 @@ private:
 
     juce::Rectangle<int> exportButtonArea;
 
+    // ズーム機能（左端起点で拡大、FullMix レーン専用）
+    float zoomLevel = 1.0f;
+    static constexpr float zoomMin = 1.0f;
+    static constexpr float zoomMax = 32.0f;
+    juce::Rectangle<int> zoomInArea;
+    juce::Rectangle<int> zoomOutArea;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(WaveformComponent)
 };
