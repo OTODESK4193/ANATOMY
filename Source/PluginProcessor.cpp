@@ -470,7 +470,10 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
         float transEndSamples = (transEndOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
         float tonalEndSamples = (tonalEndOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
-        float transHoldSamples = (clickHold / 1000.0f) * static_cast<float>(fileSampleRate);
+        // 分離エンジンのcos²フェード区間（clickCurve ms）を含める。
+        // holdだけでゲートすると、フェード区間のトランジェント成分が消失し
+        // trans+tonal ≠ original になる。
+        float transHoldSamples = ((clickHold + clickCurve) / 1000.0f) * static_cast<float>(fileSampleRate);
 
         if (activeVoice.isActive)
         {
@@ -662,7 +665,8 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
 
     float transStartSamples = (transStartOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
     float transEndSamples = (transEndOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
-    float transHoldSamples = (clickHold / 1000.0f) * static_cast<float>(fileSampleRate);
+    // cos²フェード区間を含めたトランジェント完全持続時間
+    float transHoldSamples = ((clickHold + clickCurve) / 1000.0f) * static_cast<float>(fileSampleRate);
 
     float tonalStartSamples = (tonalStartOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
     float tonalEndSamples = (tonalEndOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
@@ -675,15 +679,33 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
 
     if (isBefore || (!hasCustomTrans && !hasCustomTonal && std::abs(transScale - 1.0f) < 0.01f && std::abs(tonalScale - 1.0f) < 0.01f))
     {
-        if (currentSoloMode != 2 && transBufferThread.getNumSamples() > 0 && cIdx < transBufferThread.getNumSamples())
+        // pitchRatio != 1.0 の場合（サンプルレート変換時）、整数切り捨てではなく
+        // 線形補間を使用してエイリアシングアーティファクトとピッチ感の変化を低減。
+        auto readInterpolated = [](const juce::AudioBuffer<float>& buf, int ch, double idx) noexcept -> float
+            {
+                const int maxSmp = buf.getNumSamples();
+                if (maxSmp <= 0 || idx < 0.0) return 0.0f;
+                if (idx >= static_cast<double>(maxSmp - 1)) return 0.0f;
+                const int i0 = static_cast<int>(idx);
+                const int i1 = i0 + 1;
+                const float frac = static_cast<float>(idx - static_cast<double>(i0));
+                const float* data = buf.getReadPointer(ch);
+                return data[i0] + frac * (data[i1] - data[i0]);
+            };
+
+        if (currentSoloMode != 2 && transBufferThread.getNumSamples() > 0 && exactClickIdx < static_cast<double>(transBufferThread.getNumSamples() - 1))
         {
-            outTransL = transBufferThread.getSample(0, cIdx);
-            outTransR = transBufferThread.getNumChannels() > 1 ? transBufferThread.getSample(1, cIdx) : outTransL;
+            outTransL = readInterpolated(transBufferThread, 0, exactClickIdx);
+            outTransR = transBufferThread.getNumChannels() > 1
+                ? readInterpolated(transBufferThread, 1, exactClickIdx)
+                : outTransL;
         }
-        if (currentSoloMode != 1 && tonalBufferThread.getNumSamples() > 0 && sIdx < tonalBufferThread.getNumSamples())
+        if (currentSoloMode != 1 && tonalBufferThread.getNumSamples() > 0 && exactSustainIdx < static_cast<double>(tonalBufferThread.getNumSamples() - 1))
         {
-            outTonalL = tonalBufferThread.getSample(0, sIdx);
-            outTonalR = tonalBufferThread.getNumChannels() > 1 ? tonalBufferThread.getSample(1, sIdx) : outTonalL;
+            outTonalL = readInterpolated(tonalBufferThread, 0, exactSustainIdx);
+            outTonalR = tonalBufferThread.getNumChannels() > 1
+                ? readInterpolated(tonalBufferThread, 1, exactSustainIdx)
+                : outTonalL;
         }
         voice.clickReadIndex += voice.pitchRatio;
         voice.sustainReadIndex += voice.pitchRatio;
@@ -1104,7 +1126,9 @@ void OfflineMixRenderer::executeRender()
 
     int tStartSmp = static_cast<int>((transStart / 1000.0) * sr);
     int tEndSmp = static_cast<int>((transEnd / 1000.0) * sr);
-    int tHoldSmp = static_cast<int>((clickHold / 1000.0) * sr);
+    // cos²フェード区間を含めた完全なトランジェント持続サンプル数
+    float sustainFade = processor.apvts.getRawParameterValue("clickCurve")->load();
+    int tHoldSmp = static_cast<int>(((clickHold + sustainFade) / 1000.0) * sr);
     int oStartSmp = static_cast<int>((tonalStart / 1000.0) * sr);
     int oEndSmp = static_cast<int>((tonalEnd / 1000.0) * sr);
 
