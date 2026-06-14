@@ -46,6 +46,11 @@ public:
         lowBuffer.setSize(2, maxBlockSize, false, false, true);
         midBuffer.setSize(2, maxBlockSize, false, false, true);
         highBuffer.setSize(2, maxBlockSize, false, false, true);
+        // 【爆音修正】未初期化メモリがフィルターに流入し積分器を発散させていた。
+        // setSize の clearExtraSpace=false ではバッファ内容は未定義。
+        lowBuffer.clear();
+        midBuffer.clear();
+        highBuffer.clear();
 
         for (int b = 0; b < 3; ++b)
             envFollower[b] = 0.0f;
@@ -67,16 +72,23 @@ public:
         if (lowBuffer.getNumSamples() < numSamples) return;
 
         // ── 3バンド分割 ─────────────────────────────────────────────────
+        // 【爆音修正】copyFrom は numSamples 分のみコピーするが、
+        // AudioBlock(lowBuffer) はバッファ全体（maxBlockSize）をラップする。
+        // フィルターが numSamples 以降のゴミ/残留データを処理し、
+        // TPT 積分器が発散 → 爆音の根本原因。
+        // getSubBlock(0, numSamples) で有効サンプル範囲のみ処理する。
         lowBuffer.copyFrom(0, 0, buffer, 0, 0, numSamples);
         if (numChannels > 1) lowBuffer.copyFrom(1, 0, buffer, 1, 0, numSamples);
 
         highBuffer.copyFrom(0, 0, buffer, 0, 0, numSamples);
         if (numChannels > 1) highBuffer.copyFrom(1, 0, buffer, 1, 0, numSamples);
 
-        juce::dsp::AudioBlock<float> lowBlock(lowBuffer);
+        juce::dsp::AudioBlock<float> lowBlockFull(lowBuffer);
+        auto lowBlock = lowBlockFull.getSubBlock(0, static_cast<size_t>(numSamples));
         filterLow.process(juce::dsp::ProcessContextReplacing<float>(lowBlock));
 
-        juce::dsp::AudioBlock<float> highBlock(highBuffer);
+        juce::dsp::AudioBlock<float> highBlockFull(highBuffer);
+        auto highBlock = highBlockFull.getSubBlock(0, static_cast<size_t>(numSamples));
         filterHigh.process(juce::dsp::ProcessContextReplacing<float>(highBlock));
 
         for (int ch = 0; ch < numChannels; ++ch)
