@@ -1,6 +1,6 @@
 # ANATOMY
 ![Release](https://img.shields.io/badge/release-v1.0.0-blue)
-![License](https://img.shields.io/badge/license-GPLv3-green)
+![License](https://img.shields.io/badge/license-AGPLv3-green)
 ![JUCE](https://img.shields.io/badge/JUCE-8.0.x-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%2064bit-lightgrey)
 ![Downloads](https://img.shields.io/github/downloads/OTODESK4193/ANATOMY/total.svg)
@@ -280,11 +280,12 @@ This software is provided "as-is", without any warranty of any kind. While extre
 
 ---
 
+
 ## License
 
-This project is free and open-source, distributed under the **GPLv3 License** (inherited via the JUCE framework). You are free to study, modify, and redistribute the source code under the same terms.
+This project is licensed under the GNU Affero General Public License v3.0 (AGPLv3) - see the [LICENSE](LICENSE) file for details.
+This software is built using the **JUCE 8** framework. In accordance with JUCE 8's open-source licensing terms, this entire project is distributed under the AGPLv3.
 
----
 
 ## Credits
 
