@@ -917,6 +917,13 @@ void AnatomyAudioProcessor::run()
     float clickHold = apvts.getRawParameterValue("clickLength")->load();
     float sustainFade = apvts.getRawParameterValue("clickCurve")->load();
 
+    // 【核心修正】分離エンジンには fileSampleRate を使用する。
+    // prepare() は prepareToPlay() から hostSampleRate で呼ばれるが、
+    // inputBufferThread のサンプルデータは fileSampleRate で記録されている。
+    // hostSR と fileSR が異なる場合（例: host=48000, file=44100）、
+    // cos² クロスフェード境界が processBlock のゲート位置とずれ、
+    // trans+tonal ≠ input となるエネルギー欠損区間が発生する。
+    separator.prepare(fileSampleRate);
     separator.performSeparation(inputBufferThread, localTrans, localTonal, clickHold, sustainFade, this);
     if (threadShouldExit()) return;
 
