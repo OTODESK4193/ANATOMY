@@ -1221,16 +1221,142 @@ void AnatomyAudioProcessor::setCurrentProgram(int) {}
 const juce::String AnatomyAudioProcessor::getProgramName(int) { return {}; }
 void AnatomyAudioProcessor::changeProgramName(int, const juce::String&) {}
 
+// ── バイナリシリアライズ・ヘルパー ────────────────────────────────
+// AudioBuffer を MemoryOutputStream に書き出す: [channels:int32][samples:int32][float data...]
+static void writeBufferToStream(juce::MemoryOutputStream& out, const juce::AudioBuffer<float>& buf)
+{
+    int ch = buf.getNumChannels();
+    int ns = buf.getNumSamples();
+    out.writeInt(ch);
+    out.writeInt(ns);
+    for (int c = 0; c < ch; ++c)
+        out.write(buf.getReadPointer(c), sizeof(float) * static_cast<size_t>(ns));
+}
+
+// MemoryInputStream から AudioBuffer を読み出す
+static juce::AudioBuffer<float> readBufferFromStream(juce::MemoryInputStream& in)
+{
+    int ch = in.readInt();
+    int ns = in.readInt();
+    if (ch <= 0 || ch > 2 || ns <= 0 || ns > 48000 * 60 * 5) // 安全制限: 最大5分
+        return {};
+
+    juce::AudioBuffer<float> buf(ch, ns);
+    for (int c = 0; c < ch; ++c)
+        in.read(buf.getWritePointer(c), sizeof(float) * static_cast<size_t>(ns));
+    return buf;
+}
+
 void AnatomyAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
+    juce::MemoryOutputStream out(destData, false);
+
+    // 1. APVTS パラメータ状態を XML → バイナリブロックとして先頭に格納
+    juce::MemoryBlock apvtsBlock;
     if (auto xml = apvts.copyState().createXml())
-        copyXmlToBinary(*xml, destData);
+        copyXmlToBinary(*xml, apvtsBlock);
+
+    out.writeInt(static_cast<int>(apvtsBlock.getSize()));
+    out.write(apvtsBlock.getData(), apvtsBlock.getSize());
+
+    // 2. マジックナンバーでオーディオデータセクション開始を明示
+    out.writeInt(0x414E4154); // "ANAT"
+
+    // 3. fileSampleRate
+    out.writeDouble(fileSampleRate);
+
+    // 4. メインの入力バッファ（分離前のオリジナル音声）
+    {
+        const juce::ScopedLock sl(lock);
+        writeBufferToStream(out, inputBufferThread);
+    }
+
+    // 5. カスタム差し替えバッファ（存在する場合のみ）
+    bool hasCustomTrans = (customTransBuffer.getNumSamples() > 0);
+    bool hasCustomTonal = (customTonalBuffer.getNumSamples() > 0);
+    out.writeBool(hasCustomTrans);
+    if (hasCustomTrans) writeBufferToStream(out, customTransBuffer);
+    out.writeBool(hasCustomTonal);
+    if (hasCustomTonal) writeBufferToStream(out, customTonalBuffer);
+
+    // 6. START/END オフセット
+    out.writeFloat(transStartOffsetMs);
+    out.writeFloat(transEndOffsetMs);
+    out.writeFloat(tonalStartOffsetMs);
+    out.writeFloat(tonalEndOffsetMs);
 }
 
 void AnatomyAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
-    if (auto xmlState = getXmlFromBinary(data, sizeInBytes))
-        apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
+    juce::MemoryInputStream in(data, static_cast<size_t>(sizeInBytes), false);
+
+    // 1. APVTS ブロック読み出し
+    int apvtsSize = in.readInt();
+    if (apvtsSize > 0 && apvtsSize < sizeInBytes)
+    {
+        juce::MemoryBlock apvtsBlock(static_cast<size_t>(apvtsSize));
+        in.read(apvtsBlock.getData(), static_cast<size_t>(apvtsSize));
+        if (auto xmlState = getXmlFromBinary(apvtsBlock.getData(), static_cast<int>(apvtsBlock.getSize())))
+            apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
+    }
+
+    // 2. マジックナンバー確認（オーディオデータが無い旧セーブとの互換性）
+    if (in.isExhausted()) return;
+    int magic = in.readInt();
+    if (magic != 0x414E4154) return; // "ANAT" でなければオーディオ無し
+
+    // 3. fileSampleRate
+    fileSampleRate = in.readDouble();
+    if (fileSampleRate <= 0.0) fileSampleRate = 44100.0;
+
+    // 4. メイン入力バッファ復元
+    auto restoredInput = readBufferFromStream(in);
+
+    // 5. カスタムバッファ復元
+    juce::AudioBuffer<float> restoredCustomTrans, restoredCustomTonal;
+    if (!in.isExhausted())
+    {
+        bool hasCustomTrans = in.readBool();
+        if (hasCustomTrans) restoredCustomTrans = readBufferFromStream(in);
+    }
+    if (!in.isExhausted())
+    {
+        bool hasCustomTonal = in.readBool();
+        if (hasCustomTonal) restoredCustomTonal = readBufferFromStream(in);
+    }
+
+    // 6. START/END オフセット復元
+    if (!in.isExhausted())
+    {
+        transStartOffsetMs = in.readFloat();
+        transEndOffsetMs = in.readFloat();
+        tonalStartOffsetMs = in.readFloat();
+        tonalEndOffsetMs = in.readFloat();
+    }
+
+    // 7. バッファを設定し、分離を再実行
+    if (restoredInput.getNumSamples() > 0)
+    {
+        {
+            const juce::ScopedLock sl(lock);
+            inputBufferThread.makeCopyOf(restoredInput);
+            rawInputBuffer.makeCopyOf(restoredInput);
+            if (restoredCustomTrans.getNumSamples() > 0)
+                customTransBuffer.makeCopyOf(restoredCustomTrans);
+            if (restoredCustomTonal.getNumSamples() > 0)
+                customTonalBuffer.makeCopyOf(restoredCustomTonal);
+        }
+
+        // バックグラウンドスレッドで分離処理を再実行
+        // 既にスレッドが走っている場合は停止してから再起動
+        if (isThreadRunning())
+        {
+            signalThreadShouldExit();
+            waitForThreadToExit(2000);
+        }
+        needsReanalysis.store(false, std::memory_order_release);
+        startThread(juce::Thread::Priority::normal);
+    }
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new AnatomyAudioProcessor(); }

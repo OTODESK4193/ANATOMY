@@ -156,8 +156,8 @@ void WaveformComponent::paint(juce::Graphics& g)
     g.setFont(juce::Font(9.0f, juce::Font::bold));
     g.drawText("DRAG EXPORT", exportButtonArea, juce::Justification::centred, false);
 
-    // ズームボタン描画（FullMixレーンのみ、右下角）
-    if (laneIndex == 0 && numSamples > 0)
+    // ズームボタン描画（全レーン、右下角）
+    if (numSamples > 0)
     {
         auto drawZoomBtn = [&](const juce::Rectangle<int>& area, const juce::String& label, bool enabled) {
             g.setColour(enabled ? juce::Colour(0xff3a3a3a) : juce::Colour(0xff2a2a2a));
@@ -199,23 +199,20 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
 {
     if (internalBuffer.getNumSamples() == 0) return;
 
-    // ズームボタン判定（FullMixレーンのみ）
-    if (laneIndex == 0)
+    // ズームボタン判定（全レーン）
+    if (zoomInArea.contains(e.getPosition()) && zoomLevel < zoomMax)
     {
-        if (zoomInArea.contains(e.getPosition()) && zoomLevel < zoomMax)
-        {
-            zoomLevel *= 2.0f;
-            zoomLevel = juce::jmin(zoomLevel, zoomMax);
-            repaint();
-            return;
-        }
-        if (zoomOutArea.contains(e.getPosition()) && zoomLevel > zoomMin)
-        {
-            zoomLevel /= 2.0f;
-            zoomLevel = juce::jmax(zoomLevel, zoomMin);
-            repaint();
-            return;
-        }
+        zoomLevel *= 2.0f;
+        zoomLevel = juce::jmin(zoomLevel, zoomMax);
+        repaint();
+        return;
+    }
+    if (zoomOutArea.contains(e.getPosition()) && zoomLevel > zoomMin)
+    {
+        zoomLevel /= 2.0f;
+        zoomLevel = juce::jmax(zoomLevel, zoomMin);
+        repaint();
+        return;
     }
 
     if (exportButtonArea.contains(e.getPosition()))
