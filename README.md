@@ -1,5 +1,5 @@
 # ANATOMY
-![Release](https://img.shields.io/badge/release-v1.0.0-blue)
+![Release](https://img.shields.io/badge/release-v1.1.0-blue)
 ![License](https://img.shields.io/badge/license-AGPLv3-green)
 ![JUCE](https://img.shields.io/badge/JUCE-8.0.x-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%2064bit-lightgrey)
@@ -7,7 +7,7 @@
 
 ---
 
-## ⚠️ **IMPORTANT: Audio Safety Notice**
+## **IMPORTANT: Audio Safety Notice**
 
 > **This plugin can generate LOUD audio output. HEARING PROTECTION IS YOUR RESPONSIBILITY.**
 >
@@ -27,17 +27,26 @@
 
 ## Overview
 
-**ANATOMY** is a high-performance, open-source VST3 plugin that performs **real-time Transient/Tonal audio separation**, routing each component through its own independent multi-effect chain. ANATOMY gives you surgical control over the *anatomy* of your sound — transient click, tonal sustain, and the full mix — each with a dedicated suite of 6 professional-grade effects.
+**ANATOMY** is a high-performance, open-source VST3 plugin that performs **Transient/Tonal audio separation** using a cos² crossfade algorithm, routing each component through its own independent multi-effect chain. ANATOMY gives you surgical control over the *anatomy* of your sound — transient click, tonal sustain, and the full mix — each with a dedicated suite of 6 professional-grade effects.
 
-> ⚠️ **ANATOMY is a sound design tool — not a real-time mix insert.**
-> The intended workflow is: **shape your sound → export as WAV via EXPORT → load into a high-quality sampler** (Ableton Simpler / Sampler, Native Instruments Kontakt, etc.) for playback. It is not designed for continuous real-time processing on a live mix bus.
+### Workflow
 
-Process each layer with **ADAA Saturation**, **BitCrusher**, **Noise Generator**, **OTT Multiband Compression**, **Glue Compressor**, and **Limiter** independently, then **export finished stems as WAV** and load them into your sampler of choice. ANATOMY is engineered for extreme real-time safety and Ableton Live stability.
+1. **Drag & Drop** a WAV file onto the plugin window to load audio.
+2. **Shape** the transient and tonal components using separation controls, pitch shift, and gain.
+3. **Process** each lane with independent effect chains.
+4. **Export** finished stems as WAV — drag directly into your DAW timeline or sampler.
 
-## 🎬 Demo Videos
+ANATOMY automatically **saves and restores all loaded audio data** with your DAW project session, so your sounds are preserved when you reopen the project.
+
+> **ANATOMY is a sound design tool — not a real-time mix insert.**
+> Shape your sound → export as WAV via EXPORT → load into a high-quality sampler (Ableton Simpler / Sampler, Native Instruments Kontakt, etc.) for playback.
+
+Process each layer with **ADAA Saturation**, **BitCrusher**, **Noise Generator**, **OTT Multiband Compression**, **Glue Compressor**, and **Limiter** independently. ANATOMY is engineered for extreme real-time safety and Ableton Live stability.
+
+## Demo Videos
 
 <p align="center">
-  <b>Introduction (概要編)</b><br>
+  <b>Introduction</b><br>
   <a href="https://youtu.be/PLACEHOLDER_1">
     <img src="https://img.youtube.com/vi/PLACEHOLDER_1/maxresdefault.jpg"
          alt="ANATOMY - Introduction" width="640" height="360">
@@ -46,17 +55,33 @@ Process each layer with **ADAA Saturation**, **BitCrusher**, **Noise Generator**
 
 ## Key Features
 
-### 🔬 Real-Time Transient / Tonal Separation
+### Real-Time Transient / Tonal Separation (cos² Crossfade)
 
-ANATOMY splits any incoming audio into three independently processable signal paths:
+ANATOMY splits any loaded audio into three independently processable signal paths using a mathematically perfect cos² crossfade separation. This guarantees that `transient + tonal = original input` with zero energy loss or overlap artifacts.
 
-* **TRANSIENT lane:** The percussive attack/click component of your signal — transient punch, snap, and impact.
+* **TRANSIENT lane:** The percussive attack/click component — transient punch, snap, and impact.
 * **TONAL lane:** The sustained, harmonic, and pitched content — body, tone, and decay.
-* **FULL MIX lane:** The unprocessed combined signal, available for parallel processing or final shaping.
+* **FULL MIX lane:** The recombined signal with 2-color energy ratio visualization (cyan = transient, magenta = tonal).
 
-Each lane features independent **Pitch**, **Gain**, and **shape controls**, giving you precise sculpting power over separation behaviour before effects are even applied.
+Each lane features independent **Pitch**, **Gain**, and **shape controls**, giving you precise sculpting power over separation behaviour before effects are applied.
 
-### 🎛️ 6-Effect Chain per Lane (18 Total)
+### Drag & Drop Audio Loading
+
+Drag any WAV file directly onto the ANATOMY plugin window. The audio is loaded, analyzed, and separated automatically. All loaded audio data is **saved with your DAW project** — reopen and everything is restored.
+
+### Tonal Offset Control
+
+When Transient Pitch is raised, the transient plays faster and becomes shorter, potentially creating a gap in the Full Mix. The **Tonal Offset** slider (-500ms to +500ms) lets you shift the tonal playback start position forward or backward to close gaps or create intentional overlap. The slider uses a symmetric skew so the ±50ms range is easy to fine-tune.
+
+### Waveform Zoom
+
+All three waveform displays (Full Mix, Transient, Tonal) feature **+/- zoom buttons** in the bottom-right corner. Zoom in up to 32x to inspect short transients in detail. The zoom expands from the left edge, making transient inspection intuitive.
+
+### Custom Sample Replacement (Transient / Tonal Browser)
+
+Replace the separated transient or tonal component with your own custom sample using the **Browse** button on each lane. Use **Reset** to revert to the original separated signal.
+
+### 6-Effect Chain per Lane (18 Total)
 
 Every lane has access to the same 6 professional-grade DSP modules. Effects are **inserted in any order** via drag-and-drop within the Effect Rack, and their parameters are adjusted in real time via the Parameter Dock:
 
@@ -69,28 +94,32 @@ Every lane has access to the same 6 professional-grade DSP modules. Effects are 
 | 5 | **Glue Compressor** | Dynamics | Bus-style compressor with Threshold, Ratio, Attack, Release, Makeup Gain, and Depth |
 | 6 | **Limiter** | Dynamics | Transparent brick-wall limiter with adjustable Ceiling and Dry/Wet |
 
-### 🔀 Drag-and-Drop Effect Ordering
+### Drag-and-Drop Effect Ordering
 
 The Effect Rack displays active effects as a **vertically ordered chip list** showing the exact processing chain. Simply drag chips up or down to rearrange the processing order in real time — no menus, no guessing. Right-click any chip for **Remove**, **Move Up**, or **Move Down** options.
 
-### 📤 One-Click Stem Export → Sampler Ready
+### Stem Export (3 Lanes)
 
-Each lane has a dedicated **EXPORT** button. Press once to record the next playback, then **drag the rendered WAV into a sampler** (Ableton Simpler / Sampler, Kontakt, etc.) for instant playback and further use. This export-to-sampler workflow is the core intended use of ANATOMY. Zero plugin freezing, zero rendering dialogs.
+Each lane has a dedicated **EXPORT** button. Press once to record the next playback, then **drag the rendered WAV into a sampler** (Ableton Simpler / Sampler, Kontakt, etc.) for instant playback. Additionally, each waveform has a **DRAG EXPORT** button for direct waveform-to-DAW drag & drop. The Tonal Offset setting is reflected in all three individual exports (Full Mix, Transient, Tonal).
 
-### 🎨 Real-Time Waveform Visualization
+### Real-Time Waveform Visualization
 
-Three high-resolution waveform displays (FULL MIX / TRANSIENT / TONAL) update in real time as audio plays. A **BEFORE** button allows instant A/B comparison against the unprocessed signal.
+Three high-resolution waveform displays update in real time. The Full Mix waveform uses a **2-color energy ratio display** — cyan for transient energy, magenta for tonal energy — giving you visual feedback on the separation balance. A **BEFORE** button allows instant A/B comparison against the unprocessed signal.
+
+### DAW Project Save / Restore
+
+All loaded audio data, custom sample replacements, separation parameters, effect states, and START/END trim positions are **automatically saved and restored** with your DAW project. Reopen your project and ANATOMY is exactly as you left it.
 
 ---
 
-## 🖥️ Signal Flow
+## Signal Flow
 
 ```
-Stereo Input (L/R)
+WAV File (Drag & Drop)
     │
-    ├─► [Transient/Tonal Splitter]
-    │   ├── TRANSIENT: Click curve, Pitch, Gain
-    │   └── TONAL:     Sustain curve, Pitch, Gain, Release
+    ├─► [cos² Crossfade Separator]
+    │   ├── TRANSIENT: Click Hold, Sustain Fade-In, Pitch, Gain
+    │   └── TONAL:     Tonal Offset, Pitch, Gain, Release
     │
     ├─► [TRANSIENT Effect Chain]         ← Up to 6 effects, user-defined order
     │   ├── ADAA Saturation (optional)
@@ -102,12 +131,12 @@ Stereo Input (L/R)
     │
     ├─► [TONAL Effect Chain]             ← Identical structure, independent chain
     │
-    ├─► [FULL MIX Effect Chain]          ← Runs on original unsplit signal
+    ├─► [FULL MIX Effect Chain]          ← Runs on recombined signal
     │
     ├─► [Stem Export Recorder]           ← Per-lane WAV capture (lock-free)
     │
     └─► Stereo Output (L/R)
-        └── Waveform Visualizers (3×)
+        └── Waveform Visualizers (3×, with zoom)
 ```
 
 ---
@@ -116,17 +145,20 @@ Stereo Input (L/R)
 
 ### Lane Controls (Transient / Tonal)
 
-| Parameter | Range | Description |
-|---|---|---|
-| Click Length | 0.0 – 1.0 | Duration of the transient extraction window |
-| Click Curve | 0.0 – 1.0 | Envelope shape of the transient (sharp → smooth) |
-| Pitch | -24 – +24 semitones | Pitch shift applied to the lane output |
-| Gain | -24 – +24 dB | Output gain of the lane |
-| Sustain Release | 0.0 – 1.0 | Tonal decay tail length |
+| Parameter | Range | Default | Description |
+|---|---|---|---|
+| Click Hold (ms) | 0.0 – 50.0 ms | 10.0 | Duration of the transient hold window before crossfade begins |
+| Sustain Fade-In (ms) | 1.0 – 100.0 ms | 5.0 | cos² crossfade duration from transient to tonal |
+| Transient Pitch (st) | -12 – +12 semitones | 0.0 | Pitch shift applied to the transient lane |
+| Tonal Pitch (st) | -12 – +12 semitones | 0.0 | Pitch shift applied to the tonal lane |
+| Transient Gain (dB) | -60 – +6 dB | 0.0 | Output gain of the transient lane |
+| Tonal Gain (dB) | -60 – +6 dB | 0.0 | Output gain of the tonal lane |
+| Sustain Release (ms) | 10 – 5000 ms | 500 | Tonal decay tail length |
+| Tonal Offset (ms) | -500 – +500 ms | 0.0 | Shifts tonal playback start position relative to transient (skewed for ±50ms precision) |
 
 ### Effect Parameters
 
-#### 🟣 ADAA Saturation
+#### ADAA Saturation
 
 | Parameter | Range | Default | Description |
 |---|---|---|---|
@@ -136,16 +168,16 @@ Stereo Input (L/R)
 | PRE HPF | 20 – 2000 Hz | 20 Hz | High-pass filter before saturation (DC/low-end protection) |
 | DRY/WET | 0.0 – 1.0 | 1.0 | Parallel dry/wet blend |
 
-#### 🟣 BitCrusher
+#### BitCrusher
 
 | Parameter | Range | Default | Description |
 |---|---|---|---|
 | BITS | 2 – 24 bit | 8 | Bit depth reduction |
-| DOWNSAMPLE | 1 – 32× | 4 | Sample rate decimation factor |
+| DOWNSAMPLE | 1 – 32x | 4 | Sample rate decimation factor |
 | JITTER | 0.0 – 1.0 | 0.0 | Sample-timing jitter amount (vintage instability) |
 | DRY/WET | 0.0 – 1.0 | 1.0 | Parallel dry/wet blend |
 
-#### 🟣 Noise Generator
+#### Noise Generator
 
 | Parameter | Range | Default | Description |
 |---|---|---|---|
@@ -156,27 +188,25 @@ Stereo Input (L/R)
 | TYPE | WHITE / PINK / BROWN / BLUE | WHITE | Noise spectral colour |
 | DRY/WET | 0.0 – 1.0 | 1.0 | Parallel dry/wet blend |
 
-#### 🟣 OTT Multiband
+#### OTT Multiband
 
 **Main Parameters:**
 
 | Parameter | Range | Default | Description |
 |---|---|---|---|
-| TIME | 0.1 – 10.0 | 1.0 | Attack/release time constant |
-| LO/MI XO | 40 – 1000 Hz | 200 Hz | Low/Mid band crossover frequency |
-| MI/HI XO | 1000 – 15000 Hz | 2500 Hz | Mid/High band crossover frequency |
+| DEPTH | 0.0 – 1.0 | 0.35 | Overall compression depth (Dry/Wet) |
+| TIME | 0.1 – 10.0 | 1.35 | Attack/release time constant multiplier |
 | GATE dB | -70 – -20 dB | -45 dB | Noise gate floor |
-| DEPTH | 0.0 – 1.0 | 1.0 | Overall compression depth (Dry/Wet) |
 
 **Per-Band Parameters (LOW / MID / HIGH):**
 
-| Parameter | Range | Default | Description |
+| Parameter | Range | Default (L/M/H) | Description |
 |---|---|---|---|
-| UP | 0.0 – 1.0 | 1.0 | Upward compression amount |
-| DOWN | 0.0 – 1.0 | 1.0 | Downward compression amount |
+| UP | 0.0 – 1.0 | 0.60 / 0.40 / 0.15 | Upward compression amount |
+| DOWN | 0.0 – 1.0 | 0.75 / 0.70 / 0.60 | Downward compression amount |
 | GAIN dB | -24 – +24 dB | 0 dB | Per-band output gain trim |
 
-#### 🟣 Glue Compressor
+#### Glue Compressor
 
 | Parameter | Range | Default | Description |
 |---|---|---|---|
@@ -187,7 +217,7 @@ Stereo Input (L/R)
 | MAKEUP dB | -12 – +12 dB | 0 dB | Makeup gain post-compression |
 | DEPTH | 0.0 – 1.0 | 1.0 | Parallel blend (Dry/Wet) |
 
-#### 🟣 Limiter
+#### Limiter
 
 | Parameter | Range | Default | Description |
 |---|---|---|---|
@@ -196,7 +226,7 @@ Stereo Input (L/R)
 
 ---
 
-## 📚 User Guide
+## User Guide
 
 Comprehensive user manuals covering every control, effect parameter, stem export workflow, and advanced techniques are included in this repository.
 
@@ -227,56 +257,66 @@ Comprehensive user manuals covering every control, effect parameter, stem export
 * **RAM:** 256 MB minimum
 * **Disk:** 50 MB
 
-> ⚠️ **Compatibility Notice:** Compiled and optimized exclusively for Windows 64-bit with AVX2. Verified operation confirmed in **Ableton Live 11 / 12**. Other DAWs (FL Studio, Bitwig, Studio One, Cubase, Reaper) may work but are currently unverified.
+> **Compatibility Notice:** Compiled and optimized exclusively for Windows 64-bit with AVX2. Verified operation confirmed in **Ableton Live 11 / 12**. Other DAWs (FL Studio, Bitwig, Studio One, Cubase, Reaper) may work but are currently unverified.
 
 ---
 
 ## Technical Architecture
 
+### Separation Algorithm
+
+ANATOMY uses a **cos² crossfade** separation in the time domain:
+- **Hold region** (Click Hold ms): `transient = input`, `tonal = 0`
+- **Fade region** (Sustain Fade-In ms): `transient = input × cos²(θ)`, `tonal = input × sin²(θ)`
+- **Post-fade region**: `transient = 0`, `tonal = input`
+
+This guarantees `transient + tonal = input` at every sample — mathematically perfect reconstruction with zero energy loss.
 
 ### DSP Modules
 
 | Module | Purpose |
 |---|---|
-| **Transient/Tonal Splitter** | Real-time signal decomposition into percussive and tonal components |
+| **cos² Crossfade Separator** | Time-domain signal decomposition with perfect reconstruction |
+| **GranularPitchShifter** | Per-lane pitch shifting with granular windowing |
 | **ADAA_Saturation** | Anti-Derivative Anti-Aliased waveshaper (2nd order ADAA) |
 | **BitCrusher** | Integer quantization + sample-rate decimation with jitter |
 | **NoiseGenerator** | Triggered noise burst (WHITE/PINK/BROWN/BLUE) with envelope and band-pass |
 | **OTT_Multiband** | 3-band upward + downward compression (TPT crossover, ZDF per-band dynamics) |
 | **GlueCompressor** | Feed-forward RMS bus compressor with soft-knee |
 | **Limiter** | Peak-hold brick-wall limiter with adjustable ceiling |
-| **EffectChain** | Lock-free ordered chain dispatcher with per-lane snapshot management |
-| **WaveformComponent** | Real-time rasterized waveform renderer (VBlank-synchronized) |
+| **EffectChain** | Lock-free ordered chain dispatcher with atomic snapshot swapping |
+| **WaveformComponent** | Real-time rasterized waveform renderer with zoom (up to 32x) |
 | **ExportRecorder** | Lock-free per-lane WAV capture with DAW drag-and-drop delivery |
+
+### Real-Time Safety
+
+- **No dynamic memory allocation in processBlock** — all buffers pre-allocated in `prepareToPlay`
+- **Lock-free thread communication** — `std::atomic` and SPSC patterns for UI↔audio
+- **Denormal protection** — `ScopedNoDenormals` prevents CPU spikes
+- **Ableton Live failsafe** — sample rate mismatch detection in processBlock with automatic re-initialization
+- **Safe teardown** — `std::unique_ptr` resource management with explicit editor cleanup
 
 ---
 
-## ⚠️ Disclaimer
+## Disclaimer
 
 ### Software Warranty
 
 This software is provided "as-is", without any warranty of any kind. While extreme care has been taken to ensure real-time safety, audio stability, and Ableton Live compatibility through rigorous testing and professional DSP practices, unexpected behavior may still occur in edge cases or unsupported hosts. Use at your own risk in mission-critical production environments.
 
-### 🔊 Audio Output & Hearing Protection — Critical Notice
+### Audio Output & Hearing Protection — Critical Notice
 
 **This plugin can generate loud audio output. User bears sole responsibility for safe audio monitoring.**
 
 * **HEARING DAMAGE RISK:** Prolonged exposure to loud sound (≥85 dB SPL) can cause permanent hearing loss. This risk applies regardless of equipment type or volume settings.
 * **SPEAKER / HEADPHONE USE:** Always monitor output levels carefully. Start with low volume and gradually increase. Never wear headphones at maximum volume. Take regular breaks during extended use.
-* **SELF RESPONSIBILITY:** The user assumes complete and exclusive responsibility for:
-  - Setting appropriate monitoring levels
-  - Protecting their own hearing and that of others
-  - Equipment safety and damage risk
-  - All consequences of audio output usage
-* **NO LIABILITY:** The developer(s) and distributor(s) of this software assume no liability for:
-  - Hearing loss, tinnitus, or any physical harm
-  - Equipment damage due to audio output
-  - Any injury or damage caused by improper use
+* **SELF RESPONSIBILITY:** The user assumes complete and exclusive responsibility for setting appropriate monitoring levels, protecting their own hearing and that of others, equipment safety and damage risk, and all consequences of audio output usage.
+* **NO LIABILITY:** The developer(s) and distributor(s) of this software assume no liability for hearing loss, tinnitus, or any physical harm, equipment damage due to audio output, or any injury or damage caused by improper use.
 * **USE AT YOUR OWN RISK:** By using this plugin, you acknowledge and accept all audio-related risks inherent to audio production software.
 
 ---
 
-**Your hearing is irreplaceable. Prioritize hearing protection at all times.** 🎧
+**Your hearing is irreplaceable. Prioritize hearing protection at all times.**
 
 ---
 
@@ -306,4 +346,4 @@ This software is built using the **JUCE 8** framework. In accordance with JUCE 8
 
 ---
 
-**Dissect your sound. 🔬**
+**Dissect your sound.**

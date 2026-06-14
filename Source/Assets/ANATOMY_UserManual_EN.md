@@ -1,6 +1,6 @@
 # ANATOMY User Manual
 
-**Version 1.0** | Target DAW: Ableton Live 11 / 12 | Format: VST3 (Windows 64-bit)
+**Version 1.1** | Target DAW: Ableton Live 11 / 12 | Format: VST3 (Windows 64-bit)
 
 ---
 
@@ -11,22 +11,32 @@
 3. [Interface Overview](#3-interface-overview)
 4. [Quick Start Guide](#4-quick-start-guide)
 5. [Core Controls Reference](#5-core-controls-reference)
-6. [Working with Effects](#6-working-with-effects)
-7. [Effect Reference](#7-effect-reference)
-8. [Stem Export](#8-stem-export)
-9. [Techniques & Workflow Tips](#9-techniques--workflow-tips)
-10. [Troubleshooting](#10-troubleshooting)
-11. [Technical Specifications](#11-technical-specifications)
+6. [Waveform Display & Zoom](#6-waveform-display--zoom)
+7. [Custom Sample Replacement](#7-custom-sample-replacement)
+8. [Working with Effects](#8-working-with-effects)
+9. [Effect Reference](#9-effect-reference)
+10. [Stem Export](#10-stem-export)
+11. [DAW Project Save & Restore](#11-daw-project-save--restore)
+12. [Techniques & Workflow Tips](#12-techniques--workflow-tips)
+13. [Troubleshooting](#13-troubleshooting)
+14. [Technical Specifications](#14-technical-specifications)
 
 ---
 
 ## 1. About ANATOMY
 
-**ANATOMY** is a high-performance, real-time VST3 plugin that splits any incoming audio into **Transient** and **Tonal** components, routing each through its own independent multi-effect chain.
+**ANATOMY** is a high-performance VST3 plugin that splits audio into **Transient** and **Tonal** components, routing each through its own independent multi-effect chain.
 
-Traditional compressors and saturators act on the entire signal at once. ANATOMY lets you work on the drum attack (transient) and the body (tonal) entirely separately — saturating just the click while applying OTT multiband compression only to the sustain, for example. Three parallel signal lanes give you complete, surgical control.
+The separation uses a **cos² crossfade** algorithm, mathematically guaranteeing that `transient + tonal = original input` at every sample — zero energy loss, zero overlap artifacts.
 
-> ⚠️ **ANATOMY is a sound design tool, not a real-time insert.** The recommended workflow is to shape your sounds using ANATOMY's separation and effects, **export them as WAV via the EXPORT function**, and load those stems into a high-quality sampler (Ableton Simpler / Sampler, Native Instruments Kontakt, etc.) for playback and further use.
+### Core Workflow
+
+1. **Drag & Drop** a WAV file onto the plugin window to load audio
+2. **Shape** transient and tonal components using separation controls, pitch, and gain
+3. **Process** each lane with independent effect chains
+4. **Export** finished stems as WAV — drag directly into your DAW or sampler
+
+> **ANATOMY is a sound design tool, not a real-time insert.** Shape your sounds, export as WAV via EXPORT, and load into a sampler (Ableton Simpler/Sampler, Kontakt, etc.) for playback.
 
 ### The Three Signal Lanes
 
@@ -34,9 +44,7 @@ Traditional compressors and saturators act on the entire signal at once. ANATOMY
 |---|---|---|
 | **TRANSIENT** | Attack / click component | Shaping punch, snap, and impact |
 | **TONAL** | Sustained / harmonic component | Sculpting body, tone, and decay |
-| **FULL MIX** | Unprocessed combined signal | Parallel processing, final limiting |
-
-Up to 6 effects per lane — in any order you choose — and finished stems can be exported as WAV and dragged directly into your DAW timeline.
+| **FULL MIX** | Recombined signal (2-color ratio display) | Parallel processing, final limiting |
 
 ---
 
@@ -53,413 +61,382 @@ Up to 6 effects per lane — in any order you choose — and finished stems can 
 | **Disk** | 50 MB |
 | **Recommended DAW** | Ableton Live 11 / 12 |
 
-> ⚠️ **Note:** ANATOMY will not run on CPUs that lack AVX2 support. Check your processor's specifications before installing.
-
 ### Installation
 
-1. Download the latest `ANATOMY.vst3` from the [Releases page](https://github.com/OTODESK4193/ANATOMY/releases/latest).
-2. Copy the `.vst3` folder to your VST3 plugin directory:
-   ```
-   C:\Program Files\Common Files\VST3\
-   ```
-3. Open Ableton Live, go to **Preferences → Plug-ins → VST3 Folder**, then click **Rescan**.
-4. Find **ANATOMY** in Live's Browser under Plug-ins and drag it onto a track.
+1. Download the latest `ANATOMY.vst3` from the [Releases page](https://github.com/OTODESK4193/ANATOMY/releases/latest)
+2. Copy the `.vst3` folder to `C:\Program Files\Common Files\VST3\`
+3. In Ableton Live, go to Preferences → Plug-ins → Rescan
+4. Drag **ANATOMY** from the Browser onto a track
 
 ---
 
 ## 3. Interface Overview
 
-The ANATOMY window is divided into four main areas:
-
 ```
-┌──────────────────────────────────────────────────────┐
-│ [Output Mode Buttons]   [BEFORE]       [Global]      │  ← Top Bar
-├───────────────┬──────────────────────────────────────┤
-│               │ FULL MIX WAVEFORM                    │  ← Waveform Displays
-│  Core         ├──────────────────────────────────────┤
-│  Controls     │ TRANSIENT WAVEFORM                   │
-│               ├──────────────────────────────────────┤
-│               │ TONAL WAVEFORM                       │
-├───────────────┴──────────────────┬───────────────────┤
-│ Parameter Dock                   │ Effect Rack       │  ← Operation Area
-└──────────────────────────────────┴───────────────────┘
+┌──────────────────────────────────────────────────────────┬──────────┐
+│ [Full Mix] [Trans Solo] [Tonal Solo] [BEFORE]            │ Effect   │
+├──────────────────────────────────────────────────────────┤ Rack     │
+│ CLICK HOLD  TRANS PITCH  TRANS GAIN │ FADE-IN  REL  TONAL PITCH GAIN│(right) │
+│   (knobs)    (knobs)     (knobs)   │  (knobs)                      │        │
+├──────────────────────────────────┬───────────────────────┤          │
+│ 1. FULL MIX WAVEFORM (2-color)   │ TONAL OFFSET [─●─]  │          │
+│                         [+][-]   │ [EXPORT]             │          │
+├──────────────────────────────────┼───────────────────────┤          │
+│ 2. TRANSIENT WAVEFORM    [+][-]  │ [Browse] [Reset]     │          │
+│                                   │ [EXPORT]             │          │
+├──────────────────────────────────┼───────────────────────┤          │
+│ 3. TONAL WAVEFORM        [+][-]  │ [Browse] [Reset]     │          │
+│                                   │ [EXPORT]             │          │
+├──────────────────────────────────┴───────────────────────┤          │
+│ Parameter Dock (knobs for selected effect)               │          │
+└──────────────────────────────────────────────────────────┴──────────┘
 ```
 
-### 3.1 Top Bar
+### 3.1 Top Bar (Output Mode)
 
-| Control | Function |
+| Button | Function |
 |---|---|
-| **FULL MIX** | Monitor the final mixed output of all three lanes |
-| **TRANS SOLO** | Solo the TRANSIENT lane only |
-| **TONAL SOLO** | Solo the TONAL lane only |
-| **BEFORE** | A/B compare the unprocessed input against the current processing |
+| **Full Mix** | Monitor the mixed output of all three lanes |
+| **Transient Solo** | Solo the TRANSIENT lane only |
+| **Tonal Solo** | Solo the TONAL lane only |
+| **BEFORE** | A/B compare against the unprocessed input (bypasses effects and gain) |
 
-### 3.2 Core Controls
+### 3.2 Core Controls (Knob Area)
 
-The left-hand area of the plugin window. Contains the primary per-lane shaping parameters that are applied before effects. See [Section 5](#5-core-controls-reference) for full details.
+Rotary knobs below the top bar. Left half = Transient parameters, right half = Tonal parameters.
 
 ### 3.3 Waveform Displays
 
-Three real-time waveform displays in the center of the window:
+Three waveform rows, each with **+/- zoom buttons** in the bottom-right corner:
 
-- **FULL MIX (top)** — Full mix input or output waveform
-- **TRANSIENT (center)** — Isolated transient component waveform
-- **TONAL (bottom)** — Isolated tonal component waveform
+- **FULL MIX (top)** — 2-color energy ratio display (cyan = transient, magenta = tonal). Tonal Offset slider and EXPORT button on the right side.
+- **TRANSIENT (center)** — Cyan waveform. Browse/Reset and EXPORT on the right.
+- **TONAL (bottom)** — Magenta waveform. Browse/Reset and EXPORT on the right.
 
-### 3.4 Effect Rack (right side)
+### 3.4 Effect Rack (right panel)
 
-For each lane (TRANSIENT / TONAL / FULL MIX), six effect toggle buttons and a **Chip Bar** (ordered list of active effects) are displayed. See [Section 6](#6-working-with-effects) for full details.
+Six effect buttons (SATU / CRUSH / NOISE / OTT / GLUE / LIMIT) and a Chip Bar for each of the three lanes.
 
 ### 3.5 Parameter Dock (bottom)
 
-When you select an effect, its parameter knobs and sliders appear here. Adjust all parameters in real time for the selected effect.
+Displays knobs for the currently selected effect.
 
 ---
 
 ## 4. Quick Start Guide
 
-Follow these steps to master the ANATOMY workflow in under 5 minutes.
+### Step 1 — Load Audio
 
-### Step 1 — Insert the Plugin
+Drag & drop a WAV file onto the ANATOMY plugin window. The waveforms appear and the audio is automatically separated into Transient and Tonal.
 
-Add ANATOMY as an Audio Effect on a drum track or drum bus channel in Ableton Live.
+### Step 2 — Audition the Separation
 
-### Step 2 — Check the Separation
+1. Press **Transient Solo** to hear just the transients
+2. Press **Tonal Solo** to hear just the tonal content
+3. Press **BEFORE** to compare against the unprocessed original
 
-1. Play your audio.
-2. Watch the waveform displays — TRANSIENT and TONAL should show clearly different signals.
-3. Press **TRANS SOLO** to audition just the transients.
-4. Press **TONAL SOLO** to audition just the tonal content.
+### Step 3 — Adjust Separation Parameters
 
-### Step 3 — Add an Effect
+- **CLICK HOLD** — Duration of the transient hold region (ms)
+- **SUSTAIN FADE-IN** — cos² crossfade duration from transient to tonal (ms)
 
-1. In the Effect Rack, click the **SATU** button in the **TRANSIENT lane**.
-   - The button lights up and a "SATU" chip appears in the Chip Bar.
-2. Click the chip to select it (it highlights blue).
-3. The Parameter Dock shows the ADAA Saturation parameters.
-4. Turn up the **DRIVE** knob to taste.
+### Step 4 — Add Effects
 
-### Step 4 — Reorder Effects
+1. Click an effect button in the Effect Rack to add it
+2. Click its chip in the Chip Bar to select it → adjust in the Parameter Dock
+3. Drag chips to reorder the processing chain
 
-Drag chips up or down in the Chip Bar to change the processing order in real time.
-Example: To change `SATU → OTT` to `OTT → SATU`, drag the OTT chip above the SATU chip.
+### Step 5 — Export
 
-### Step 5 — Export a Stem
-
-1. Press the **EXPORT** button on any lane to arm it for recording.
-2. Play your track in Ableton Live for the desired number of bars.
-3. When done, drag the WAV from the EXPORT button directly into Live's timeline.
+Press **EXPORT**, play audio in the DAW, then drag the finished WAV to the timeline.
 
 ---
 
 ## 5. Core Controls Reference
 
-These parameters shape each lane's signal *before* any effects are applied.
-
 ### 5.1 Transient Controls
 
-| Parameter | Range | Description |
-|---|---|---|
-| **Click Length** | 0.0 – 1.0 | Length of the transient extraction window. Higher values capture a longer attack region as the "transient" |
-| **Click Curve** | 0.0 – 1.0 | Envelope shape of the transient. 0 = sharp spike, 1 = smooth fade |
-| **Transient Pitch** | -24 – +24 semitones | Pitch shift applied to the TRANSIENT lane output |
-| **Transient Gain** | -24 – +24 dB | Output gain of the TRANSIENT lane |
+| Parameter | Range | Default | Description |
+|---|---|---|---|
+| **CLICK HOLD (ms)** | 0.0 – 50.0 | 10.0 | Transient hold duration. During this window: `transient = input`, `tonal = 0` |
+| **TRANSIENT PITCH (st)** | -12 – +12 | 0.0 | Pitch shift applied to the transient lane (semitones) |
+| **TRANSIENT GAIN (dB)** | -60 – +6 | 0.0 | Output gain of the transient lane |
 
 ### 5.2 Tonal Controls
 
-| Parameter | Range | Description |
-|---|---|---|
-| **Sustain Release** | 0.0 – 1.0 | Length of the tonal decay tail. Higher values preserve longer sustain |
-| **Tonal Pitch** | -24 – +24 semitones | Pitch shift applied to the TONAL lane output |
-| **Tonal Gain** | -24 – +24 dB | Output gain of the TONAL lane |
+| Parameter | Range | Default | Description |
+|---|---|---|---|
+| **SUSTAIN FADE-IN (ms)** | 1.0 – 100.0 | 5.0 | cos² crossfade duration from transient to tonal |
+| **SUSTAIN RELEASE (ms)** | 10 – 5000 | 500 | Tonal decay tail length |
+| **TONAL PITCH (st)** | -12 – +12 | 0.0 | Pitch shift applied to the tonal lane (semitones) |
+| **TONAL GAIN (dB)** | -60 – +6 | 0.0 | Output gain of the tonal lane |
 
-### 5.3 Usage Tips
-
-**To enhance kick drum attack:**
-- Set Click Length around 0.3 to extract just the punch
-- Lower Click Curve for a sharper transient spike
-- Raise Transient Gain by +3 to +6 dB to bring the attack forward
-
-**To tone-shape a snare body separately:**
-- Set Sustain Release to 0.4–0.6 to capture enough tail
-- Insert a Glue Compressor on the TONAL lane to smooth and control the body
-
----
-
-## 6. Working with Effects
-
-### 6.1 Adding an Effect
-
-1. Click any of the six effect buttons (**SATU / CRUSH / NOISE / OTT / GLUE / LIMIT**) in a lane's Effect Rack.
-2. The button lights up and a chip for that effect appears in the Chip Bar below.
-
-> **Note:** Clicking the button again does **not** toggle it off. To remove an effect, right-click its chip (see below).
-
-### 6.2 Selecting an Effect for Editing
-
-Click any chip in the Chip Bar to select it (highlighted in blue). The Parameter Dock will immediately load that effect's controls.
-
-### 6.3 Reordering Effects (Drag & Drop)
-
-Drag chips vertically within the Chip Bar to rearrange the processing chain order.
-
-- **While dragging:** A drop indicator line shows the insertion point.
-- **Same lane only:** Cross-lane drag & drop is not supported.
-
-### 6.4 Removing an Effect
-
-Right-click any chip in the Chip Bar to open the context menu:
-
-- **Remove** — Removes the effect from the chain
-- **Move Up** — Shifts the effect one position earlier in the chain
-- **Move Down** — Shifts the effect one position later in the chain
-
-### 6.5 Using Multiple Effects
-
-All six effects can be active simultaneously on a single lane. The processing order is top-to-bottom in the Chip Bar (the topmost chip is processed first).
-
-**Example: Typical transient chain for drums:**
-```
-SATU → OTT → LIMIT
-```
-① Saturation adds harmonic character to the attack
-② OTT controls dynamics and adds density
-③ Limiter protects against output clipping
-
----
-
-## 7. Effect Reference
-
-### 7.1 🟣 ADAA Saturation (SATU)
-
-A high-quality soft saturation built on Anti-Derivative Anti-Aliasing (ADAA) technology. Unlike conventional waveshapers, ADAA mathematically eliminates aliasing artifacts, keeping the high end clean and transparent even at high drive amounts.
-
-**Parameters:**
+### 5.3 Tonal Offset
 
 | Parameter | Range | Default | Description |
 |---|---|---|---|
-| **DRIVE** | 1.0 – 16.0 | 2.0 | Saturation drive amount. Higher values produce more harmonic distortion |
-| **ASYMMETRY** | 0.0 – 1.0 | 0.0 | Waveform asymmetry. Increases even-order harmonics (2nd, 4th) for a warmer, more "tube-like" character |
-| **OUT TRIM** | -12 – +12 dB | 0 dB | Output level trim after saturation |
-| **PRE HPF** | 20 – 2000 Hz | 20 Hz | High-pass filter applied before saturation. Raising this protects low-end from being distorted |
-| **DRY/WET** | 0.0 – 1.0 | 1.0 | Parallel blend with the dry signal. 0.5 = 50/50 parallel saturation |
+| **TONAL OFFSET (ms)** | -500 – +500 | 0.0 | Shifts tonal playback start position relative to transient |
 
-**Tips:**
-- For drum transients, start with DRIVE 2–4, ASYMMETRY 0.2–0.4 for a subtle, musical result
-- Set PRE HPF to ~200 Hz to leave kick low-end untouched while saturating the click
+Located as a horizontal slider on the right side of the Full Mix waveform area. A symmetric skew makes the ±50ms range easy to fine-tune.
 
----
+- **Negative (left)**: Tonal starts earlier — use to close gaps when Transient Pitch is raised
+- **Positive (right)**: Tonal starts later — delays tonal onset
 
-### 7.2 🟣 BitCrusher (CRUSH)
-
-A classic Lo-Fi effect combining bit-depth reduction and sample-rate decimation.
-
-**Parameters:**
-
-| Parameter | Range | Default | Description |
-|---|---|---|---|
-| **BITS** | 2 – 24 bit | 8 | Bit depth. Lower values create coarser quantization noise (8-bit = classic game console sound) |
-| **DOWNSAMPLE** | 1 – 32× | 4 | Sample-rate decimation factor. Higher values reduce effective sample rate, creating aliasing artifacts |
-| **JITTER** | 0.0 – 1.0 | 0.0 | Sample timing jitter. Adds randomized instability for vintage hardware feel |
-| **DRY/WET** | 0.0 – 1.0 | 1.0 | Parallel blend with the dry signal |
-
-**Tips:**
-- Apply to the TRANSIENT lane with BITS 6–10 for a classic drum machine attack texture
-- Keep DOWNSAMPLE low (2–4) with DRY/WET around 0.3 for a subtle digital flavor
+This setting is reflected in all three individual exports (Full Mix, Transient, Tonal).
 
 ---
 
-### 7.3 🟣 Noise Generator (NOISE)
+## 6. Waveform Display & Zoom
 
-A triggered noise burst generator. Detects input transients and fires a shaped noise envelope — perfect for adding snare wire texture, room ambience, or layered noise character.
+### 6.1 2-Color Energy Ratio (Full Mix only)
 
-**Parameters:**
+The Full Mix waveform visualizes the transient/tonal energy ratio with two colors: cyan for transient contribution, magenta for tonal contribution.
+
+### 6.2 Zoom
+
+All three waveform displays have **+** / **-** buttons in the bottom-right corner.
+
+- **+** click: Zoom in 2x (from the left edge)
+- **-** click: Zoom out 2x
+- Range: x1 to x32
+- Current zoom level is displayed next to the buttons
+
+Zoom in to inspect very short transients in detail while adjusting parameters.
+
+### 6.3 START/END Trimming
+
+Drag the yellow (START) and red (END) markers on each waveform to trim the playback region.
+
+### 6.4 DRAG EXPORT
+
+Each waveform's top-right **DRAG EXPORT** button lets you drag the offline-rendered waveform directly into your DAW timeline.
+
+---
+
+## 7. Custom Sample Replacement
+
+The TRANSIENT and TONAL lanes each have **Browse** and **Reset** buttons:
+
+- **Browse**: Load any WAV file to replace the separated component with your own sample
+- **Reset**: Clear the custom sample and revert to the original cos² separation result
+
+Custom samples work with all export features — the replaced audio is correctly included in exports.
+
+---
+
+## 8. Working with Effects
+
+### 8.1 Adding an Effect
+
+Click any of the six effect buttons (**SATU / CRUSH / NOISE / OTT / GLUE / LIMIT**) in a lane's Effect Rack. The button lights up and a chip appears in the Chip Bar.
+
+### 8.2 Selecting an Effect
+
+Click a chip in the Chip Bar to select it (highlighted). The Parameter Dock loads that effect's controls.
+
+### 8.3 Reordering Effects
+
+Drag chips vertically within the Chip Bar to rearrange processing order. Same lane only.
+
+### 8.4 Removing an Effect
+
+Right-click a chip for the context menu: **Remove** / **Move Up** / **Move Down**.
+
+### 8.5 Processing Order
+
+Effects are processed top-to-bottom in the Chip Bar. All six can be active simultaneously on a single lane.
+
+---
+
+## 9. Effect Reference
+
+### 9.1 ADAA Saturation (SATU)
+
+High-quality Anti-Derivative Anti-Aliased soft saturation. Eliminates aliasing artifacts mathematically for clean harmonics even at high drive.
 
 | Parameter | Range | Default | Description |
 |---|---|---|---|
-| **DECAY ms** | 1 – 1000 ms | 100 ms | Noise burst decay time |
-| **GAIN dB** | -60 – 0 dB | 0 dB | Noise output level |
-| **ATTACK ms** | 0 – 50 ms | 0 ms | Noise burst attack time |
-| **BP FREQ** | 0 – 4000 Hz | 0 Hz | Band-pass filter center frequency. 0 = bypass (full spectrum) |
+| **DRIVE** | 1.0 – 16.0 | 2.0 | Saturation drive amount |
+| **ASYMMETRY** | 0.0 – 1.0 | 0.0 | Waveform asymmetry (even harmonics) |
+| **OUT TRIM** | -12 – +12 dB | 0 | Output level trim |
+| **PRE HPF** | 20 – 2000 Hz | 20 | Pre-saturation high-pass filter |
+| **DRY/WET** | 0.0 – 1.0 | 1.0 | Parallel blend |
+
+### 9.2 BitCrusher (CRUSH)
+
+Lo-Fi effect with bit-depth reduction and sample-rate decimation.
+
+| Parameter | Range | Default | Description |
+|---|---|---|---|
+| **BITS** | 2 – 24 | 8 | Bit depth |
+| **DOWNSAMPLE** | 1 – 32x | 4 | Sample rate decimation factor |
+| **JITTER** | 0.0 – 1.0 | 0.0 | Sample timing jitter |
+| **DRY/WET** | 0.0 – 1.0 | 1.0 | Parallel blend |
+
+### 9.3 Noise Generator (NOISE)
+
+Triggered noise burst effect.
+
+| Parameter | Range | Default | Description |
+|---|---|---|---|
+| **DECAY ms** | 1 – 1000 | 100 | Noise burst decay time |
+| **GAIN dB** | -60 – 0 | 0 | Noise output level |
+| **ATTACK ms** | 0 – 50 | 0 | Noise burst attack time |
+| **BP FREQ** | 0 – 4000 Hz | 0 | Band-pass center frequency (0 = bypass) |
 | **TYPE** | WHITE / PINK / BROWN / BLUE | WHITE | Noise spectral character |
-| **DRY/WET** | 0.0 – 1.0 | 1.0 | Parallel blend with the dry signal |
+| **DRY/WET** | 0.0 – 1.0 | 1.0 | Parallel blend |
 
-**Noise Type Guide:**
+### 9.4 OTT Multiband Compressor (OTT)
 
-| Type | Spectral Character | Typical Use |
-|---|---|---|
-| **WHITE** | Flat across all frequencies | Bright, crisp "shhh" texture |
-| **PINK** | -3 dB/octave above | Natural room ambience |
-| **BROWN** | -6 dB/octave above | Low, warm, thuddy texture |
-| **BLUE** | +3 dB/octave above | Ultra-bright, airy sheen |
+3-band upward/downward dynamics processor.
 
----
-
-### 7.4 🟣 OTT Multiband Compressor (OTT)
-
-A 3-band upward/downward dynamics processor in the style of the famous "OTT" preset. Upward compression lifts quiet signals, downward compression tames loud ones — together they create a dense, hyper-compressed sound full of movement.
-
-#### Main Parameters
+**Main Parameters:**
 
 | Parameter | Range | Default | Description |
 |---|---|---|---|
-| **TIME** | 0.1 – 10.0 | 1.0 | Attack/release time constant. Lower = faster response |
-| **LO/MI XO** | 40 – 1000 Hz | 200 Hz | Low/Mid band crossover frequency |
-| **MI/HI XO** | 1000 – 15000 Hz | 2500 Hz | Mid/High band crossover frequency |
-| **GATE dB** | -70 – -20 dB | -45 dB | Noise gate floor. Signals below this are not compressed |
-| **DEPTH** | 0.0 – 1.0 | 1.0 | Overall compression depth (dry/wet blend) |
+| **DEPTH** | 0.0 – 1.0 | 0.35 | Overall compression depth |
+| **TIME** | 0.1 – 10.0 | 1.35 | Time constant multiplier |
+| **GATE dB** | -70 – -20 | -45 | Noise gate floor |
 
-#### The BANDS Button
+**Per-Band Parameters (LOW / MID / HIGH):**
 
-Click the **BANDS** button (top-right of the OTT Parameter Dock) to access per-band controls for all three frequency bands.
+| Parameter | Range | Default (L/M/H) | Description |
+|---|---|---|---|
+| **UP** | 0.0 – 1.0 | 0.60 / 0.40 / 0.15 | Upward compression amount |
+| **DOWN** | 0.0 – 1.0 | 0.75 / 0.70 / 0.60 | Downward compression amount |
+| **GAIN dB** | -24 – +24 | 0 | Per-band output gain |
 
-#### Per-Band Parameters (LOW / MID / HIGH)
+### 9.5 Glue Compressor (GLUE)
+
+Feed-forward RMS bus compressor.
 
 | Parameter | Range | Default | Description |
 |---|---|---|---|
-| **UP** | 0.0 – 1.0 | 1.0 | Upward compression amount (lifts quiet signals) |
-| **DOWN** | 0.0 – 1.0 | 1.0 | Downward compression amount (tames loud signals) |
-| **GAIN dB** | -24 – +24 dB | 0 dB | Per-band output gain trim |
-
-**Tips:**
-- On the TRANSIENT lane, OTT evens out attack dynamics across frequency bands for a punchy, focused drum sound
-- Keep DEPTH at 0.3–0.5 to blend with the original signal and preserve naturalness
-
----
-
-### 7.5 🟣 Glue Compressor (GLUE)
-
-A feed-forward RMS bus compressor modeled on classic hardware bus compressors. The "glue" effect comes from its smooth, musically natural behavior that binds multiple elements together without sounding heavy-handed.
-
-**Parameters:**
-
-| Parameter | Range | Default | Description |
-|---|---|---|---|
-| **THR dBFS** | -40 – 0 dB | -18 dB | Compression threshold |
+| **THR dBFS** | -40 – 0 | -18 | Threshold |
 | **RATIO** | 1.0 – 20.0 | 2.0 | Compression ratio |
-| **ATK ms** | 1 – 100 ms | 30 ms | Attack time. Shorter = transients are compressed too; longer = transients pass through |
-| **REL ms** | 10 – 1000 ms | 200 ms | Release time |
-| **MAKEUP dB** | -12 – +12 dB | 0 dB | Makeup gain applied after compression |
-| **DEPTH** | 0.0 – 1.0 | 1.0 | Parallel blend (New York compression) |
+| **ATK ms** | 1 – 100 | 30 | Attack time |
+| **REL ms** | 10 – 1000 | 200 | Release time |
+| **MAKEUP dB** | -12 – +12 | 0 | Makeup gain |
+| **DEPTH** | 0.0 – 1.0 | 1.0 | Parallel blend |
 
-**Tips:**
-- Insert on the FULL MIX lane to add cohesion to the final mixed signal
-- ATK 30–50 ms lets transients punch through while controlling sustain
-- DEPTH 0.5–0.7 blends parallel compression while preserving original dynamics
+### 9.6 Limiter (LIMIT)
 
----
-
-### 7.6 🟣 Limiter (LIMIT)
-
-A transparent peak-hold brick-wall limiter. Use as the final stage of any effect chain to prevent output clipping.
-
-**Parameters:**
+Brick-wall peak limiter.
 
 | Parameter | Range | Default | Description |
 |---|---|---|---|
-| **CEILING dB** | -24 – 0 dB | -0.1 dB | Output ceiling. Signals above this level are hard-limited |
-| **DRY/WET** | 0.0 – 1.0 | 1.0 | Parallel blend with the dry signal |
-
-**Tips:**
-- Setting CEILING to -1.0 dB provides clean protection against digital clipping
-- DRY/WET at 0.7–0.9 achieves transparent limiting that preserves the original dynamic character
+| **CEILING dB** | -24 – 0 | -0.1 | Output ceiling |
+| **DRY/WET** | 0.0 – 1.0 | 1.0 | Parallel blend |
 
 ---
 
-## 8. Stem Export
+## 10. Stem Export
 
-ANATOMY records the output of any lane in real time as a WAV file, which you can drag directly into your DAW's timeline.
+### EXPORT Button Method
 
-### Export Workflow
+1. Click a lane's **EXPORT** button (turns orange — recording armed)
+2. Play audio in the DAW
+3. When recording is done, the button turns green (DRAG OK!)
+4. Drag the WAV from the button into the DAW timeline or desktop
 
-1. Click the **EXPORT** button on the lane you want to capture.
-   - The button lights up, indicating recording mode is armed.
-2. Play back audio in Ableton Live for the desired number of bars.
-3. Stop playback when you have captured the desired amount.
-4. Click the EXPORT button again (or drag from it) to deliver the WAV file to Live's timeline or your Desktop.
+### DRAG EXPORT Method
+
+Each waveform's top-right **DRAG EXPORT** button lets you drag the offline-rendered waveform directly into the DAW.
 
 ### Notes
 
-- The exported stem is the post-effect signal (effects applied).
-- Files are exported as 32-bit float WAV.
-- Do not change Ableton's tempo or playback rate during recording.
+- Exported signal includes all applied effects
+- File format: 32-bit float WAV
+- Tonal Offset is reflected in all three individual exports (Full Mix, Transient, Tonal)
+- Do not change DAW tempo or playback rate during recording
 
 ---
 
-## 9. Techniques & Workflow Tips
+## 11. DAW Project Save & Restore
 
-> **Core Workflow:** Shape sounds in ANATOMY → **EXPORT as WAV** → Load into a high-quality sampler. ANATOMY is a sound design tool. Continuous real-time use as a mix insert is not the intended workflow.
+ANATOMY automatically saves the following data with your DAW project:
 
-### 9.1 Snare Saturation + Noise Layering
+- Loaded audio data (the WAV content)
+- File sample rate
+- Custom replacement samples (Transient and Tonal)
+- All parameter values (including Tonal Offset)
+- START/END trim positions
 
-1. Add `SATU` to the TRANSIENT lane (DRIVE 4.0, ASYMMETRY 0.3)
-2. Add `NOISE` to the same TRANSIENT lane (TYPE: PINK, DECAY 80ms, BP FREQ 3000 Hz)
-3. In the Chip Bar, ensure `SATU → NOISE` order (saturate first, then layer noise)
-
-### 9.2 Kick Low-End Enhancement
-
-1. Add `OTT` to the TONAL lane, then use BANDS to boost the LOW band UP parameter
-2. Set Transient Pitch to -2 to -4 semitones to lower the attack slightly
-3. Raise Transient Gain by +3 dB to push the punch forward
-
-### 9.3 Parallel Compression (New York Style)
-
-1. Add `GLUE` to the FULL MIX lane (RATIO 4:1, ATK 10ms, MAKEUP +6dB)
-2. Set DEPTH to 0.4 (40% compressed, 60% dry blend)
-3. This adds powerful punch while preserving the original dynamic range
-
-### 9.4 A/B Comparison with the BEFORE Button
-
-Whenever you're unsure if processing is helping or hurting, hit the **BEFORE** button to instantly compare against the unprocessed input. If things sound over-processed, reduce the DRY/WET of individual effects rather than disabling them entirely.
-
-### 9.5 Creative Pitch Separation
-
-ANATOMY's per-lane pitch control enables creative sound design beyond traditional processing:
-
-- Raise **Transient Pitch** by +7 semitones to create an octave-above click that sits in a different frequency space
-- Lower **Tonal Pitch** by -12 semitones to create a sub-octave body underneath
-- Blend Tonal Gain carefully to control how prominent the sub content becomes
+When you reopen the project, all buffers are restored and the cos² separation re-runs automatically in the background. No need to re-import audio files.
 
 ---
 
-## 10. Troubleshooting
+## 12. Techniques & Workflow Tips
+
+### 12.1 Closing Gaps When Transient Pitch Is Raised
+
+Raising Transient Pitch makes the transient play faster and shorter. If a gap appears between Transient and Tonal in the Full Mix, move the **TONAL OFFSET** slider to the left (negative) to shift the tonal start position earlier.
+
+### 12.2 Kick Attack Enhancement
+
+1. Set CLICK HOLD to 5–15ms
+2. Keep SUSTAIN FADE-IN short (2–5ms) for a sharp split
+3. Add SATU to the TRANSIENT lane (DRIVE 3.0)
+4. Raise TRANSIENT GAIN by +3 to +6 dB
+
+### 12.3 Snare Body Shaping
+
+1. Add OTT to the TONAL lane, DEPTH 0.3–0.5
+2. Add GLUE to smooth the sustain
+3. Adjust SUSTAIN RELEASE for the desired tail length
+
+### 12.4 Sample Layering via Custom Replacement
+
+1. Use TRANSIENT lane's **Browse** to load a different attack sample
+2. Adjust Transient Pitch and Gain to blend
+3. Export the combined sound (original tonal + custom transient)
+
+### 12.5 A/B Comparison
+
+Press **BEFORE** to instantly hear the unprocessed signal. If processing sounds overdone, reduce individual effect DRY/WET values rather than removing effects entirely.
+
+---
+
+## 13. Troubleshooting
 
 ### No audio output
 
-- Confirm ANATOMY is correctly inserted as an Audio Effect in Ableton Live
-- Check that TRANSIENT, TONAL, and FULL MIX Gain values are not severely reduced
-- Make sure the BEFORE button is not latched active (click to toggle off)
+- Confirm a WAV file is loaded (waveforms should be visible)
+- Check that Gain values are not severely reduced
+- Make sure BEFORE is not accidentally active
 
-### Plugin not showing in Ableton Live
+### Plugin not showing in DAW
 
-- Confirm `ANATOMY.vst3` is in `C:\Program Files\Common Files\VST3\`
-- In Live's Preferences → Plug-ins, verify the VST3 folder path and click **Rescan**
-- Confirm you are running 64-bit Ableton Live (32-bit is not supported)
+- Confirm `.vst3` is in `C:\Program Files\Common Files\VST3\`
+- Rescan plugins in the DAW
+- Confirm you're using 64-bit DAW (32-bit not supported)
 
 ### High CPU usage
 
-- Increase Ableton's audio buffer size to 256–512 samples
-- Remove any unused effects from chains
-- Reduce the number of active effects on the FULL MIX lane
+- Increase DAW buffer size to 256–512 samples
+- Remove unused effects from chains
 
-### Effect parameters not showing in the Dock
+### Samples lost after reopening project
 
-- Click the chip in the Chip Bar to select the effect (it should highlight blue)
-- If no chips are in the Chip Bar, click the effect button to add the effect first
+- Update to v1.1 or later. v1.0 did not include DAW project save support
+- Re-save the project and reopen
 
-### OTT BANDS button not visible
+### OTT produces extremely loud output
 
-- Try widening the plugin window if your DAW supports it
-- Confirm the OTT effect chip is selected (highlighted blue) in the Chip Bar
-
-### Exported WAV is empty or silent
-
-- Make sure you played audio **after** pressing the EXPORT button (while it was lit)
-- Try a longer playback segment and re-export
+- Fixed in v1.1. Please update to the latest version
 
 ---
 
-## 11. Technical Specifications
+## 14. Technical Specifications
+
+### Separation Algorithm
+
+cos² crossfade separation (time-domain):
+- **Hold region** (Click Hold ms): `transient = input`, `tonal = 0`
+- **Fade region** (Sustain Fade-In ms): `transient = input × cos²(θ)`, `tonal = input × sin²(θ)`
+- **Post-fade region**: `transient = 0`, `tonal = input`
+
+Mathematically guarantees `transient + tonal = input` at every sample.
 
 ### Signal Processing
 
@@ -467,25 +444,19 @@ ANATOMY's per-lane pitch control enables creative sound design beyond traditiona
 |---|---|
 | Sample precision | 32-bit float |
 | Channels | Stereo (2 in / 2 out) |
-| Latency | 0 samples (zero-latency) |
+| Latency | 0 samples |
 | Supported sample rates | 44100 / 48000 / 88200 / 96000 Hz |
 | Filter topology | ZDF / TPT (Zero-Delay Feedback) |
 | Parameter smoothing | Sample-accurate via SmoothedValue |
 
-### Real-Time Safety Design
+### Real-Time Safety
 
-ANATOMY is engineered for zero-compromise audio-thread safety:
-
-- **No dynamic memory allocation in processBlock** — all buffers pre-allocated at startup
-- **Lock-free thread communication** — UI↔audio communication via SPSC queues
-- **Denormal protection** — `ScopedNoDenormals` prevents CPU spikes from subnormal floats
-- **Ableton Live failsafe** — sample rate mismatch detection with automatic re-initialization
-- **Safe teardown** — `unique_ptr` resource management with explicit editor cleanup
-
-### Full Parameter Reference
-
-All parameters and ranges are documented in the [README Parameter Reference](../../README.md#parameter-reference).
+- No dynamic memory allocation in processBlock — all buffers pre-allocated in prepareToPlay
+- `std::atomic` and lock-free patterns for UI↔audio communication
+- `ScopedNoDenormals` prevents CPU spikes from subnormal floats
+- Ableton Live sample rate mismatch failsafe in processBlock
+- `std::unique_ptr` resource management with explicit editor cleanup
 
 ---
 
-*ANATOMY User Manual v1.0 | Developer: @OTODESK | Framework: JUCE 8.0.x | Target: Ableton Live 11/12*
+*ANATOMY User Manual v1.1 | Developer: @OTODESK | Framework: JUCE 8.0.x | Target: Ableton Live 11/12*
