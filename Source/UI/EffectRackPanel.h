@@ -420,6 +420,15 @@ public:
         addAndMakeVisible(*transChipBar);
         addAndMakeVisible(*tonalChipBar);
         addAndMakeVisible(*fullMixChipBar);
+
+        // エディタ再開時：プロセッサに保持されたエフェクト順序を復元
+        transIndices   = processor.getEffectOrder(TargetRoute::Transient);
+        tonalIndices   = processor.getEffectOrder(TargetRoute::Tonal);
+        fullMixIndices = processor.getEffectOrder(TargetRoute::FullMix);
+        syncBtnStates(transButtons,   transIndices);
+        syncBtnStates(tonalButtons,   tonalIndices);
+        syncBtnStates(fullMixButtons, fullMixIndices);
+        refreshAllChipBars();
     }
 
     ~EffectRackPanel() override = default;

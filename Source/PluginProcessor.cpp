@@ -308,6 +308,11 @@ void AnatomyAudioProcessor::synchronizePoolParameters() noexcept
 
 void AnatomyAudioProcessor::updateRouteOrder(TargetRoute route, const std::vector<int>& activeEffectIndices)
 {
+    // エフェクト処理順を保持（エディタ再構築時の復元用）
+    if (route == TargetRoute::Transient)     transEffectOrder = activeEffectIndices;
+    else if (route == TargetRoute::Tonal)    tonalEffectOrder = activeEffectIndices;
+    else if (route == TargetRoute::FullMix)  fullMixEffectOrder = activeEffectIndices;
+
     std::vector<AudioEffect*> sortedFX;
     sortedFX.reserve(activeEffectIndices.size());
     for (const int idx : activeEffectIndices)
@@ -519,10 +524,27 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
             }
             else
             {
-                double rawProgress = activeVoice.clickReadIndex;
-                if (rawProgress >= rawInputBuffer.getNumSamples())
+                // Before モード: ソロ状態に応じて終了判定を切り替え
+                int soloMode = currentSoloMode.load(std::memory_order_acquire);
+                if (soloMode == 0)
                 {
-                    activeVoice.reset(); activeIsMuting = false; activeMuteGain = 1.0f;
+                    // ソロなし: rawInputBuffer (完全原音) の長さで終了
+                    if (activeVoice.clickReadIndex >= rawInputBuffer.getNumSamples())
+                    {
+                        activeVoice.reset(); activeIsMuting = false; activeMuteGain = 1.0f;
+                    }
+                }
+                else
+                {
+                    // ソロあり: 分離バッファの長さで終了
+                    double clickPos = ((transStartOffsetMs / 1000.0f) * fileSampleRate) + activeVoice.clickReadIndex;
+                    double sustainPos = ((tonalStartOffsetMs / 1000.0f) * fileSampleRate) + activeVoice.sustainReadIndex;
+                    double checkIdx = (soloMode == 1) ? clickPos : sustainPos;
+                    int bufLen = (soloMode == 1) ? transBufferThread.getNumSamples() : tonalBufferThread.getNumSamples();
+                    if (checkIdx >= bufLen || activeVoice.releaseGain <= 0.001f || activeMuteGain <= 0.001f)
+                    {
+                        activeVoice.reset(); activeIsMuting = false; activeMuteGain = 1.0f;
+                    }
                 }
             }
 
@@ -557,10 +579,24 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
                 }
                 else
                 {
-                    double rawProgress = releasingVoices[i].clickReadIndex;
-                    if (rawProgress >= rawInputBuffer.getNumSamples())
+                    int soloMode = currentSoloMode.load(std::memory_order_acquire);
+                    if (soloMode == 0)
                     {
-                        releasingVoices[i].reset(); releasingIsMuting[i] = false; releasingMuteGain[i] = 1.0f;
+                        if (releasingVoices[i].clickReadIndex >= rawInputBuffer.getNumSamples())
+                        {
+                            releasingVoices[i].reset(); releasingIsMuting[i] = false; releasingMuteGain[i] = 1.0f;
+                        }
+                    }
+                    else
+                    {
+                        double clickPos = ((transStartOffsetMs / 1000.0f) * fileSampleRate) + releasingVoices[i].clickReadIndex;
+                        double sustainPos = ((tonalStartOffsetMs / 1000.0f) * fileSampleRate) + releasingVoices[i].sustainReadIndex;
+                        double checkIdx = (soloMode == 1) ? clickPos : sustainPos;
+                        int bufLen = (soloMode == 1) ? transBufferThread.getNumSamples() : tonalBufferThread.getNumSamples();
+                        if (checkIdx >= bufLen || releasingVoices[i].releaseGain <= 0.001f || releasingMuteGain[i] <= 0.001f)
+                        {
+                            releasingVoices[i].reset(); releasingIsMuting[i] = false; releasingMuteGain[i] = 1.0f;
+                        }
                     }
                 }
 
@@ -696,22 +732,63 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     int cIdx = static_cast<int>(exactClickIdx);
     int sIdx = static_cast<int>(exactSustainIdx);
 
-    if (isBefore || (!hasCustomTrans && !hasCustomTonal && std::abs(transScale - 1.0f) < 0.01f && std::abs(tonalScale - 1.0f) < 0.01f))
-    {
-        // pitchRatio != 1.0 の場合（サンプルレート変換時）、整数切り捨てではなく
-        // 線形補間を使用してエイリアシングアーティファクトとピッチ感の変化を低減。
-        auto readInterpolated = [](const juce::AudioBuffer<float>& buf, int ch, double idx) noexcept -> float
-            {
-                const int maxSmp = buf.getNumSamples();
-                if (maxSmp <= 0 || idx < 0.0) return 0.0f;
-                if (idx >= static_cast<double>(maxSmp - 1)) return 0.0f;
-                const int i0 = static_cast<int>(idx);
-                const int i1 = i0 + 1;
-                const float frac = static_cast<float>(idx - static_cast<double>(i0));
-                const float* data = buf.getReadPointer(ch);
-                return data[i0] + frac * (data[i1] - data[i0]);
-            };
+    // 線形補間読み取りラムダ（SR変換時のエイリアシング防止）
+    auto readInterpolated = [](const juce::AudioBuffer<float>& buf, int ch, double idx) noexcept -> float
+        {
+            const int maxSmp = buf.getNumSamples();
+            if (maxSmp <= 0 || idx < 0.0) return 0.0f;
+            if (idx >= static_cast<double>(maxSmp - 1)) return 0.0f;
+            const int i0 = static_cast<int>(idx);
+            const int i1 = i0 + 1;
+            const float frac = static_cast<float>(idx - static_cast<double>(i0));
+            const float* data = buf.getReadPointer(ch);
+            return data[i0] + frac * (data[i1] - data[i0]);
+        };
 
+    if (isBefore)
+    {
+        int soloMode = currentSoloMode.load(std::memory_order_acquire);
+
+        if (soloMode == 0)
+        {
+            // BUG3修正: Before(ソロなし) = D&DしたWAVの完全原音を再生
+            // trans/tonal分離なし、エフェクトなし、オフセットなし
+            double rawIdx = voice.clickReadIndex;
+            if (rawInputBuffer.getNumSamples() > 0 && rawIdx >= 0.0 && rawIdx < static_cast<double>(rawInputBuffer.getNumSamples() - 1))
+            {
+                float rawL = readInterpolated(rawInputBuffer, 0, rawIdx);
+                float rawR = rawInputBuffer.getNumChannels() > 1
+                    ? readInterpolated(rawInputBuffer, 1, rawIdx) : rawL;
+                // trans+tonalの合計として出力（processBlockで transL+tonalL するため半分ずつ）
+                outTransL = rawL * 0.5f; outTransR = rawR * 0.5f;
+                outTonalL = rawL * 0.5f; outTonalR = rawR * 0.5f;
+            }
+        }
+        else
+        {
+            // BUG4修正: Solo+Before = サンプルAのオリジナル分離Trans/Tonalを再生
+            // customバッファは無視、常にtransBufferThread/tonalBufferThreadから読む
+            if (soloMode == 1 && transBufferThread.getNumSamples() > 0 && exactClickIdx >= 0.0 && exactClickIdx < static_cast<double>(transBufferThread.getNumSamples() - 1))
+            {
+                outTransL = readInterpolated(transBufferThread, 0, exactClickIdx);
+                outTransR = transBufferThread.getNumChannels() > 1
+                    ? readInterpolated(transBufferThread, 1, exactClickIdx) : outTransL;
+            }
+            if (soloMode == 2 && tonalBufferThread.getNumSamples() > 0 && exactSustainIdx >= 0.0 && exactSustainIdx < static_cast<double>(tonalBufferThread.getNumSamples() - 1))
+            {
+                outTonalL = readInterpolated(tonalBufferThread, 0, exactSustainIdx);
+                outTonalR = tonalBufferThread.getNumChannels() > 1
+                    ? readInterpolated(tonalBufferThread, 1, exactSustainIdx) : outTonalL;
+            }
+        }
+
+        voice.clickReadIndex += voice.pitchRatio;
+        voice.sustainReadIndex += voice.pitchRatio;
+        return;
+    }
+
+    if (!hasCustomTrans && !hasCustomTonal && std::abs(transScale - 1.0f) < 0.01f && std::abs(tonalScale - 1.0f) < 0.01f)
+    {
         if (currentSoloMode != 2 && transBufferThread.getNumSamples() > 0 && exactClickIdx < static_cast<double>(transBufferThread.getNumSamples() - 1))
         {
             outTransL = readInterpolated(transBufferThread, 0, exactClickIdx);
@@ -719,7 +796,7 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
                 ? readInterpolated(transBufferThread, 1, exactClickIdx)
                 : outTransL;
         }
-        if (currentSoloMode != 1 && tonalBufferThread.getNumSamples() > 0 && exactSustainIdx < static_cast<double>(tonalBufferThread.getNumSamples() - 1))
+        if (currentSoloMode != 1 && tonalBufferThread.getNumSamples() > 0 && exactSustainIdx >= 0.0 && exactSustainIdx < static_cast<double>(tonalBufferThread.getNumSamples() - 1))
         {
             outTonalL = readInterpolated(tonalBufferThread, 0, exactSustainIdx);
             outTonalR = tonalBufferThread.getNumChannels() > 1
@@ -1284,6 +1361,16 @@ void AnatomyAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
     out.writeFloat(transEndOffsetMs);
     out.writeFloat(tonalStartOffsetMs);
     out.writeFloat(tonalEndOffsetMs);
+
+    // 7. エフェクト処理順（ChipBar復元用）
+    auto writeOrder = [&](const std::vector<int>& order)
+    {
+        out.writeInt(static_cast<int>(order.size()));
+        for (int idx : order) out.writeInt(idx);
+    };
+    writeOrder(transEffectOrder);
+    writeOrder(tonalEffectOrder);
+    writeOrder(fullMixEffectOrder);
 }
 
 void AnatomyAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
@@ -1332,6 +1419,43 @@ void AnatomyAudioProcessor::setStateInformation(const void* data, int sizeInByte
         transEndOffsetMs = in.readFloat();
         tonalStartOffsetMs = in.readFloat();
         tonalEndOffsetMs = in.readFloat();
+    }
+
+    // 7. エフェクト処理順の復元
+    auto readOrder = [&]() -> std::vector<int>
+    {
+        std::vector<int> order;
+        if (in.isExhausted()) return order;
+        int count = in.readInt();
+        if (count < 0 || count > 6) return order;
+        order.reserve(static_cast<size_t>(count));
+        for (int i = 0; i < count && !in.isExhausted(); ++i)
+            order.push_back(in.readInt());
+        return order;
+    };
+    if (!in.isExhausted())
+    {
+        transEffectOrder   = readOrder();
+        tonalEffectOrder   = readOrder();
+        fullMixEffectOrder = readOrder();
+
+        // 復元したエフェクト順序でチェーンを再構築し、各エフェクトをアクティブ化
+        auto restoreChain = [this](TargetRoute route, const std::vector<int>& order)
+        {
+            for (int idx : order)
+            {
+                if (idx < 0 || idx >= 6) continue;
+                AudioEffect* fx = nullptr;
+                if (route == TargetRoute::Transient)     fx = transientPool[idx].get();
+                else if (route == TargetRoute::Tonal)    fx = tonalPool[idx].get();
+                else if (route == TargetRoute::FullMix)  fx = fullMixPool[idx].get();
+                if (fx) fx->setActive(true);
+            }
+            updateRouteOrder(route, order);
+        };
+        restoreChain(TargetRoute::Transient, transEffectOrder);
+        restoreChain(TargetRoute::Tonal,     tonalEffectOrder);
+        restoreChain(TargetRoute::FullMix,   fullMixEffectOrder);
     }
 
     // 7. バッファを設定し、分離を再実行

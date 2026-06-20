@@ -81,6 +81,13 @@ public:
     AudioEffect* getTonalPoolInstance(int idx) const noexcept { return (idx >= 0 && idx < 6) ? tonalPool[idx].get() : nullptr; }
     AudioEffect* getFullMixPoolInstance(int idx) const noexcept { return (idx >= 0 && idx < 6) ? fullMixPool[idx].get() : nullptr; }
 
+    const std::vector<int>& getEffectOrder(TargetRoute route) const noexcept
+    {
+        if (route == TargetRoute::Transient) return transEffectOrder;
+        if (route == TargetRoute::Tonal)     return tonalEffectOrder;
+        return fullMixEffectOrder;
+    }
+
     BeforeAfterBypasser beforeAfterBypasser;
     OfflineMixRenderer offlineMixRenderer;
 
@@ -177,6 +184,11 @@ private:
     std::unique_ptr<AudioEffect> transientPool[6];
     std::unique_ptr<AudioEffect> tonalPool[6];
     std::unique_ptr<AudioEffect> fullMixPool[6];
+
+    // エフェクト処理順を保持（エディタ再構築時にChipBarを復元するため）
+    std::vector<int> transEffectOrder;
+    std::vector<int> tonalEffectOrder;
+    std::vector<int> fullMixEffectOrder;
 
     // ③ パラメータポインタキャッシュ — processBlock毎のハッシュ検索とdynamic_castを排除
     struct LaneParamCache
