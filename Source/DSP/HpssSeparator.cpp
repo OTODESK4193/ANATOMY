@@ -29,9 +29,11 @@ void HpssSeparator::performSeparation(
 {
     progress.store(0.0f);
     const int numSamples = input.getNumSamples();
+    const int numChannels = input.getNumChannels();
 
-    trans.setSize(1, numSamples, false, false, true);
-    tonal.setSize(1, numSamples, false, false, true);
+    // ステレオ対応: 入力チャンネル数を保持して分離バッファを生成
+    trans.setSize(numChannels, numSamples, false, false, true);
+    tonal.setSize(numChannels, numSamples, false, false, true);
     trans.clear();
     tonal.clear();
 
@@ -41,30 +43,24 @@ void HpssSeparator::performSeparation(
         return;
     }
 
-    const float* srcData = input.getReadPointer(0);
-    float* transData = trans.getWritePointer(0);
-    float* tonalData = tonal.getWritePointer(0);
-
     // ── hold / fade 区間をサンプル数に変換 ──────────────────────────────
     const double sr = (currentSampleRate > 0.0) ? currentSampleRate : 44100.0;
     const int holdSamples = static_cast<int>((clickHoldMs / 1000.0) * sr);
     const int fadeSamples = std::max(1, static_cast<int>((sustainFadeMs / 1000.0) * sr));
     const int fadeEnd     = holdSamples + fadeSamples;
 
-    // ── サンプルごとの分離処理 ──────────────────────────────────────────
+    // ── サンプルごとの分離処理（全チャンネル独立） ──────────────────────
     for (int i = 0; i < numSamples; ++i)
     {
         // スレッド中断チェック（4096サンプルごと = 軽量）
         if ((i & 0xFFF) == 0 && callingThread != nullptr && callingThread->threadShouldExit())
             return;
 
-        const float sample = srcData[i];
-
         if (i < holdSamples)
         {
             // Hold 区間: トランジェント 100%
-            transData[i] = sample;
-            // tonalData[i] は clear() 済みで 0.0f
+            for (int ch = 0; ch < numChannels; ++ch)
+                trans.setSample(ch, i, input.getSample(ch, i));
         }
         else if (i < fadeEnd)
         {
@@ -74,14 +70,18 @@ void HpssSeparator::performSeparation(
             const float wClick = std::cos(angle);
             const float wClickSq = wClick * wClick;
 
-            transData[i] = sample * wClickSq;
-            tonalData[i] = sample * (1.0f - wClickSq);
+            for (int ch = 0; ch < numChannels; ++ch)
+            {
+                const float sample = input.getSample(ch, i);
+                trans.setSample(ch, i, sample * wClickSq);
+                tonal.setSample(ch, i, sample * (1.0f - wClickSq));
+            }
         }
         else
         {
             // Post-fade 区間: トーナル 100%
-            // transData[i] は clear() 済みで 0.0f
-            tonalData[i] = sample;
+            for (int ch = 0; ch < numChannels; ++ch)
+                tonal.setSample(ch, i, input.getSample(ch, i));
         }
 
         // プログレス更新（8192サンプルごと = UI負荷を最小化）

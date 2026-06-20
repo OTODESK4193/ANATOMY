@@ -103,10 +103,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalMixGain", 1 }, "Tonal Mix Gain (dB)", -60.0f, 6.0f, 0.0f));
 
     // Tonal の再生開始位置を前後にずらす（負=前、正=後ろ）
-    // symmetricSkew=true, skew=0.3 → ±50ms付近がスライダー中央の広い範囲を占め微調整しやすい
+    // symmetricSkew=true, skew=0.08 → スライダー中央80%が±30ms程度をカバーし精密調整が極めて容易
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{ "tonalDelay", 1 }, "Tonal Offset (ms)",
-        juce::NormalisableRange<float>(-500.0f, 500.0f, 0.1f, 0.3f, true),
+        juce::NormalisableRange<float>(-500.0f, 500.0f, 0.01f, 0.08f, true),
         0.0f));
 
     juce::StringArray prefixes{ "trans", "tonal", "full" };
@@ -802,6 +802,18 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
             outTonalR = tonalBufferThread.getNumChannels() > 1
                 ? readInterpolated(tonalBufferThread, 1, exactSustainIdx)
                 : outTonalL;
+
+            // Tonal End フェードアウト（fast path）
+            constexpr float fadeMs = 5.0f;
+            float fadeSmp = (fadeMs / 1000.0f) * static_cast<float>(fileSampleRate);
+            float fadeStart = tonalEndSamples - fadeSmp;
+            if (fadeSmp > 0.0f && exactSustainIdx >= fadeStart)
+            {
+                float p = static_cast<float>((exactSustainIdx - fadeStart) / fadeSmp);
+                float f = std::cos(p * juce::MathConstants<float>::halfPi);
+                f *= f;
+                outTonalL *= f; outTonalR *= f;
+            }
         }
         voice.clickReadIndex += voice.pitchRatio;
         voice.sustainReadIndex += voice.pitchRatio;
@@ -813,6 +825,18 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
 
     bool transGateOpen = (voice.clickReadIndex < transHoldSamples) && (exactClickIdx < transEndSamples);
     bool tonalGateOpen = (exactSustainIdx < tonalEndSamples);
+
+    // Tonal End フェードアウト: 終端5ms手前からcos²フェードで自然に消音
+    constexpr float tonalFadeOutMs = 5.0f;
+    float tonalFadeOutSamples = (tonalFadeOutMs / 1000.0f) * static_cast<float>(fileSampleRate);
+    float tonalFadeOutStart = tonalEndSamples - tonalFadeOutSamples;
+    float tonalEndFade = 1.0f;
+    if (tonalFadeOutSamples > 0.0f && exactSustainIdx >= tonalFadeOutStart && exactSustainIdx < tonalEndSamples)
+    {
+        float progress = static_cast<float>((exactSustainIdx - tonalFadeOutStart) / tonalFadeOutSamples);
+        tonalEndFade = std::cos(progress * juce::MathConstants<float>::halfPi);
+        tonalEndFade *= tonalEndFade; // cos²
+    }
 
     float shiftedClick = 0.0f;
     float shiftedSustain = 0.0f;
@@ -848,7 +872,7 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     }
 
     float finalClick = shiftedClick * voice.triggerVelocity * voice.releaseGain * transFade;
-    float finalSustain = shiftedSustain * voice.triggerVelocity * voice.releaseGain * tonalFade;
+    float finalSustain = shiftedSustain * voice.triggerVelocity * voice.releaseGain * tonalFade * tonalEndFade;
 
     outTransL = finalClick; outTransR = finalClick;
     outTonalL = finalSustain; outTonalR = finalSustain;
@@ -1256,6 +1280,18 @@ void OfflineMixRenderer::executeRender()
         {
             oL = workTonal.getSample(0, exactSustain) * tonalGain;
             oR = workTonal.getSample(1, exactSustain) * tonalGain;
+
+            // Tonal End フェードアウト（オフラインレンダラー）
+            constexpr float fadeMs = 5.0f;
+            int fadeSmp = static_cast<int>((fadeMs / 1000.0) * sr);
+            int fadeStart = oEndSmp - fadeSmp;
+            if (fadeSmp > 0 && exactSustain >= fadeStart)
+            {
+                float p = static_cast<float>(exactSustain - fadeStart) / static_cast<float>(fadeSmp);
+                float f = std::cos(p * juce::MathConstants<float>::halfPi);
+                f *= f;
+                oL *= f; oR *= f;
+            }
         }
 
         outputMix.setSample(0, s, tL + oL);

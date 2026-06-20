@@ -92,9 +92,11 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     configureSlider(sliderTonalPitch, lblTonalPitch, "TONAL PITCH (st)", juce::Colours::magenta);
     configureSlider(sliderTonalGain, lblTonalGain, "TONAL GAIN (dB)", juce::Colours::magenta);
 
-    // Tonal Offset: FullMix波形右側に横スライダーとして設置
+    // Tonal Offset: FullMix波形右側に横スライダー（ラベル→スライダー→数値BOX縦配置）
     sliderTonalDelay.setSliderStyle(juce::Slider::LinearHorizontal);
-    sliderTonalDelay.setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 14);
+    sliderTonalDelay.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 14);
+    sliderTonalDelay.setTextValueSuffix(" ms");
+    sliderTonalDelay.setDoubleClickReturnValue(true, 0.0); // ダブルクリックで0にリセット
     sliderTonalDelay.setColour(juce::Slider::thumbColourId, juce::Colours::lightgrey);
     sliderTonalDelay.setColour(juce::Slider::trackColourId, juce::Colour(0xff3a3a3a));
     sliderTonalDelay.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff1a1a1a));
@@ -431,7 +433,7 @@ void AnatomyAudioProcessorEditor::resized()
     auto fMixExportArea = fMixArea.removeFromRight(125);
     waveFullMix.setBounds(fMixArea);
     btnExportFull.setBounds(fMixExportArea.removeFromBottom(24).reduced(0, 2));
-    lblTonalDelay.setBounds(fMixExportArea.removeFromTop(14));
+    lblTonalDelay.setBounds(fMixExportArea.removeFromTop(12));
     sliderTonalDelay.setBounds(fMixExportArea);
 
     auto transArea = area.removeFromTop(120).reduced(10, 14);

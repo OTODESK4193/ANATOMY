@@ -1,6 +1,6 @@
 # ANATOMY User Manual
 
-**Version 1.1** | Target DAW: Ableton Live 11 / 12 | Format: VST3 (Windows 64-bit)
+**Version 1.0.0** | Target DAW: Ableton Live 11 / 12 | Format: VST3 (Windows 64-bit)
 
 ---
 
@@ -418,12 +418,12 @@ Press **BEFORE** to instantly hear the unprocessed signal. If processing sounds 
 
 ### Samples lost after reopening project
 
-- Update to v1.1 or later. v1.0 did not include DAW project save support
+- Ensure you are running v1.0.0
 - Re-save the project and reopen
 
 ### OTT produces extremely loud output
 
-- Fixed in v1.1. Please update to the latest version
+- Fixed in v1.0.0. Please update to the latest version
 
 ---
 
@@ -459,4 +459,4 @@ Mathematically guarantees `transient + tonal = input` at every sample.
 
 ---
 
-*ANATOMY User Manual v1.1 | Developer: @OTODESK | Framework: JUCE 8.0.x | Target: Ableton Live 11/12*
+*ANATOMY User Manual v1.0.0 | Developer: @OTODESK | Framework: JUCE 8.0.x | Target: Ableton Live 11/12*
