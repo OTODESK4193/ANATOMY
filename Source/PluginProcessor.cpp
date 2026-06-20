@@ -103,10 +103,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalMixGain", 1 }, "Tonal Mix Gain (dB)", -60.0f, 6.0f, 0.0f));
 
     // Tonal の再生開始位置を前後にずらす（負=前、正=後ろ）
-    // symmetricSkew=true, skew=0.08 → スライダー中央80%が±30ms程度をカバーし精密調整が極めて容易
+    // symmetricSkew=true, skew=0.5 → 中央付近の微調整とフルレンジのバランスが良い操作感
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{ "tonalDelay", 1 }, "Tonal Offset (ms)",
-        juce::NormalisableRange<float>(-500.0f, 500.0f, 0.01f, 0.08f, true),
+        juce::NormalisableRange<float>(-500.0f, 500.0f, 0.1f, 0.5f, true),
         0.0f));
 
     juce::StringArray prefixes{ "trans", "tonal", "full" };
@@ -804,7 +804,7 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
                 : outTonalL;
 
             // Tonal End フェードアウト（fast path）
-            constexpr float fadeMs = 5.0f;
+            constexpr float fadeMs = 50.0f;
             float fadeSmp = (fadeMs / 1000.0f) * static_cast<float>(fileSampleRate);
             float fadeStart = tonalEndSamples - fadeSmp;
             if (fadeSmp > 0.0f && exactSustainIdx >= fadeStart)
@@ -827,7 +827,7 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     bool tonalGateOpen = (exactSustainIdx < tonalEndSamples);
 
     // Tonal End フェードアウト: 終端5ms手前からcos²フェードで自然に消音
-    constexpr float tonalFadeOutMs = 5.0f;
+    constexpr float tonalFadeOutMs = 50.0f;
     float tonalFadeOutSamples = (tonalFadeOutMs / 1000.0f) * static_cast<float>(fileSampleRate);
     float tonalFadeOutStart = tonalEndSamples - tonalFadeOutSamples;
     float tonalEndFade = 1.0f;
@@ -1282,7 +1282,7 @@ void OfflineMixRenderer::executeRender()
             oR = workTonal.getSample(1, exactSustain) * tonalGain;
 
             // Tonal End フェードアウト（オフラインレンダラー）
-            constexpr float fadeMs = 5.0f;
+            constexpr float fadeMs = 50.0f;
             int fadeSmp = static_cast<int>((fadeMs / 1000.0) * sr);
             int fadeStart = oEndSmp - fadeSmp;
             if (fadeSmp > 0 && exactSustain >= fadeStart)
