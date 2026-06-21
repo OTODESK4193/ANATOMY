@@ -47,8 +47,8 @@ Process each layer with **ADAA Saturation**, **BitCrusher**, **Noise Generator**
 
 <p align="center">
   <b>Introduction</b><br>
-  <a href="https://youtu.be/PLACEHOLDER_1">
-    <img src="https://img.youtube.com/vi/PLACEHOLDER_1/maxresdefault.jpg"
+  <a href="https://youtu.be/SJVZsBOG1pk">
+    <img src="Source/Assets/Youtube.png"
          alt="ANATOMY - Introduction" width="640" height="360">
   </a>
 </p>
