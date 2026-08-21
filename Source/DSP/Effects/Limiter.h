@@ -7,13 +7,15 @@
 /**
  * Limiter / Precision Clipper
  *
- * 1. Limit モード:
+ * 1. InGain:
+ *    - 信号を Ceiling 値へと力強く突っ込ませるための入力ゲイン（0.0dB 〜 +24.0dB）
+ * 2. Limit モード:
  *    - 0アタック・瞬時ピーク捕捉（完全ゼロ・オーバーシュート）
  *    - アダプティブ・リリースによる透明でナチュラルな音圧最大化
- * 2. Clip モード:
+ * 3. Clip モード:
  *    - アナログ・ソフトニー・ブリックウォール・クリッパー
  *    - トランジェントの密度とパンチ感を極限まで引き上げるドラム用クリッピング
- * 3. どのような Dry/Wet 比率であっても Ceiling 値（dBFS）を 100% 厳守
+ * 4. どのような Dry/Wet 比率であっても Ceiling 値（dBFS）を 100% 厳守
  */
 class Limiter final : public AudioEffect
 {
@@ -34,6 +36,7 @@ public:
 
     void process(juce::AudioBuffer<float>& buffer) noexcept override
     {
+        const float inGainLin = std::pow(10.0f, inputGainDb / 20.0f);
         const float ceiling = std::pow(10.0f, ceilingDb / 20.0f);
         const float mix = currentMix;
         const float rel = releaseCoeff;
@@ -46,11 +49,11 @@ public:
         {
             for (int i = 0; i < numSamples; ++i)
             {
-                // ステレオリンク: ピーク検出
+                // ステレオリンク: InGain 適用後のピーク検出
                 float peak = 0.0f;
                 for (int ch = 0; ch < numChannels; ++ch)
                 {
-                    float absSample = std::abs(buffer.getReadPointer(ch)[i]);
+                    float absSample = std::abs(buffer.getReadPointer(ch)[i] * inGainLin);
                     if (absSample > peak) peak = absSample;
                 }
 
@@ -65,9 +68,10 @@ public:
                 for (int ch = 0; ch < numChannels; ++ch)
                 {
                     float* data = buffer.getWritePointer(ch);
-                    const float input = data[i];
+                    const float rawIn = data[i];
+                    const float input = rawIn * inGainLin;
                     float limited = juce::jlimit(-ceiling, ceiling, input * envGain);
-                    float outVal = input * (1.0f - mix) + limited * mix;
+                    float outVal = rawIn * (1.0f - mix) + limited * mix;
                     // 確実に Ceiling を超えないことを保証
                     data[i] = juce::jlimit(-ceiling, ceiling, outVal);
                 }
@@ -83,7 +87,8 @@ public:
                 float* data = buffer.getWritePointer(ch);
                 for (int i = 0; i < numSamples; ++i)
                 {
-                    const float input = data[i];
+                    const float rawIn = data[i];
+                    const float input = rawIn * inGainLin;
                     const float absIn = std::abs(input);
                     float clipped = input;
 
@@ -102,7 +107,7 @@ public:
                         }
                     }
 
-                    float outVal = input * (1.0f - mix) + clipped * mix;
+                    float outVal = rawIn * (1.0f - mix) + clipped * mix;
                     // 確実に Ceiling を超えないことを保証
                     data[i] = juce::jlimit(-ceiling, ceiling, outVal);
                 }
@@ -120,6 +125,9 @@ public:
     void setMix(float newMix) noexcept override { currentMix = juce::jlimit(0.0f, 1.0f, newMix); }
     float getMix() const noexcept override { return currentMix; }
 
+    void setInputGain(float db) noexcept { inputGainDb = db; }
+    float getInputGain() const noexcept { return inputGainDb; }
+
     void setCeiling(float db) noexcept { ceilingDb = db; }
     float getCeiling() const noexcept { return ceilingDb; }
 
@@ -132,6 +140,7 @@ public:
         if      (index == 0) setCeiling(value);
         else if (index == 1) setMix(value);
         else if (index == 2) setMode(static_cast<int>(value));
+        else if (index == 3) setInputGain(value);
     }
 
 private:
@@ -143,6 +152,7 @@ private:
     }
 
     double sampleRate   = 44100.0;
+    float  inputGainDb  = 0.0f;   // 0.0dB 〜 +24.0dB (InGain)
     float  ceilingDb    = -0.1f;
     float  currentMix   = 1.0f;
     int    currentMode  = 0;      // 0: Limit, 1: Clip

@@ -286,6 +286,7 @@ private:
         std::atomic<float>* glueRel   = nullptr;
         std::atomic<float>* glueMkp   = nullptr;
 
+        std::atomic<float>* limGain = nullptr;
         std::atomic<float>* limCeil = nullptr;
         std::atomic<float>* limMix  = nullptr;
         std::atomic<float>* limMode = nullptr;

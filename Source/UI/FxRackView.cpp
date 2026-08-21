@@ -391,6 +391,7 @@ void FxRackView::rebuildDetails()
             }
 
             knobDefs = {
+                { pre + "LimGain", "IN GAIN dB" },
                 { pre + "LimCeil", "CEILING dB" },
                 { pre + "LimMix",  "DRY/WET" }
             };

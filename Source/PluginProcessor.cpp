@@ -180,6 +180,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
             params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "Ott" + b + "Gain", 1 }, pre + " OTT " + b + " Band Gain", -24.0f, 24.0f, 0.0f));
         }
 
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "LimGain", 1 }, pre + " Limiter In Gain (dB)", 0.0f, 24.0f, 0.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "LimCeil", 1 }, pre + " Limiter Ceiling (dB)", -24.0f, 0.0f, -0.1f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "LimMix", 1 }, pre + " Limiter Mix", 0.0f, 1.0f, 0.0f));
         params.push_back(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{ pre + "LimMode", 1 }, pre + " Limiter Mode", juce::StringArray{ "Limit", "Clip" }, 0));
@@ -305,6 +306,7 @@ void AnatomyAudioProcessor::initParamCache()
         c.glueRel   = apvts.getRawParameterValue(pre + "GlueRel");
         c.glueMkp   = apvts.getRawParameterValue(pre + "GlueMkp");
 
+        c.limGain = apvts.getRawParameterValue(pre + "LimGain");
         c.limCeil = apvts.getRawParameterValue(pre + "LimCeil");
         c.limMix  = apvts.getRawParameterValue(pre + "LimMix");
         c.limMode = apvts.getRawParameterValue(pre + "LimMode");
@@ -376,6 +378,7 @@ void AnatomyAudioProcessor::synchronizePoolParameters() noexcept
 
         if (c.lim && c.limCeil)
         {
+            if (c.limGain) c.lim->setInputGain(c.limGain->load());
             c.lim->setCeiling(c.limCeil->load());
             if (c.limMix) c.lim->setMix(c.limMix->load());
             if (c.limMode) c.lim->setMode(static_cast<int>(c.limMode->load()));
@@ -1561,6 +1564,7 @@ void AnatomyAudioProcessor::applyEffectsOffline(juce::AudioBuffer<float>& buffer
         {
             Limiter lim;
             lim.prepare(sr, numSamples);
+            if (c.limGain) lim.setInputGain(c.limGain->load());
             if (c.limCeil) lim.setCeiling(c.limCeil->load());
             if (c.limMix)  lim.setMix(c.limMix->load());
             if (c.limMode) lim.setMode(static_cast<int>(c.limMode->load()));
