@@ -243,7 +243,7 @@ void WaveformComponent::paint(juce::Graphics& g)
         g.setFont(juce::Font(juce::FontOptions(12.0f)));
         g.drawText("Drag & Drop WAV Audio File Here", getLocalBounds(), juce::Justification::centred, false);
 
-        g.setColour(isSelected ? (laneIndex == 0 ? AnatomyColors::accentFull : (laneIndex == 1 ? AnatomyColors::accentTransient : AnatomyColors::accentTonal)) : AnatomyColors::panelLine);
+        g.setColour(isSelected ? (laneIndex == 0 ? AnatomyColors::accentFull : (laneIndex == 1 ? AnatomyColors::accentTransient : (laneIndex == 2 ? AnatomyColors::accentTonal : AnatomyColors::peach))) : AnatomyColors::panelLine);
         g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, isSelected ? 1.5f : 1.0f);
         return;
     }
@@ -304,6 +304,7 @@ void WaveformComponent::paint(juce::Graphics& g)
             // 単色パステル Min/Max 描画
             juce::Colour waveColour = (laneIndex == 1) ? AnatomyColors::accentTransient :
                                       (laneIndex == 2) ? AnatomyColors::accentTonal :
+                                      (laneIndex == 3) ? AnatomyColors::peach :
                                                          AnatomyColors::accentFull;
 
             for (int xPix = 0; xPix < static_cast<int>(w); ++xPix)
@@ -338,6 +339,7 @@ void WaveformComponent::paint(juce::Graphics& g)
         // 極限ズーム時: サンプル点補間 ＆ ドット（●）描画
         juce::Colour waveColour = (laneIndex == 1) ? AnatomyColors::accentTransient :
                                   (laneIndex == 2) ? AnatomyColors::accentTonal :
+                                  (laneIndex == 3) ? AnatomyColors::peach :
                                                      AnatomyColors::accentFull;
 
         juce::Path p;
@@ -585,6 +587,7 @@ void WaveformComponent::paint(juce::Graphics& g)
 
         juce::Colour thumbColour = (laneIndex == 1) ? AnatomyColors::accentTransient :
                                   (laneIndex == 2) ? AnatomyColors::accentTonal :
+                                  (laneIndex == 3) ? AnatomyColors::peach :
                                                      AnatomyColors::accentFull;
         g.setColour(thumbColour.withAlpha(currentDragMode == DragMode::ScrollBarThumb ? 0.9f : 0.65f));
         g.fillRoundedRectangle(thumbX, sbY, thumbW, sbH, 2.5f);
@@ -981,7 +984,7 @@ void WaveformComponent::synchronizeToTargetSliders(float startMs, float endMs, b
 void WaveformComponent::updateFadeToProcessor()
 {
     if (processor == nullptr || laneIndex == 0) return;
-    processor->setFadeFromUI((laneIndex == 1), fadeInMs, fadeOutMs, fadeInTension, fadeOutTension);
+    processor->setFadeFromUI(laneIndex, fadeInMs, fadeOutMs, fadeInTension, fadeOutTension);
     if (onFadeChanged)
         onFadeChanged(fadeInMs, fadeOutMs, fadeInTension, fadeOutTension);
 }

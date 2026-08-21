@@ -69,6 +69,15 @@ AnatomyAudioProcessor::AnatomyAudioProcessor()
 
 AnatomyAudioProcessor::~AnatomyAudioProcessor()
 {
+    // 1. バックグラウンドスレッドを最優先で安全停止
+    offlineMixRenderer.signalThreadShouldExit();
+    offlineMixRenderer.notify();
+    offlineMixRenderer.stopThread(2000);
+
+    signalThreadShouldExit();
+    stopThread(2000);
+
+    // 2. パラメータリスナーの解除
     apvts.removeParameterListener("clickLength", this);
     apvts.removeParameterListener("clickCurve", this);
 
@@ -80,9 +89,7 @@ AnatomyAudioProcessor::~AnatomyAudioProcessor()
                                  "layerGain", "layerOffset", "tonalDelay" };
     for (const auto& pid : ottParams) apvts.removeParameterListener(pid, this);
 
-    signalThreadShouldExit();
-    stopThread(4000);
-
+    // 3. メモリ解放
     for (auto* oldData : garbageBin) if (oldData != nullptr) delete oldData;
     garbageBin.clear();
 
@@ -985,6 +992,13 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
             customTonalReplacer.setStartOffsetMs(startMs);
             customTonalReplacer.setEndOffsetMs(endMs);
         }
+        else if (laneIndex == 3)
+        {
+            layerStartOffsetMs = startMs;
+            layerEndOffsetMs = endMs;
+            customLayerReplacer.setStartOffsetMs(startMs);
+            customLayerReplacer.setEndOffsetMs(endMs);
+        }
         offlineMixRenderer.triggerRender();
     }
 
@@ -1696,14 +1710,23 @@ void OfflineMixRenderer::executeRender()
 
     // フェード設定
     float tInMs, tOutMs, tInTension, tOutTension;
-    processor.getFadeForUI(true, tInMs, tOutMs, tInTension, tOutTension);
+    processor.getFadeForUI(1, tInMs, tOutMs, tInTension, tOutTension);
     int tInSmp = static_cast<int>((tInMs / 1000.0) * sr);
     int tOutSmp = static_cast<int>((tOutMs / 1000.0) * sr);
 
     float oInMs, oOutMs, oInTension, oOutTension;
-    processor.getFadeForUI(false, oInMs, oOutMs, oInTension, oOutTension);
+    processor.getFadeForUI(2, oInMs, oOutMs, oInTension, oOutTension);
     int oInSmp = static_cast<int>((oInMs / 1000.0) * sr);
     int oOutSmp = static_cast<int>((oOutMs / 1000.0) * sr);
+
+    float lInMs, lOutMs, lInTension, lOutTension;
+    processor.getFadeForUI(3, lInMs, lOutMs, lInTension, lOutTension);
+    int lInSmp = static_cast<int>((lInMs / 1000.0) * sr);
+    int lOutSmp = static_cast<int>((lOutMs / 1000.0) * sr);
+    float lStart = processor.layerStartOffsetMs;
+    float lEnd = processor.layerEndOffsetMs;
+    int lStartSmp = static_cast<int>((lStart / 1000.0) * sr);
+    int lEndSmp = (lEnd > 0.0f) ? static_cast<int>((lEnd / 1000.0) * sr) : layerSamples;
 
     int soloMode = processor.getSoloMode();
     float fStart = processor.fullMixStartOffsetMs;
@@ -1715,9 +1738,11 @@ void OfflineMixRenderer::executeRender()
     {
         float tL = 0.0f, tR = 0.0f;
         float oL = 0.0f, oR = 0.0f;
+        float lL = 0.0f, lR = 0.0f;
 
         int exactClick = tStartSmp + s;
         int exactSustain = oStartSmp + s + tonalOffsetSmp;
+        int exactLayer = lStartSmp + s - layerOffsetSamples;
 
         if (s < tHoldSmp && exactClick < tEndSmp && exactClick < transSamples)
         {
@@ -1745,17 +1770,38 @@ void OfflineMixRenderer::executeRender()
             oR = workTonal.getSample(1, exactSustain) * tonalGain * fGain;
         }
 
+        if (exactLayer >= 0 && exactLayer < lEndSmp && exactLayer < layerSamples)
+        {
+            float fGain = 1.0f;
+            int relL = exactLayer - lStartSmp;
+            if (lInSmp > 1 && relL < lInSmp)
+                fGain *= calculateFadeGain(static_cast<float>(relL) / static_cast<float>(lInSmp), lInTension);
+            int remL = lEndSmp - exactLayer;
+            if (lOutSmp > 1 && remL < lOutSmp)
+                fGain *= calculateFadeGain(static_cast<float>(remL) / static_cast<float>(lOutSmp), lOutTension);
+
+            lL = workLayer.getSample(0, exactLayer) * layerGain * fGain;
+            lR = workLayer.getSample(1, exactLayer) * layerGain * fGain;
+        }
+
         outTransRendered.setSample(0, s, tL);
         outTransRendered.setSample(1, s, tR);
         outTonalRendered.setSample(0, s, oL);
         outTonalRendered.setSample(1, s, oR);
+        outLayerRendered.setSample(0, s, lL);
+        outLayerRendered.setSample(1, s, lR);
 
-        float mixL = (soloMode == 2) ? 0.0f : tL;
-        float mixR = (soloMode == 2) ? 0.0f : tR;
-        if (soloMode != 1)
+        float mixL = (soloMode == 2 || soloMode == 3) ? 0.0f : tL;
+        float mixR = (soloMode == 2 || soloMode == 3) ? 0.0f : tR;
+        if (soloMode != 1 && soloMode != 3)
         {
             mixL += oL;
             mixR += oR;
+        }
+        if (soloMode != 1 && soloMode != 2)
+        {
+            mixL += lL;
+            mixR += lR;
         }
 
         if (s < fStartSmp || s >= fEndSmp)
@@ -1775,11 +1821,18 @@ void OfflineMixRenderer::executeRender()
         else               ratios[s] = 0.5f;
     }
 
+    // 各パートに専用 FX をオフライン適用
+    processor.applyEffectsOffline(outTransRendered, TargetRoute::Transient, sr);
+    processor.applyEffectsOffline(outTonalRendered, TargetRoute::Tonal, sr);
+    processor.applyEffectsOffline(outLayerRendered, TargetRoute::Layer, sr);
+    processor.applyEffectsOffline(outputMix, TargetRoute::FullMix, sr);
+
     {
         const juce::ScopedLock sl(renderLock);
         renderedFullMix.makeCopyOf(outputMix);
         renderedTransient.makeCopyOf(outTransRendered);
         renderedTonal.makeCopyOf(outTonalRendered);
+        renderedLayer.makeCopyOf(outLayerRendered);
         componentRatios = std::move(ratios);
     }
 }

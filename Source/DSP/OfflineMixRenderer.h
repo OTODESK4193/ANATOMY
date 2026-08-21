@@ -25,7 +25,8 @@ public:
     ~OfflineMixRenderer() override
     {
         signalThreadShouldExit();
-        stopThread(3000);
+        notify();
+        stopThread(2000);
     }
 
     void triggerRender() noexcept
