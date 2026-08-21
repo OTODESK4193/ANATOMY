@@ -72,9 +72,15 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
         repaint();
     };
 
+    // FullMix D&D対応 EXPORT ボタン (BEFORE の左隣)
+    btnExportFullMix.setFileGenerator([this] {
+        return audioProcessor.createTemporaryWavForExport(0);
+    });
+
+    addAndMakeVisible(btnExportFullMix);
+    addAndMakeVisible(beforeToggle);
     addAndMakeVisible(loadButton);
     addAndMakeVisible(resetButton);
-    addAndMakeVisible(beforeToggle);
 
     // テーマ選択
     themeCombo.addItemList(AnatomyColors::getThemeNames(), 1);
@@ -85,12 +91,13 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
         AnatomyColors::setTheme(idx);
         lastThemeIndex = idx;
         beforeToggle.setAccentColour(AnatomyColors::peach);
+        btnExportFullMix.setAccentColour(AnatomyColors::accentFull);
         repaint();
         for (auto* child : getChildren()) child->repaint();
     };
     addAndMakeVisible(themeCombo);
 
-    // --- 2段目: FullMixPreview ---
+    // --- 2段目: FullMixPreview (全幅表示) ---
     waveFullMix.setLaneProperties(audioProcessor, 0);
     waveFullMix.setSelected(true); // 初期選択
     waveFullMix.onFocusClicked = [this] {
@@ -100,28 +107,6 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
         tonalLane.setSelected(false);
     };
     addAndMakeVisible(waveFullMix);
-
-    knobTonalDelay.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-    knobTonalDelay.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 58, 14);
-    knobTonalDelay.setTextValueSuffix(" ms");
-    knobTonalDelay.setColour(juce::Slider::rotarySliderFillColourId, AnatomyColors::accentFull);
-    knobTonalDelay.setColour(juce::Slider::textBoxTextColourId, AnatomyColors::text);
-    knobTonalDelay.setPopupDisplayEnabled(true, true, this);
-    addAndMakeVisible(knobTonalDelay);
-
-    lblTonalDelay.setText("TONAL OFFSET", juce::dontSendNotification);
-    lblTonalDelay.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
-    lblTonalDelay.setJustificationType(juce::Justification::centred);
-    lblTonalDelay.setColour(juce::Label::textColourId, AnatomyColors::accentFull.withAlpha(0.9f));
-    addAndMakeVisible(lblTonalDelay);
-
-    btnExportFullMix.setButtonText("EXPORT");
-    styleHeaderButton(btnExportFullMix, AnatomyColors::accentFull);
-    btnExportFullMix.onClick = [this] { triggerFullMixExport(); };
-    addAndMakeVisible(btnExportFullMix);
-
-    attachTonalDelay = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.apvts, "tonalDelay", knobTonalDelay);
 
     // --- 3段目: TransientView & TonalView ---
     transientLane.onSelectLane = [this] {
@@ -191,26 +176,6 @@ void AnatomyAudioProcessorEditor::confirmThen(const juce::String& title, const j
         {
             if (result == 1 && action != nullptr) action();
         }));
-}
-
-void AnatomyAudioProcessorEditor::triggerFullMixExport()
-{
-    juce::File tempWav = audioProcessor.createTemporaryWavForExport(0);
-    if (!tempWav.existsAsFile()) return;
-
-    fileChooser = std::make_unique<juce::FileChooser>(
-        "Save Full Mix Audio",
-        juce::File::getSpecialLocation(juce::File::userDesktopDirectory).getChildFile("ANATOMY_FullMix.wav"),
-        "*.wav");
-
-    fileChooser->launchAsync(
-        juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
-        [tempWav](const juce::FileChooser& fc)
-        {
-            auto dest = fc.getResult();
-            if (dest != juce::File())
-                tempWav.copyFileTo(dest);
-        });
 }
 
 bool AnatomyAudioProcessorEditor::isInterestedInFileDrag(const juce::StringArray&)
@@ -371,35 +336,33 @@ void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
 void AnatomyAudioProcessorEditor::resized()
 {
     // --- 1段目: ヘッダーボタン (右側) ---
+    // [EXPORT] -> [BEFORE] -> [LOAD] -> [RESET] -> [THEME]
     int hX = getWidth() - kMargin;
 
     hX -= 90;
     themeCombo.setBounds(hX, 16, 90, 24);
 
+    hX -= 10;
+    hX -= 64;
+    resetButton.setBounds(hX, 16, 64, 24);
+
+    hX -= 8;
+    hX -= 64;
+    loadButton.setBounds(hX, 16, 64, 24);
+
     hX -= 12;
-    hX -= 68;
-    resetButton.setBounds(hX, 16, 68, 24);
+    hX -= 72;
+    beforeToggle.setBounds(hX, 16, 72, 24);
 
     hX -= 8;
     hX -= 68;
-    loadButton.setBounds(hX, 16, 68, 24);
+    btnExportFullMix.setBounds(hX, 16, 68, 24);
 
-    hX -= 16;
-    hX -= 76;
-    beforeToggle.setBounds(hX, 16, 76, 24);
-
-    // --- 2段目: FullMixPreview ---
+    // --- 2段目: FullMixPreview (全幅いっぱい) ---
     int curY = kHeaderH + 4;
     int fullW = getWidth() - kMargin * 2;
-    int waveW = fullW - 130;
 
-    waveFullMix.setBounds(kMargin, curY + 20, waveW, kFullMixH - 24);
-
-    // 右側コントロール
-    int ctrlX = kMargin + waveW + 10;
-    lblTonalDelay.setBounds(ctrlX, curY + 16, 110, 14);
-    knobTonalDelay.setBounds(ctrlX + 26, curY + 32, 58, 58);
-    btnExportFullMix.setBounds(ctrlX + 10, curY + 98, 90, 22);
+    waveFullMix.setBounds(kMargin, curY + 20, fullW, kFullMixH - 24);
 
     curY += kFullMixH + 6;
 

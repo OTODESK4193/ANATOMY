@@ -12,6 +12,7 @@
 #include "UI/ArcDial.h"
 #include "UI/ValueKnob.h"
 #include "UI/GlowToggle.h"
+#include "UI/DragExportButton.h"
 #include "UI/WaveformComponent.h"
 #include "UI/TransientLaneView.h"
 #include "UI/TonalLaneView.h"
@@ -38,16 +39,16 @@ private:
     void updateSoloButtonStates();
     void resetAllParameters();
     void confirmThen(const juce::String& title, const juce::String& message, std::function<void()> action);
-    void triggerFullMixExport();
 
     AnatomyAudioProcessor& audioProcessor;
     juce::AudioFormatManager formatManager;
     ArcDialLookAndFeel arcLookAndFeel;
 
     // --- 1段目: ヘッダー ---
-    juce::TextButton loadButton   { "LOAD" };
-    juce::TextButton resetButton  { "RESET" };
-    GlowToggle beforeToggle       { "BEFORE", AnatomyColors::peach };
+    DragExportButton btnExportFullMix { "EXPORT", AnatomyColors::accentFull };
+    GlowToggle beforeToggle           { "BEFORE", AnatomyColors::peach };
+    juce::TextButton loadButton       { "LOAD" };
+    juce::TextButton resetButton      { "RESET" };
     juce::ComboBox themeCombo;
     std::unique_ptr<juce::FileChooser> fileChooser;
 
@@ -55,12 +56,8 @@ private:
     int lastThemeIndex = 0;
     bool wasProcessing = false;
 
-    // --- 2段目: FullMixPreview ---
+    // --- 2段目: FullMixPreview (全幅100%表示) ---
     WaveformComponent waveFullMix;
-    ValueKnob knobTonalDelay;
-    juce::Label lblTonalDelay;
-    juce::TextButton btnExportFullMix{ "EXPORT" };
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTonalDelay;
 
     // --- 3段目: TransientView & TonalView ---
     TransientLaneView transientLane;

@@ -11,6 +11,7 @@
 #include "WaveformComponent.h"
 #include "ValueKnob.h"
 #include "GlowToggle.h"
+#include "DragExportButton.h"
 #include "ColorPalette.h"
 #include <functional>
 #include <memory>
@@ -37,7 +38,6 @@ public:
 
         styleBtn(browseBtn, AnatomyColors::accentTransient);
         styleBtn(resetBtn, AnatomyColors::textDim);
-        styleBtn(exportBtn, AnatomyColors::accentTransient);
 
         browseBtn.setButtonText("BROWSE");
         browseBtn.onClick = [this] { openBrowser(); };
@@ -56,8 +56,8 @@ public:
         };
         addAndMakeVisible(resetBtn);
 
-        exportBtn.setButtonText("EXPORT");
-        exportBtn.onClick = [this] { triggerExport(); };
+        // D&D対応 EXPORT ボタン
+        exportBtn.setFileGenerator([this] { return processor.createTemporaryWavForExport(1); });
         addAndMakeVisible(exportBtn);
 
         // SOLO ボタン
@@ -115,7 +115,12 @@ public:
 
     void setSelected(bool selected)
     {
-        if (isSelected != selected) { isSelected = selected; repaint(); }
+        if (isSelected != selected)
+        {
+            isSelected = selected;
+            waveform.setSelected(selected);
+            repaint();
+        }
     }
 
     void paint(juce::Graphics& g) override
@@ -251,26 +256,6 @@ private:
         }
     }
 
-    void triggerExport()
-    {
-        juce::File wav = processor.createTemporaryWavForExport(1); // 1 = Transient
-        if (!wav.existsAsFile()) return;
-
-        fileChooser = std::make_unique<juce::FileChooser>(
-            "Save Transient Audio",
-            juce::File::getSpecialLocation(juce::File::userDesktopDirectory).getChildFile("ANATOMY_Transient.wav"),
-            "*.wav");
-
-        fileChooser->launchAsync(
-            juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
-            [wav](const juce::FileChooser& fc)
-            {
-                auto dest = fc.getResult();
-                if (dest != juce::File())
-                    wav.copyFileTo(dest);
-            });
-    }
-
     AnatomyAudioProcessor& processor;
     juce::AudioFormatManager formatManager;
 
@@ -278,7 +263,7 @@ private:
 
     juce::TextButton browseBtn;
     juce::TextButton resetBtn;
-    juce::TextButton exportBtn;
+    DragExportButton exportBtn{ "EXPORT", AnatomyColors::accentTransient };
     GlowToggle soloToggle{ "SOLO", AnatomyColors::accentTransient };
     GlowToggle snapToggle{ "SNAP", AnatomyColors::mint };
 
@@ -296,7 +281,6 @@ private:
 
     std::unique_ptr<juce::Component> browserComponent;
     std::unique_ptr<juce::FileBrowserComponent> browserTree;
-    std::unique_ptr<juce::FileChooser> fileChooser;
 
     bool isSelected = false;
 

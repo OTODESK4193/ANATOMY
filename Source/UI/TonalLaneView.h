@@ -1,6 +1,7 @@
 // ==========================================
 // File: TonalLaneView.h
 // ANATOMY 3段目 右側: Tonal レーンビュー (幅50%)
+// [TONAL OFFSET] ノブ統合 ＆ 4基ノブ均等配置版
 // ==========================================
 #pragma once
 
@@ -11,6 +12,7 @@
 #include "WaveformComponent.h"
 #include "ValueKnob.h"
 #include "GlowToggle.h"
+#include "DragExportButton.h"
 #include "ColorPalette.h"
 #include <functional>
 #include <memory>
@@ -37,7 +39,6 @@ public:
 
         styleBtn(browseBtn, AnatomyColors::accentTonal);
         styleBtn(resetBtn, AnatomyColors::textDim);
-        styleBtn(exportBtn, AnatomyColors::accentTonal);
 
         browseBtn.setButtonText("BROWSE");
         browseBtn.onClick = [this] { openBrowser(); };
@@ -56,8 +57,8 @@ public:
         };
         addAndMakeVisible(resetBtn);
 
-        exportBtn.setButtonText("EXPORT");
-        exportBtn.onClick = [this] { triggerExport(); };
+        // D&D対応 EXPORT ボタン
+        exportBtn.setFileGenerator([this] { return processor.createTemporaryWavForExport(2); });
         addAndMakeVisible(exportBtn);
 
         // SOLO ボタン
@@ -74,7 +75,7 @@ public:
         };
         addAndMakeVisible(snapToggle);
 
-        // ノブ設定 (3基: RELEASE, PITCH, GAIN)
+        // ノブ設定 (4基: TONAL OFFSET, RELEASE, PITCH, GAIN)
         auto setupKnob = [this](ValueKnob& k, juce::Label& l, const juce::String& text, juce::Colour c) {
             k.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
             k.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 58, 14);
@@ -84,16 +85,21 @@ public:
             addAndMakeVisible(k);
 
             l.setText(text, juce::dontSendNotification);
-            l.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
+            l.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
             l.setJustificationType(juce::Justification::centred);
             l.setColour(juce::Label::textColourId, c.withAlpha(0.9f));
             addAndMakeVisible(l);
         };
 
-        setupKnob(knobRelease, lblRelease, "RELEASE",    AnatomyColors::accentTonal);
-        setupKnob(knobPitch,   lblPitch,   "PITCH (st)", AnatomyColors::accentTonal);
-        setupKnob(knobGain,    lblGain,    "GAIN (dB)",   AnatomyColors::accentTonal);
+        setupKnob(knobTonalDelay, lblTonalDelay, "TONAL OFFSET", AnatomyColors::accentTonal);
+        setupKnob(knobRelease,    lblRelease,    "RELEASE",      AnatomyColors::accentTonal);
+        setupKnob(knobPitch,      lblPitch,      "PITCH (st)",   AnatomyColors::accentTonal);
+        setupKnob(knobGain,       lblGain,       "GAIN (dB)",     AnatomyColors::accentTonal);
 
+        knobTonalDelay.setTextValueSuffix(" ms");
+
+        attachTonalDelay = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            processor.apvts, "tonalDelay", knobTonalDelay);
         attachRelease = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             processor.apvts, "sustainRelease", knobRelease);
         attachPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -115,7 +121,12 @@ public:
 
     void setSelected(bool selected)
     {
-        if (isSelected != selected) { isSelected = selected; repaint(); }
+        if (isSelected != selected)
+        {
+            isSelected = selected;
+            waveform.setSelected(selected);
+            repaint();
+        }
     }
 
     void paint(juce::Graphics& g) override
@@ -155,10 +166,10 @@ public:
         // 波形エリア
         waveform.setBounds(10, 36, getWidth() - 20, getHeight() - 120);
 
-        // 下部ノブエリア (3基均等配置)
+        // 下部ノブエリア (4基均等配置: TONAL OFFSET, RELEASE, PITCH, GAIN)
         int knobY = getHeight() - 80;
         int totalW = getWidth() - 20;
-        int kw = totalW / 3;
+        int kw = totalW / 4;
 
         auto placeKnob = [&](ValueKnob& k, juce::Label& l, int index) {
             int x = 10 + index * kw;
@@ -166,9 +177,10 @@ public:
             k.setBounds(x + (kw - 56) / 2, knobY + 16, 56, 56);
         };
 
-        placeKnob(knobRelease, lblRelease, 0);
-        placeKnob(knobPitch,   lblPitch,   1);
-        placeKnob(knobGain,    lblGain,    2);
+        placeKnob(knobTonalDelay, lblTonalDelay, 0);
+        placeKnob(knobRelease,    lblRelease,    1);
+        placeKnob(knobPitch,      lblPitch,      2);
+        placeKnob(knobGain,       lblGain,       3);
 
         if (browserComponent != nullptr)
             browserComponent->setBounds(getLocalBounds().reduced(10));
@@ -251,26 +263,6 @@ private:
         }
     }
 
-    void triggerExport()
-    {
-        juce::File wav = processor.createTemporaryWavForExport(2); // 2 = Tonal
-        if (!wav.existsAsFile()) return;
-
-        fileChooser = std::make_unique<juce::FileChooser>(
-            "Save Tonal Audio",
-            juce::File::getSpecialLocation(juce::File::userDesktopDirectory).getChildFile("ANATOMY_Tonal.wav"),
-            "*.wav");
-
-        fileChooser->launchAsync(
-            juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
-            [wav](const juce::FileChooser& fc)
-            {
-                auto dest = fc.getResult();
-                if (dest != juce::File())
-                    wav.copyFileTo(dest);
-            });
-    }
-
     AnatomyAudioProcessor& processor;
     juce::AudioFormatManager formatManager;
 
@@ -278,25 +270,27 @@ private:
 
     juce::TextButton browseBtn;
     juce::TextButton resetBtn;
-    juce::TextButton exportBtn;
+    DragExportButton exportBtn{ "EXPORT", AnatomyColors::accentTonal };
     GlowToggle soloToggle{ "SOLO", AnatomyColors::accentTonal };
     GlowToggle snapToggle{ "SNAP", AnatomyColors::mint };
 
+    ValueKnob knobTonalDelay;
     ValueKnob knobRelease;
     ValueKnob knobPitch;
     ValueKnob knobGain;
 
+    juce::Label lblTonalDelay;
     juce::Label lblRelease;
     juce::Label lblPitch;
     juce::Label lblGain;
 
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTonalDelay;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachRelease;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachPitch;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachGain;
 
     std::unique_ptr<juce::Component> browserComponent;
     std::unique_ptr<juce::FileBrowserComponent> browserTree;
-    std::unique_ptr<juce::FileChooser> fileChooser;
 
     bool isSelected = false;
 
