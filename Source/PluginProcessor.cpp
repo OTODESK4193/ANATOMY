@@ -223,6 +223,9 @@ void AnatomyAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     smoothedTransGain.reset(sampleRate, 0.005);
     smoothedTonalGain.reset(sampleRate, 0.005);
     smoothedLayerGain.reset(sampleRate, 0.005);
+
+    if (!offlineMixRenderer.isThreadRunning())
+        offlineMixRenderer.startThread();
 }
 
 void AnatomyAudioProcessor::releaseResources()
@@ -233,10 +236,6 @@ void AnatomyAudioProcessor::releaseResources()
 
     for (int l = 0; l < 4; ++l)
         ExportRecordingCore::lanes[l].state.store(ExportRecordingCore::State::Idle);
-
-    offlineMixRenderer.signalThreadShouldExit();
-    offlineMixRenderer.notify();
-    signalThreadShouldExit();
 }
 
 bool AnatomyAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
@@ -2000,18 +1999,51 @@ void AnatomyAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
     // 5. カスタム差し替えバッファ（存在する場合のみ）
     bool hasCustomTrans = (customTransBuffer.getNumSamples() > 0);
     bool hasCustomTonal = (customTonalBuffer.getNumSamples() > 0);
+    bool hasCustomLayer = (customLayerBuffer.getNumSamples() > 0);
     out.writeBool(hasCustomTrans);
-    if (hasCustomTrans) writeBufferToStream(out, customTransBuffer);
+    if (hasCustomTrans) {
+        writeBufferToStream(out, customTransBuffer);
+        out.writeString(customSampleNames[1]);
+    }
     out.writeBool(hasCustomTonal);
-    if (hasCustomTonal) writeBufferToStream(out, customTonalBuffer);
+    if (hasCustomTonal) {
+        writeBufferToStream(out, customTonalBuffer);
+        out.writeString(customSampleNames[2]);
+    }
+    out.writeBool(hasCustomLayer);
+    if (hasCustomLayer) {
+        writeBufferToStream(out, customLayerBuffer);
+        out.writeString(customSampleNames[3]);
+    }
 
     // 6. START/END オフセット
     out.writeFloat(transStartOffsetMs);
     out.writeFloat(transEndOffsetMs);
     out.writeFloat(tonalStartOffsetMs);
     out.writeFloat(tonalEndOffsetMs);
+    out.writeFloat(layerStartOffsetMs);
+    out.writeFloat(layerEndOffsetMs);
 
-    // 7. エフェクト処理順（ChipBar復元用）
+    // 7. フェード情報
+    out.writeFloat(customTransientReplacer.getFadeInMs());
+    out.writeFloat(customTransientReplacer.getFadeOutMs());
+    out.writeFloat(customTransientReplacer.getFadeInTension());
+    out.writeFloat(customTransientReplacer.getFadeOutTension());
+
+    out.writeFloat(customTonalReplacer.getFadeInMs());
+    out.writeFloat(customTonalReplacer.getFadeOutMs());
+    out.writeFloat(customTonalReplacer.getFadeInTension());
+    out.writeFloat(customTonalReplacer.getFadeOutTension());
+
+    out.writeFloat(customLayerReplacer.getFadeInMs());
+    out.writeFloat(customLayerReplacer.getFadeOutMs());
+    out.writeFloat(customLayerReplacer.getFadeInTension());
+    out.writeFloat(customLayerReplacer.getFadeOutTension());
+
+    // 8. Solo モード
+    out.writeInt(currentSoloMode.load(std::memory_order_acquire));
+
+    // 9. エフェクト処理順（ChipBar復元用）
     auto writeOrder = [&](const std::vector<int>& order)
     {
         out.writeInt(static_cast<int>(order.size()));
@@ -2019,6 +2051,7 @@ void AnatomyAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
     };
     writeOrder(transEffectOrder);
     writeOrder(tonalEffectOrder);
+    writeOrder(layerEffectOrder);
     writeOrder(fullMixEffectOrder);
 }
 
@@ -2049,16 +2082,30 @@ void AnatomyAudioProcessor::setStateInformation(const void* data, int sizeInByte
     auto restoredInput = readBufferFromStream(in);
 
     // 5. カスタムバッファ復元
-    juce::AudioBuffer<float> restoredCustomTrans, restoredCustomTonal;
+    juce::AudioBuffer<float> restoredCustomTrans, restoredCustomTonal, restoredCustomLayer;
     if (!in.isExhausted())
     {
         bool hasCustomTrans = in.readBool();
-        if (hasCustomTrans) restoredCustomTrans = readBufferFromStream(in);
+        if (hasCustomTrans) {
+            restoredCustomTrans = readBufferFromStream(in);
+            customSampleNames[1] = in.readString();
+        }
     }
     if (!in.isExhausted())
     {
         bool hasCustomTonal = in.readBool();
-        if (hasCustomTonal) restoredCustomTonal = readBufferFromStream(in);
+        if (hasCustomTonal) {
+            restoredCustomTonal = readBufferFromStream(in);
+            customSampleNames[2] = in.readString();
+        }
+    }
+    if (!in.isExhausted())
+    {
+        bool hasCustomLayer = in.readBool();
+        if (hasCustomLayer) {
+            restoredCustomLayer = readBufferFromStream(in);
+            customSampleNames[3] = in.readString();
+        }
     }
 
     // 6. START/END オフセット復元
@@ -2069,8 +2116,45 @@ void AnatomyAudioProcessor::setStateInformation(const void* data, int sizeInByte
         tonalStartOffsetMs = in.readFloat();
         tonalEndOffsetMs = in.readFloat();
     }
+    if (!in.isExhausted())
+    {
+        layerStartOffsetMs = in.readFloat();
+        layerEndOffsetMs = in.readFloat();
+    }
 
-    // 7. エフェクト処理順の復元
+    // 7. フェード復元
+    if (!in.isExhausted())
+    {
+        float tIn = in.readFloat(), tOut = in.readFloat(), tInT = in.readFloat(), tOutT = in.readFloat();
+        customTransientReplacer.setFadeInMs(tIn);
+        customTransientReplacer.setFadeOutMs(tOut);
+        customTransientReplacer.setFadeInTension(tInT);
+        customTransientReplacer.setFadeOutTension(tOutT);
+    }
+    if (!in.isExhausted())
+    {
+        float oIn = in.readFloat(), oOut = in.readFloat(), oInT = in.readFloat(), oOutT = in.readFloat();
+        customTonalReplacer.setFadeInMs(oIn);
+        customTonalReplacer.setFadeOutMs(oOut);
+        customTonalReplacer.setFadeInTension(oInT);
+        customTonalReplacer.setFadeOutTension(oOutT);
+    }
+    if (!in.isExhausted())
+    {
+        float lIn = in.readFloat(), lOut = in.readFloat(), lInT = in.readFloat(), lOutT = in.readFloat();
+        customLayerReplacer.setFadeInMs(lIn);
+        customLayerReplacer.setFadeOutMs(lOut);
+        customLayerReplacer.setFadeInTension(lInT);
+        customLayerReplacer.setFadeOutTension(lOutT);
+    }
+
+    // 8. Solo モード復元
+    if (!in.isExhausted())
+    {
+        currentSoloMode.store(in.readInt(), std::memory_order_release);
+    }
+
+    // 9. エフェクト処理順の復元
     auto readOrder = [&]() -> std::vector<int>
     {
         std::vector<int> order;
@@ -2086,9 +2170,9 @@ void AnatomyAudioProcessor::setStateInformation(const void* data, int sizeInByte
     {
         transEffectOrder   = readOrder();
         tonalEffectOrder   = readOrder();
+        layerEffectOrder   = readOrder();
         fullMixEffectOrder = readOrder();
 
-        // 復元したエフェクト順序でチェーンを再構築し、各エフェクトをアクティブ化
         auto restoreChain = [this](TargetRoute route, const std::vector<int>& order)
         {
             for (int idx : order)
@@ -2097,6 +2181,7 @@ void AnatomyAudioProcessor::setStateInformation(const void* data, int sizeInByte
                 AudioEffect* fx = nullptr;
                 if (route == TargetRoute::Transient)     fx = transientPool[idx].get();
                 else if (route == TargetRoute::Tonal)    fx = tonalPool[idx].get();
+                else if (route == TargetRoute::Layer)    fx = layerPool[idx].get();
                 else if (route == TargetRoute::FullMix)  fx = fullMixPool[idx].get();
                 if (fx) fx->setActive(true);
             }
@@ -2104,24 +2189,44 @@ void AnatomyAudioProcessor::setStateInformation(const void* data, int sizeInByte
         };
         restoreChain(TargetRoute::Transient, transEffectOrder);
         restoreChain(TargetRoute::Tonal,     tonalEffectOrder);
+        restoreChain(TargetRoute::Layer,     layerEffectOrder);
         restoreChain(TargetRoute::FullMix,   fullMixEffectOrder);
     }
 
-    // 7. バッファを設定し、分離を再実行
-    if (restoredInput.getNumSamples() > 0)
+    // 10. バッファを設定し、分離・合成を再実行
     {
+        const juce::ScopedLock sl(lock);
+        if (restoredInput.getNumSamples() > 0)
         {
-            const juce::ScopedLock sl(lock);
             inputBufferThread.makeCopyOf(restoredInput);
             rawInputBuffer.makeCopyOf(restoredInput);
-            if (restoredCustomTrans.getNumSamples() > 0)
-                customTransBuffer.makeCopyOf(restoredCustomTrans);
-            if (restoredCustomTonal.getNumSamples() > 0)
-                customTonalBuffer.makeCopyOf(restoredCustomTonal);
         }
+        if (restoredCustomTrans.getNumSamples() > 0)
+        {
+            customTransBuffer.makeCopyOf(restoredCustomTrans);
+            customTransientReplacer.loadSample(restoredCustomTrans, fileSampleRate);
+            customTransientReplacer.setStartOffsetMs(transStartOffsetMs);
+            customTransientReplacer.setEndOffsetMs(transEndOffsetMs);
+        }
+        if (restoredCustomTonal.getNumSamples() > 0)
+        {
+            customTonalBuffer.makeCopyOf(restoredCustomTonal);
+            customTonalReplacer.loadSample(restoredCustomTonal, fileSampleRate);
+            customTonalReplacer.setStartOffsetMs(tonalStartOffsetMs);
+            customTonalReplacer.setEndOffsetMs(tonalEndOffsetMs);
+        }
+        if (restoredCustomLayer.getNumSamples() > 0)
+        {
+            customLayerBuffer.makeCopyOf(restoredCustomLayer);
+            customLayerReplacer.loadSample(restoredCustomLayer, fileSampleRate);
+            customLayerReplacer.setStartOffsetMs(layerStartOffsetMs);
+            customLayerReplacer.setEndOffsetMs(layerEndOffsetMs);
+        }
+    }
 
+    if (restoredInput.getNumSamples() > 0)
+    {
         // バックグラウンドスレッドで分離処理を再実行
-        // 既にスレッドが走っている場合は停止してから再起動
         if (isThreadRunning())
         {
             signalThreadShouldExit();
@@ -2129,6 +2234,11 @@ void AnatomyAudioProcessor::setStateInformation(const void* data, int sizeInByte
         }
         needsReanalysis.store(false, std::memory_order_release);
         startThread(juce::Thread::Priority::normal);
+    }
+    else
+    {
+        updateActiveSampleData();
+        offlineMixRenderer.triggerRender();
     }
 }
 

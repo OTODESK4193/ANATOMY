@@ -296,11 +296,14 @@ void WaveformComponent::paint(juce::Graphics& g)
 
                 float yTop = mid - maxV * (mid - 2.0f);
                 float yBtm = mid - minV * (mid - 2.0f);
-                float peak = std::max(std::abs(maxV), std::abs(minV));
-                float yTrans = peak * (mid - 2.0f) * rTrans;
-                float yLayer = peak * (mid - 2.0f) * rLayer;
+                if (std::abs(yBtm - yTop) < 1.0f) { yTop = mid - 0.5f; yBtm = mid + 0.5f; }
 
-                // 1. Transient (Mint - 中心)
+                float peak = std::max(std::abs(maxV), std::abs(minV));
+                float totalH = peak * (mid - 2.0f);
+                float yTrans = std::min(totalH, totalH * rTrans);
+                float yLayer = std::min(totalH - yTrans, totalH * rLayer);
+
+                // 1. Transient (Mint / Accent - 中心)
                 if (yTrans > 0.4f)
                 {
                     g.setColour(AnatomyColors::accentTransient.withAlpha(0.95f));
@@ -310,14 +313,14 @@ void WaveformComponent::paint(juce::Graphics& g)
                 // 2. Layer (Peach - 中間層)
                 if (yLayer > 0.4f)
                 {
-                    g.setColour(AnatomyColors::peach.withAlpha(0.90f));
+                    g.setColour(AnatomyColors::peach.withAlpha(0.92f));
                     g.drawVerticalLine(xPix, mid - (yTrans + yLayer), mid - yTrans);
                     g.drawVerticalLine(xPix, mid + yTrans, mid + (yTrans + yLayer));
                 }
 
-                // 3. Tonal (Pink - 外側)
+                // 3. Tonal (Pink / Accent - 外側)
                 float yInner = yTrans + yLayer;
-                g.setColour(AnatomyColors::accentTonal.withAlpha(0.75f));
+                g.setColour(AnatomyColors::accentTonal.withAlpha(0.85f));
                 if (yTop < mid - yInner) g.drawVerticalLine(xPix, yTop, mid - yInner);
                 if (yBtm > mid + yInner) g.drawVerticalLine(xPix, mid + yInner, yBtm);
             }
