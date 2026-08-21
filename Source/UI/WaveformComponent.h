@@ -2,19 +2,21 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_basics/juce_audio_basics.h>
+#include "ColorPalette.h"
 #include <vector>
+#include <functional>
 
 class AnatomyAudioProcessor;
 
 /**
- * WaveformComponent (Phase 2-4 Fixed Edition)
- * 2色エネルギー比率色分け描画数理、START/ENDバーのマウス直接トリミングロジック、
- * およびDAWタイムラインへのオーディオオンデマンド直接エクスポート回路を完全内包した高機能波形クラス。
+ * WaveformComponent (Granular Style Modern Edition)
+ * パステル・ドット/ライン波形描画、2色エネルギー比率色分け、
+ * START/ENDバーのマウス直接トリミング、ズーム、およびDAWエクスポートを統合した高機能波形コンポーネント。
  */
 class WaveformComponent final : public juce::Component
 {
 public:
-    WaveformComponent(); // 💥【修正完了】カッコの付け忘れによる構造体定義エラーを完全粉砕
+    WaveformComponent();
     ~WaveformComponent() override = default;
 
     // この波形コンポーネントが担当するレーンを設定 (0 = FullMix, 1 = Transient, 2 = Tonal)
@@ -30,6 +32,9 @@ public:
     void setBuffer(const juce::AudioBuffer<float>& buffer);
     void setOffsets(float startMs, float endMs, double sr) noexcept;
     void setRatioData(const std::vector<float>& ratios) noexcept;
+
+    // クリックされたときに親ビュー（レーン）を選択するためのコールバック
+    std::function<void()> onFocusClicked;
 
 private:
     float getMsFromX(float x) const noexcept;
@@ -53,7 +58,7 @@ private:
 
     juce::Rectangle<int> exportButtonArea;
 
-    // ズーム機能（左端起点で拡大、FullMix レーン専用）
+    // ズーム機能（FullMix レーン等で利用）
     float zoomLevel = 1.0f;
     static constexpr float zoomMin = 1.0f;
     static constexpr float zoomMax = 32.0f;

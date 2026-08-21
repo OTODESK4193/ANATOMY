@@ -58,11 +58,34 @@ target_sources(${PROJECT_NAME} PRIVATE
     Source/PluginEditor.h
     "Source/DSP/HpssSeparator.h"
     "Source/DSP/HpssSeparator.cpp"
+    "Source/DSP/SharedSampleData.h"
+    "Source/DSP/VoiceState.h"
+    "Source/DSP/TransientReplacer.h"
+    "Source/DSP/TonalReplacer.h"
+    "Source/DSP/Effects/AudioEffect.h"
+    "Source/DSP/Effects/EffectChain.h"
+    "Source/DSP/Effects/ADAA_Saturation.h"
+    "Source/DSP/Effects/BitCrusher.h"
+    "Source/DSP/Effects/NoiseGenerator.h"
+    "Source/DSP/Effects/OTT_Multiband.h"
+    "Source/DSP/Effects/GlueCompressor.h"
+    "Source/DSP/Effects/Limiter.h"
+    "Source/DSP/BeforeAfterBypasser.h"
+    "Source/DSP/OfflineMixRenderer.h"
+    "Source/UI/ColorPalette.h"
+    "Source/UI/ArcDial.h"
+    "Source/UI/ArcDial.cpp"
+    "Source/UI/ValueKnob.h"
+    "Source/UI/GlowToggle.h"
     "Source/UI/WaveformComponent.h"
     "Source/UI/WaveformComponent.cpp"
-    
-    
-  "Source/DSP/SharedSampleData.h"    "Source/DSP/VoiceState.h" "Source/DSP/TransientReplacer.h" "Source/UI/TransientBrowserPanel.h"  "Source/DSP/TonalReplacer.h" "Source/UI/TonalBrowserPanel.h" "Source/DSP/Effects/AudioEffect.h" "Source/DSP/Effects/EffectChain.h" "Source/DSP/Effects/ADAA_Saturation.h" "Source/DSP/Effects/BitCrusher.h" "Source/DSP/Effects/NoiseGenerator.h" "Source/DSP/Effects/OTT_Multiband.h" "Source/DSP/Effects/Limiter.h" "Source/UI/EffectRackPanel.h" "Source/UI/EffectCardComponent.h" "Source/DSP/BeforeAfterBypasser.h" "Source/DSP/OfflineMixRenderer.h")
+    "Source/UI/TransientLaneView.h"
+    "Source/UI/TonalLaneView.h"
+    "Source/UI/FxSlotCard.h"
+    "Source/UI/FxSlotCard.cpp"
+    "Source/UI/FxRackView.h"
+    "Source/UI/FxRackView.cpp"
+)
 
 # ==============================================================================
 # JUCEモジュールのリンク

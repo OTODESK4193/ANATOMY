@@ -1,0 +1,10 @@
+{
+	"InstallScripts" : 
+	[
+		"D:/VST_Project/ANATOMY/build/build_juce/tools/cmake_install.cmake",
+		"D:/VST_Project/ANATOMY/build/build_juce/tools/modules/cmake_install.cmake",
+		"D:/VST_Project/ANATOMY/build/build_juce/tools/extras/Build/cmake_install.cmake",
+		"D:/VST_Project/ANATOMY/build/build_juce/tools/extras/Build/juceaide/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

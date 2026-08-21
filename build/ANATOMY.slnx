@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Solution>
+	<Configurations>
+		<BuildType Name="Debug"/>
+		<BuildType Name="Release"/>
+		<BuildType Name="MinSizeRel"/>
+		<BuildType Name="RelWithDebInfo"/>
+		<Platform Name="x64"/>
+	</Configurations>
+	<Project Path="ANATOMY_rc_lib.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="849f77c3-9186-37ba-a55d-4cd6558eb85a">
+		<BuildDependency Project="ZERO_CHECK.vcxproj"/>
+	</Project>
+	<Folder Name="/ANATOMY/">
+		<Project Path="ANATOMY.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="50207941-5a1b-3f02-b81f-ac8ad748d2eb">
+			<BuildDependency Project="ZERO_CHECK.vcxproj"/>
+		</Project>
+		<Project Path="ANATOMY_All.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="c71153af-08e1-322f-9030-358b56f1e59c">
+			<BuildDependency Project="ANATOMY_Standalone.vcxproj"/>
+			<BuildDependency Project="ANATOMY_VST3.vcxproj"/>
+			<BuildDependency Project="ZERO_CHECK.vcxproj"/>
+			<Build Solution="Debug|*" Project="false"/>
+			<Build Solution="Release|*" Project="false"/>
+			<Build Solution="MinSizeRel|*" Project="false"/>
+			<Build Solution="RelWithDebInfo|*" Project="false"/>
+		</Project>
+		<Project Path="ANATOMY_Standalone.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="a5e22a28-d721-33e8-8ff6-19f170b0a61e">
+			<BuildDependency Project="ANATOMY.vcxproj"/>
+			<BuildDependency Project="ANATOMY_rc_lib.vcxproj"/>
+			<BuildDependency Project="ZERO_CHECK.vcxproj"/>
+		</Project>
+		<Project Path="ANATOMY_VST3.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="412f0250-e0a7-3e22-ac20-c0f6e06ed451">
+			<BuildDependency Project="ANATOMY.vcxproj"/>
+			<BuildDependency Project="ANATOMY_rc_lib.vcxproj"/>
+			<BuildDependency Project="ZERO_CHECK.vcxproj"/>
+		</Project>
+	</Folder>
+	<Folder Name="/CMakePredefinedTargets/">
+		<Project Path="ALL_BUILD.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="64383211-f648-37a1-b1ad-e144d8209a55" DefaultStartup="true">
+			<BuildDependency Project="ANATOMY.vcxproj"/>
+			<BuildDependency Project="ANATOMY_Standalone.vcxproj"/>
+			<BuildDependency Project="ANATOMY_VST3.vcxproj"/>
+			<BuildDependency Project="ANATOMY_rc_lib.vcxproj"/>
+			<BuildDependency Project="ZERO_CHECK.vcxproj"/>
+		</Project>
+		<Project Path="INSTALL.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="45b9be5a-f4f8-3dea-ac82-766d2fe3097b">
+			<BuildDependency Project="ALL_BUILD.vcxproj"/>
+			<BuildDependency Project="ZERO_CHECK.vcxproj"/>
+			<Build Solution="Debug|*" Project="false"/>
+			<Build Solution="Release|*" Project="false"/>
+			<Build Solution="MinSizeRel|*" Project="false"/>
+			<Build Solution="RelWithDebInfo|*" Project="false"/>
+		</Project>
+		<Project Path="ZERO_CHECK.vcxproj" Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942" Id="8685e75f-e7de-3cb2-b399-ab96cc8af822"/>
+	</Folder>
+</Solution>

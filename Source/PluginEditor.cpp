@@ -1,194 +1,216 @@
+// ==========================================
+// File: PluginEditor.cpp
+// ANATOMY V1.1.0 (Granular Style Modern Edition)
+// ==========================================
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include <cmath>
 #include <algorithm>
 
+namespace
+{
+    constexpr int kHeaderH  = 60;
+    constexpr int kFullMixH = 136;
+    constexpr int kLanesH   = 236;
+    constexpr int kFxH      = 268;
+    constexpr int kMargin   = 16;
+}
+
 AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& p)
-    : AudioProcessorEditor(&p), audioProcessor(p)
+    : AudioProcessorEditor(&p),
+      audioProcessor(p),
+      transientLane(p),
+      tonalLane(p),
+      fxRackView(p)
 {
     formatManager.registerBasicFormats();
+    setLookAndFeel(&arcLookAndFeel);
 
-    waveFullMix.setLaneProperties(p, 0);
-    waveTransient.setLaneProperties(p, 1);
-    waveTonal.setLaneProperties(p, 2);
+    // --- 1段目: ヘッダーボタン ---
+    auto styleHeaderButton = [](juce::TextButton& b, juce::Colour c) {
+        b.setColour(juce::TextButton::buttonColourId, AnatomyColors::knobTrack);
+        b.setColour(juce::TextButton::textColourOffId, c);
+    };
 
-    addAndMakeVisible(waveFullMix);
-    addAndMakeVisible(waveTransient);
-    addAndMakeVisible(waveTonal);
-    addAndMakeVisible(transientBrowserPanel);
-    addAndMakeVisible(tonalBrowserPanel);
+    styleHeaderButton(loadButton,  AnatomyColors::text);
+    styleHeaderButton(resetButton, AnatomyColors::textDim);
 
-    effectRackPanel.addChangeListener(this);
-    addAndMakeVisible(effectRackPanel);
-    addAndMakeVisible(parameterDockPanel);
+    loadButton.onClick = [this]
+    {
+        fileChooser = std::make_unique<juce::FileChooser>(
+            "Load an audio sample", juce::File(), "*.wav;*.aif;*.aiff;*.mp3;*.flac");
+        fileChooser->launchAsync(
+            juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+            [this](const juce::FileChooser& fc)
+            {
+                const auto file = fc.getResult();
+                if (file.existsAsFile())
+                {
+                    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
+                    if (reader != nullptr)
+                    {
+                        juce::AudioBuffer<float> buffer((int)reader->numChannels, (int)reader->lengthInSamples);
+                        reader->read(&buffer, 0, (int)reader->lengthInSamples, 0, true, true);
+                        audioProcessor.startSeparation(buffer, reader->sampleRate);
+                        wasProcessing = true;
+                    }
+                }
+            });
+    };
 
-    addAndMakeVisible(btnExportFull);
-    addAndMakeVisible(btnExportTransient);
-    addAndMakeVisible(btnExportTonal);
+    resetButton.onClick = [this]
+    {
+        confirmThen("Reset Parameters",
+                    juce::String::fromUTF8("すべてのパラメータをデフォルトに戻しますか？"),
+                    [this] { resetAllParameters(); });
+    };
 
-    btnOriginal.setRadioGroupId(1);
-    btnTransient.setRadioGroupId(1);
-    btnTonal.setRadioGroupId(1);
-
-    btnOriginal.setClickingTogglesState(true);
-    btnTransient.setClickingTogglesState(true);
-    btnTonal.setClickingTogglesState(true);
-
-    // Abletonライクなフラット＆ソリッドなボタンカラー定義
-    auto configureButtonLook = [](juce::TextButton& b, juce::Colour activeColor) {
-        b.setColour(juce::TextButton::buttonOnColourId, activeColor);
-        b.setColour(juce::TextButton::textColourOnId, juce::Colours::black);
-        b.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a3a));
-        b.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
-        };
-
-    // セクション固有のテーマカラーをマウント
-    configureButtonLook(btnOriginal, juce::Colours::lightgrey);
-    configureButtonLook(btnTransient, juce::Colours::cyan);
-    configureButtonLook(btnTonal, juce::Colours::magenta);
-
-    btnBefore.setClickingTogglesState(true);
-    configureButtonLook(btnBefore, juce::Colours::yellow);
-    addAndMakeVisible(btnBefore);
-
-    addAndMakeVisible(btnOriginal);
-    addAndMakeVisible(btnTransient);
-    addAndMakeVisible(btnTonal);
-
-    updateButtonToggleStates();
-
-    btnOriginal.onClick = [this] { audioProcessor.setSoloMode(0); };
-    btnTransient.onClick = [this] { audioProcessor.setSoloMode(1); };
-    btnTonal.onClick = [this] { audioProcessor.setSoloMode(2); };
-
-    btnBefore.onClick = [this] {
-        audioProcessor.beforeAfterBypasser.setBeforeStatus(btnBefore.getToggleState());
+    beforeToggle.onClick = [this]
+    {
+        audioProcessor.beforeAfterBypasser.setBeforeStatus(beforeToggle.getToggleState());
         audioProcessor.offlineMixRenderer.triggerRender();
         repaint();
-        };
+    };
 
-    auto configureSlider = [this](juce::Slider& s, juce::Label& l, const juce::String& name, juce::Colour color) {
-        s.setLookAndFeel(&arcLookAndFeel); // 特製アークルックアンドフィールをアタッチ
-        s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 14);
-        s.setColour(juce::Slider::rotarySliderFillColourId, color);
-        addAndMakeVisible(s);
+    soloFullToggle.setRadioGroupId(1001);
+    soloTransToggle.setRadioGroupId(1001);
+    soloTonalToggle.setRadioGroupId(1001);
 
-        l.setText(name, juce::dontSendNotification);
-        l.setFont(juce::Font(9.5f, juce::Font::bold));
-        l.setJustificationType(juce::Justification::centred);
-        // 💥【修正】第1引数を型の衝突が起きない完全な整数型ID（juce::Label::textColourId）へ直流変更
-        l.setColour(juce::Label::textColourId, color.withAlpha(0.9f));
-        addAndMakeVisible(l);
-        };
+    soloFullToggle.setClickingTogglesState(true);
+    soloTransToggle.setClickingTogglesState(true);
+    soloTonalToggle.setClickingTogglesState(true);
 
-    // 各セクションのテーマカラー（Full: LightGrey / Trans: Cyan / Tonal: Magenta）にアライン
-    configureSlider(sliderClickLength, lblClickLength, "CLICK HOLD (ms)", juce::Colours::cyan);
-    configureSlider(sliderTransPitch, lblTransPitch, "TRANSIENT PITCH (st)", juce::Colours::cyan);
-    configureSlider(sliderTransGain, lblTransGain, "TRANSIENT GAIN (dB)", juce::Colours::cyan);
+    soloFullToggle.onClick  = [this] { audioProcessor.setSoloMode(0); updateSoloButtonStates(); };
+    soloTransToggle.onClick = [this] { audioProcessor.setSoloMode(1); updateSoloButtonStates(); };
+    soloTonalToggle.onClick = [this] { audioProcessor.setSoloMode(2); updateSoloButtonStates(); };
 
-    configureSlider(sliderClickCurve, lblClickCurve, "SUSTAIN FADE-IN (ms)", juce::Colours::magenta);
-    configureSlider(sliderSustainRelease, lblSustainRelease, "SUSTAIN RELEASE (ms)", juce::Colours::magenta);
-    configureSlider(sliderTonalPitch, lblTonalPitch, "TONAL PITCH (st)", juce::Colours::magenta);
-    configureSlider(sliderTonalGain, lblTonalGain, "TONAL GAIN (dB)", juce::Colours::magenta);
+    addAndMakeVisible(loadButton);
+    addAndMakeVisible(resetButton);
+    addAndMakeVisible(beforeToggle);
+    addAndMakeVisible(soloFullToggle);
+    addAndMakeVisible(soloTransToggle);
+    addAndMakeVisible(soloTonalToggle);
 
-    // Tonal Offset: FullMix波形右側に横スライダー（ラベル→スライダー→数値BOX縦配置）
-    sliderTonalDelay.setSliderStyle(juce::Slider::LinearHorizontal);
-    sliderTonalDelay.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 14);
-    sliderTonalDelay.setTextValueSuffix(" ms");
-    sliderTonalDelay.setDoubleClickReturnValue(true, 0.0); // ダブルクリックで0にリセット
-    sliderTonalDelay.setColour(juce::Slider::thumbColourId, juce::Colours::lightgrey);
-    sliderTonalDelay.setColour(juce::Slider::trackColourId, juce::Colour(0xff3a3a3a));
-    sliderTonalDelay.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff1a1a1a));
-    sliderTonalDelay.setColour(juce::Slider::textBoxTextColourId, juce::Colours::white);
-    sliderTonalDelay.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-    addAndMakeVisible(sliderTonalDelay);
+    // テーマ選択
+    themeCombo.addItemList(AnatomyColors::getThemeNames(), 1);
+    themeCombo.setSelectedId(1, juce::dontSendNotification);
+    themeCombo.onChange = [this]
+    {
+        int idx = themeCombo.getSelectedId() - 1;
+        AnatomyColors::setTheme(idx);
+        lastThemeIndex = idx;
+        beforeToggle.setAccentColour(AnatomyColors::peach);
+        soloFullToggle.setAccentColour(AnatomyColors::accentFull);
+        soloTransToggle.setAccentColour(AnatomyColors::accentTransient);
+        soloTonalToggle.setAccentColour(AnatomyColors::accentTonal);
+        repaint();
+        for (auto* child : getChildren()) child->repaint();
+    };
+    addAndMakeVisible(themeCombo);
+
+    // --- 2段目: FullMixPreview ---
+    waveFullMix.setLaneProperties(audioProcessor, 0);
+    waveFullMix.onFocusClicked = [this] {
+        fxRackView.setTargetRoute(TargetRoute::FullMix);
+        transientLane.setSelected(false);
+        tonalLane.setSelected(false);
+    };
+    addAndMakeVisible(waveFullMix);
+
+    knobTonalDelay.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    knobTonalDelay.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 58, 14);
+    knobTonalDelay.setTextValueSuffix(" ms");
+    knobTonalDelay.setColour(juce::Slider::rotarySliderFillColourId, AnatomyColors::accentFull);
+    knobTonalDelay.setColour(juce::Slider::textBoxTextColourId, AnatomyColors::text);
+    knobTonalDelay.setPopupDisplayEnabled(true, true, this);
+    addAndMakeVisible(knobTonalDelay);
 
     lblTonalDelay.setText("TONAL OFFSET", juce::dontSendNotification);
-    lblTonalDelay.setFont(juce::Font(9.0f, juce::Font::bold));
+    lblTonalDelay.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
     lblTonalDelay.setJustificationType(juce::Justification::centred);
-    lblTonalDelay.setColour(juce::Label::textColourId, juce::Colours::lightgrey.withAlpha(0.9f));
+    lblTonalDelay.setColour(juce::Label::textColourId, AnatomyColors::accentFull.withAlpha(0.9f));
     addAndMakeVisible(lblTonalDelay);
 
-    // エフェクトラックパネルおよびパラメータドック全体にルックアンドフィールを伝播
-    effectRackPanel.setLookAndFeel(&arcLookAndFeel);
-    parameterDockPanel.setLookAndFeel(&arcLookAndFeel);
+    btnExportFullMix.setButtonText("EXPORT");
+    styleHeaderButton(btnExportFullMix, AnatomyColors::accentFull);
+    btnExportFullMix.onClick = [this] { triggerFullMixExport(); };
+    addAndMakeVisible(btnExportFullMix);
 
-    attachClickLength = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "clickLength", sliderClickLength);
-    attachClickCurve = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "clickCurve", sliderClickCurve);
-    attachTransPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "transPitch", sliderTransPitch);
-    attachTonalPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "tonalPitch", sliderTonalPitch);
-    attachSustainRelease = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "sustainRelease", sliderSustainRelease);
-    attachTransMixGain = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "transMixGain", sliderTransGain);
-    attachTonalMixGain = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "tonalMixGain", sliderTonalGain);
-    attachTonalDelay = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "tonalDelay", sliderTonalDelay);
+    attachTonalDelay = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "tonalDelay", knobTonalDelay);
 
-    for (auto* child : transientBrowserPanel.getChildren())
-    {
-        if (auto* b = dynamic_cast<juce::TextButton*>(child))
-        {
-            juce::String txt = b->getButtonText().toLowerCase();
-            if (txt.contains("delete") || txt.contains("clear") || txt == "x" || txt.contains("remove") || txt.contains("reset"))
-            {
-                b->onClick = [this] {
-                    audioProcessor.clearCustomSampleFromUI(true);
-                    for (auto* c : transientBrowserPanel.getChildren()) {
-                        if (auto* btn = dynamic_cast<juce::TextButton*>(c)) {
-                            juce::String cTxt = btn->getButtonText().toLowerCase();
-                            if (!cTxt.contains("delete") && !cTxt.contains("clear") && cTxt != "x" && !cTxt.contains("reset"))
-                                btn->setButtonText("Browse");
-                        }
-                    }
-                    btnExportTransient.reset();
-                    repaint();
-                    };
-            }
-        }
-    }
+    // --- 3段目: TransientView & TonalView ---
+    transientLane.onSelectLane = [this] {
+        fxRackView.setTargetRoute(TargetRoute::Transient);
+        transientLane.setSelected(true);
+        tonalLane.setSelected(false);
+    };
+    transientLane.onSampleChanged = [this] {
+        audioProcessor.offlineMixRenderer.triggerRender();
+    };
+    addAndMakeVisible(transientLane);
 
-    for (auto* child : tonalBrowserPanel.getChildren())
-    {
-        if (auto* b = dynamic_cast<juce::TextButton*>(child))
-        {
-            juce::String txt = b->getButtonText().toLowerCase();
-            if (txt.contains("delete") || txt.contains("clear") || txt == "x" || txt.contains("remove") || txt.contains("reset"))
-            {
-                b->onClick = [this] {
-                    audioProcessor.clearCustomSampleFromUI(false);
-                    for (auto* c : tonalBrowserPanel.getChildren()) {
-                        if (auto* btn = dynamic_cast<juce::TextButton*>(c)) {
-                            juce::String cTxt = btn->getButtonText().toLowerCase();
-                            if (!cTxt.contains("delete") && !cTxt.contains("clear") && cTxt != "x" && !cTxt.contains("reset"))
-                                btn->setButtonText("Browse");
-                        }
-                    }
-                    btnExportTonal.reset();
-                    repaint();
-                    };
-            }
-        }
-    }
+    tonalLane.onSelectLane = [this] {
+        fxRackView.setTargetRoute(TargetRoute::Tonal);
+        transientLane.setSelected(false);
+        tonalLane.setSelected(true);
+    };
+    tonalLane.onSampleChanged = [this] {
+        audioProcessor.offlineMixRenderer.triggerRender();
+    };
+    addAndMakeVisible(tonalLane);
 
-    setSize(980, 660);
-    startTimer(40);
+    // --- 4段目: Card FX Rack ---
+    fxRackView.onRouteTabChanged = [this](TargetRoute route) {
+        transientLane.setSelected(route == TargetRoute::Transient);
+        tonalLane.setSelected(route == TargetRoute::Tonal);
+    };
+    addAndMakeVisible(fxRackView);
+
+    updateSoloButtonStates();
+    setSize(1080, 720);
+    startTimer(30); // 30Hzで波形とHUDをリフレッシュ
 }
 
 AnatomyAudioProcessorEditor::~AnatomyAudioProcessorEditor()
 {
-    effectRackPanel.removeChangeListener(this);
-
-    // カスタムルックアンドフィール解放に伴うJUCEコアへの安全なnullクリア処理
-    sliderClickLength.setLookAndFeel(nullptr);
-    sliderTransPitch.setLookAndFeel(nullptr);
-    sliderTransGain.setLookAndFeel(nullptr);
-    sliderClickCurve.setLookAndFeel(nullptr);
-    sliderSustainRelease.setLookAndFeel(nullptr);
-    sliderTonalPitch.setLookAndFeel(nullptr);
-    sliderTonalGain.setLookAndFeel(nullptr);
-    effectRackPanel.setLookAndFeel(nullptr);
-    parameterDockPanel.setLookAndFeel(nullptr);
-
     stopTimer();
+    setLookAndFeel(nullptr);
+}
+
+void AnatomyAudioProcessorEditor::updateSoloButtonStates()
+{
+    int mode = audioProcessor.getSoloMode();
+    soloFullToggle.setToggleState(mode == 0, juce::dontSendNotification);
+    soloTransToggle.setToggleState(mode == 1, juce::dontSendNotification);
+    soloTonalToggle.setToggleState(mode == 2, juce::dontSendNotification);
+}
+
+void AnatomyAudioProcessorEditor::resetAllParameters()
+{
+    for (auto* param : audioProcessor.getParameters())
+        param->setValueNotifyingHost(param->getDefaultValue());
+}
+
+void AnatomyAudioProcessorEditor::confirmThen(const juce::String& title, const juce::String& message, std::function<void()> action)
+{
+    juce::AlertWindow::showOkCancelBox(
+        juce::MessageBoxIconType::QuestionIcon, title, message, "Yes", "No", this,
+        juce::ModalCallbackFunction::create([action](int result)
+        {
+            if (result == 1 && action != nullptr) action();
+        }));
+}
+
+void AnatomyAudioProcessorEditor::triggerFullMixExport()
+{
+    juce::File tempWav = audioProcessor.createTemporaryWavForExport(0);
+    if (tempWav.existsAsFile())
+    {
+        juce::StringArray files;
+        files.add(tempWav.getFullPathName());
+        juce::DragAndDropContainer::performExternalDragDropOfFiles(files, false, this);
+    }
 }
 
 bool AnatomyAudioProcessorEditor::isInterestedInFileDrag(const juce::StringArray&)
@@ -198,10 +220,11 @@ bool AnatomyAudioProcessorEditor::isInterestedInFileDrag(const juce::StringArray
 
 void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, int x, int y)
 {
-    if (audioProcessor.isCurrentlyProcessing()) return;
+    if (audioProcessor.isCurrentlyProcessing() || files.size() == 0) return;
 
     juce::File file(files[0]);
-    if (file.getFileExtension().toLowerCase() != ".wav") return;
+    auto ext = file.getFileExtension().toLowerCase();
+    if (ext != ".wav" && ext != ".aif" && ext != ".aiff" && ext != ".mp3" && ext != ".flac") return;
 
     juce::Point<int> dropPoint(x, y);
 
@@ -214,61 +237,6 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
             reader->read(&buffer, 0, (int)reader->lengthInSamples, 0, true, true);
             audioProcessor.startSeparation(buffer, reader->sampleRate);
             wasProcessing = true;
-            btnExportFull.reset();
-            btnExportTransient.reset();
-            btnExportTonal.reset();
-        }
-    }
-    else if (waveTransient.getBounds().contains(dropPoint))
-    {
-        std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
-        if (reader != nullptr)
-        {
-            juce::AudioBuffer<float> buffer(1, static_cast<int>(reader->lengthInSamples));
-            reader->read(&buffer, 0, static_cast<int>(reader->lengthInSamples), 0, true, false);
-
-            audioProcessor.customTransientReplacer.loadSample(buffer, reader->sampleRate);
-
-            double durationMs = (static_cast<double>(reader->lengthInSamples) / reader->sampleRate) * 1000.0;
-            audioProcessor.setOffsetsFromUI(true, 0.0f, static_cast<float>(durationMs));
-
-            audioProcessor.storeCustomSampleFromUI(true, buffer, reader->sampleRate);
-
-            for (auto* child : transientBrowserPanel.getChildren()) {
-                if (auto* b = dynamic_cast<juce::TextButton*>(child)) {
-                    juce::String bTxt = b->getButtonText().toLowerCase();
-                    if (bTxt == "browse" || bTxt == "load" || bTxt == "" || bTxt.contains("cf_"))
-                        b->setButtonText(file.getFileNameWithoutExtension().substring(0, 7));
-                }
-            }
-            btnExportTransient.reset();
-            btnExportFull.reset();
-        }
-    }
-    else if (waveTonal.getBounds().contains(dropPoint))
-    {
-        std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
-        if (reader != nullptr)
-        {
-            juce::AudioBuffer<float> buffer(1, static_cast<int>(reader->lengthInSamples));
-            reader->read(&buffer, 0, static_cast<int>(reader->lengthInSamples), 0, true, false);
-
-            audioProcessor.customTonalReplacer.loadSample(buffer, reader->sampleRate);
-
-            double durationMs = (static_cast<double>(reader->lengthInSamples) / reader->sampleRate) * 1000.0;
-            audioProcessor.setOffsetsFromUI(false, 0.0f, static_cast<float>(durationMs));
-
-            audioProcessor.storeCustomSampleFromUI(false, buffer, reader->sampleRate);
-
-            for (auto* child : tonalBrowserPanel.getChildren()) {
-                if (auto* b = dynamic_cast<juce::TextButton*>(child)) {
-                    juce::String bTxt = b->getButtonText().toLowerCase();
-                    if (bTxt == "browse" || bTxt == "load" || bTxt == "" || bTxt.contains("cf_"))
-                        b->setButtonText(file.getFileNameWithoutExtension().substring(0, 7));
-                }
-            }
-            btnExportTonal.reset();
-            btnExportFull.reset();
         }
     }
 }
@@ -278,173 +246,175 @@ void AnatomyAudioProcessorEditor::timerCallback()
     audioProcessor.handleAsyncReanalysis();
     audioProcessor.flushPendingExports();
 
-    effectRackPanel.updateCardSlidersFromParameters();
-    parameterDockPanel.synchronizeSlidersFromParameters();
-
-    auto synchronizeBrowserKnobs = [](juce::Component& panel, float startVal, float endVal) {
-        int sliderCount = 0;
-        for (auto* child : panel.getChildren())
-        {
-            if (auto* s = dynamic_cast<juce::Slider*>(child))
-            {
-                if (sliderCount == 0)      s->setValue(startVal, juce::dontSendNotification);
-                else if (sliderCount == 1) s->setValue(endVal, juce::dontSendNotification);
-                sliderCount++;
-            }
-        }
-        };
-
-    synchronizeBrowserKnobs(transientBrowserPanel, audioProcessor.transStartOffsetMs, audioProcessor.transEndOffsetMs);
-    synchronizeBrowserKnobs(tonalBrowserPanel, audioProcessor.tonalStartOffsetMs, audioProcessor.tonalEndOffsetMs);
-
+    // 波形バッファの取得と更新
     juce::AudioBuffer<float> tempTrans, tempTonal, tempFullMix;
     std::vector<float> mixRatios;
-
     audioProcessor.offlineMixRenderer.getRenderedResults(tempFullMix, tempTrans, tempTonal, mixRatios);
 
-    if (btnBefore.getToggleState())
-    {
+    if (beforeToggle.getToggleState())
         waveFullMix.setBuffer(audioProcessor.getRawInputBufferForUI());
-    }
     else
     {
         waveFullMix.setBuffer(tempFullMix);
         waveFullMix.setRatioData(mixRatios);
     }
 
-    waveTransient.setBuffer(tempTrans);
-    waveTonal.setBuffer(tempTonal);
+    transientLane.setWaveBuffer(tempTrans);
+    tonalLane.setWaveBuffer(tempTonal);
 
     double sr = audioProcessor.getFileSampleRate();
     waveFullMix.setOffsets(0.0f, 0.0f, sr);
-    waveTransient.setOffsets(audioProcessor.transStartOffsetMs, audioProcessor.transEndOffsetMs, sr);
-    waveTonal.setOffsets(audioProcessor.tonalStartOffsetMs, audioProcessor.tonalEndOffsetMs, sr);
+    transientLane.setWaveOffsets(audioProcessor.transStartOffsetMs, audioProcessor.transEndOffsetMs, sr);
+    tonalLane.setWaveOffsets(audioProcessor.tonalStartOffsetMs, audioProcessor.tonalEndOffsetMs, sr);
 
-    repaint();
+    // HUD更新
+    auto& rawBuf = audioProcessor.getRawInputBufferForUI();
+    if (rawBuf.getNumSamples() > 0)
+    {
+        double lengthSec = (double)rawBuf.getNumSamples() / sr;
+        hudFile = "Sample: Loaded (" + juce::String(lengthSec, 2) + "s)";
+        hudSr   = "Rate: " + juce::String((int)sr) + " Hz";
+    }
+    else
+    {
+        hudFile = "Sample: (No file loaded)";
+        hudSr   = "Rate: 44100 Hz";
+    }
+
+    if (audioProcessor.isCurrentlyProcessing())
+    {
+        int percent = (int)std::round(audioProcessor.getHpssProgress() * 100.0f);
+        hudStatus = "SPLICING SOURCE ATOMS... " + juce::String(percent) + "%";
+    }
+    else
+    {
+        hudStatus = "Engine: Ready";
+    }
 
     if (wasProcessing && !audioProcessor.isCurrentlyProcessing())
     {
         wasProcessing = false;
-        updateButtonToggleStates();
-        btnExportFull.reset();
-        btnExportTransient.reset();
-        btnExportTonal.reset();
+        updateSoloButtonStates();
         repaint();
     }
-}
 
-void AnatomyAudioProcessorEditor::changeListenerCallback(juce::ChangeBroadcaster* source)
-{
-    if (source == &effectRackPanel)
-    {
-        parameterDockPanel.setTargetEffect(effectRackPanel.getSelectedEffect());
-        repaint();
-    }
-    else if (source == nullptr)
-    {
-        repaint();
-    }
-}
-
-void AnatomyAudioProcessorEditor::updateButtonToggleStates()
-{
-    int mode = audioProcessor.getSoloMode();
-    btnOriginal.setToggleState(mode == 0, juce::dontSendNotification);
-    btnTransient.setToggleState(mode == 1, juce::dontSendNotification);
-    btnTonal.setToggleState(mode == 2, juce::dontSendNotification);
+    repaint(0, 0, getWidth(), kHeaderH);
 }
 
 void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    // Ableton風ミディアムダーク背景（炭色フラット）に変更
-    g.fillAll(juce::Colour(0xff2b2b2b));
+    // 全体背景
+    g.fillAll(AnatomyColors::bg);
 
-    g.setFont(juce::Font(10.5f, juce::Font::bold));
+    // --- 1段目: ヘッダー ---
+    // グラデーションタイトルロゴ
+    g.setFont(juce::Font(juce::FontOptions(22.0f, juce::Font::bold)));
+    juce::ColourGradient titleGrad(AnatomyColors::mint, 20.0f, 16.0f,
+                                   AnatomyColors::pink, 240.0f, 36.0f, false);
+    titleGrad.addColour(0.5, AnatomyColors::lavender);
+    g.setGradientFill(titleGrad);
+    g.drawText("A N A T O M Y", 20, 8, 220, 26, juce::Justification::centredLeft);
 
-    auto area = getLocalBounds();
-    area.removeFromRight(165); // ラックパネル幅
-    area.removeFromTop(145);   // ボタン(35) + ノブ(110)
-    area.removeFromBottom(115); // ドック高さ
+    g.setColour(AnatomyColors::textDim);
+    g.setFont(juce::Font(juce::FontOptions(10.5f)));
+    g.drawText("OTODESK  |  V1.1.0  HPSS Audio Splice & Synthesis", 22, 34, 300, 14, juce::Justification::centredLeft);
 
-    g.setColour(juce::Colours::white.withAlpha(0.4f));
-    g.drawText("1. CURRENT FULL MIX PRE-VIEW (2-COLOR RATIO DISPLAY)", 15, 145, area.getWidth(), 12, juce::Justification::left);
+    // HUD (ロゴ右側・2行)
+    g.setFont(juce::Font(juce::FontOptions(10.5f)));
+    g.setColour(AnatomyColors::text.withAlpha(0.85f));
+    g.drawText(hudFile + "   " + hudSr, 320, 12, 300, 14, juce::Justification::centredLeft);
 
-    g.setColour(juce::Colours::cyan.withAlpha(0.5f));
-    g.drawText("2. TRANSIENT COMPONENT BROWSER (CLICK / ATTACK)", 15, 145 + 120, area.getWidth(), 12, juce::Justification::left);
+    g.setColour(audioProcessor.isCurrentlyProcessing() ? AnatomyColors::accentTransient : AnatomyColors::textDim);
+    g.drawText(hudStatus, 320, 30, 300, 14, juce::Justification::centredLeft);
 
-    g.setColour(juce::Colours::magenta.withAlpha(0.5f));
-    g.drawText("3. TONAL COMPONENT BROWSER (BODY / HARMONICS)", 15, 145 + 120 * 2, area.getWidth(), 12, juce::Justification::left);
+    // --- 2段目: FullMixPreview ヘッダー ---
+    int fY = kHeaderH + 6;
+    g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
+    g.setColour(AnatomyColors::accentFull);
+    g.drawText("FULL MIX PREVIEW  (TRANSIENT / TONAL RATIO)", kMargin + 10, fY + 4, 350, 16, juce::Justification::centredLeft);
 
-    if (audioProcessor.isCurrentlyProcessing() &&
-        !sliderClickLength.isMouseOverOrDragging() &&
-        !sliderClickCurve.isMouseOverOrDragging())
+    // 解析中オーバーレイ表示
+    if (audioProcessor.isCurrentlyProcessing())
     {
-        g.setColour(juce::Colours::black.withAlpha(0.5f));
-        g.fillRect(0, 145, area.getWidth(), 120 * 3);
+        g.setColour(juce::Colours::black.withAlpha(0.6f));
+        g.fillRect(0, kHeaderH, getWidth(), getHeight() - kHeaderH);
 
         float progress = audioProcessor.getHpssProgress();
-        int percent = static_cast<int> (std::round(progress * 100.0f));
+        int percent = static_cast<int>(std::round(progress * 100.0f));
 
-        g.setColour(juce::Colours::cyan);
-        g.setFont(16.0f);
-        g.drawText("SPLICING SOURCE ATOM: " + juce::String(percent) + "%",
-            0, 155, area.getWidth(), 130 * 3,
-            juce::Justification::centred, true);
+        g.setColour(AnatomyColors::panel);
+        g.fillRoundedRectangle((float)getWidth() / 2 - 160, (float)getHeight() / 2 - 40, 320.0f, 80.0f, 8.0f);
+        g.setColour(AnatomyColors::accentTransient);
+        g.drawRoundedRectangle((float)getWidth() / 2 - 160, (float)getHeight() / 2 - 40, 320.0f, 80.0f, 8.0f, 1.5f);
+
+        g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+        g.drawText("SPLICING SOURCE ATOMS: " + juce::String(percent) + "%",
+                   getWidth() / 2 - 150, getHeight() / 2 - 30, 300, 24, juce::Justification::centred);
+
+        // プログレスバー
+        g.setColour(AnatomyColors::knobTrack);
+        g.fillRoundedRectangle((float)getWidth() / 2 - 120, (float)getHeight() / 2 + 6, 240.0f, 10.0f, 5.0f);
+        g.setColour(AnatomyColors::mint);
+        g.fillRoundedRectangle((float)getWidth() / 2 - 120, (float)getHeight() / 2 + 6, 240.0f * progress, 10.0f, 5.0f);
     }
 }
 
 void AnatomyAudioProcessorEditor::resized()
 {
-    auto area = getLocalBounds();
+    // --- 1段目: ヘッダーボタン (右側) ---
+    int hX = getWidth() - kMargin;
 
-    // ラックパネル: コンパクト化で 250 → 165px
-    auto rackArea = area.removeFromRight(165);
-    effectRackPanel.setBounds(rackArea.reduced(2));
+    hX -= 90;
+    themeCombo.setBounds(hX, 16, 90, 24);
 
-    // ドック高さ: 130 → 115px
-    auto dockArea = area.removeFromBottom(115).reduced(5, 2);
-    parameterDockPanel.setBounds(dockArea);
+    hX -= 10;
+    hX -= 68;
+    resetButton.setBounds(hX, 16, 68, 24);
 
-    auto buttonArea = area.removeFromTop(35).reduced(10, 3);
-    auto btnWidth = buttonArea.getWidth() / 4;
-    btnOriginal.setBounds(buttonArea.removeFromLeft(btnWidth).reduced(3, 0));
-    btnTransient.setBounds(buttonArea.removeFromLeft(btnWidth).reduced(3, 0));
-    btnTonal.setBounds(buttonArea.removeFromLeft(btnWidth).reduced(3, 0));
-    btnBefore.setBounds(buttonArea.reduced(3, 0));
+    hX -= 8;
+    hX -= 68;
+    loadButton.setBounds(hX, 16, 68, 24);
 
-    // メインノブエリア: 120 → 110px
-    auto controlArea = area.removeFromTop(110).reduced(5, 2);
+    hX -= 14;
+    hX -= 72;
+    beforeToggle.setBounds(hX, 16, 72, 24);
 
-    auto transCtrlArea = controlArea.removeFromLeft(controlArea.getWidth() / 2).reduced(5, 0);
-    auto tcWidth = transCtrlArea.getWidth() / 3;
-    auto tc0 = transCtrlArea.removeFromLeft(tcWidth); lblClickLength.setBounds(tc0.removeFromTop(14)); sliderClickLength.setBounds(tc0);
-    auto tc1 = transCtrlArea.removeFromLeft(tcWidth); lblTransPitch.setBounds(tc1.removeFromTop(14)); sliderTransPitch.setBounds(tc1);
-    auto tc2 = transCtrlArea;                         lblTransGain.setBounds(tc2.removeFromTop(14));  sliderTransGain.setBounds(tc2);
+    hX -= 10;
+    hX -= 64;
+    soloTonalToggle.setBounds(hX, 16, 64, 24);
 
-    auto tonalCtrlArea = controlArea.reduced(5, 0);
-    auto tnHWidth = tonalCtrlArea.getWidth() / 4;
-    auto tn0 = tonalCtrlArea.removeFromLeft(tnHWidth); lblClickCurve.setBounds(tn0.removeFromTop(14));     sliderClickCurve.setBounds(tn0);
-    auto tn1 = tonalCtrlArea.removeFromLeft(tnHWidth); lblSustainRelease.setBounds(tn1.removeFromTop(14)); sliderSustainRelease.setBounds(tn1);
-    auto tn2 = tonalCtrlArea.removeFromLeft(tnHWidth); lblTonalPitch.setBounds(tn2.removeFromTop(14));     sliderTonalPitch.setBounds(tn2);
-    auto tn3 = tonalCtrlArea;                          lblTonalGain.setBounds(tn3.removeFromTop(14));      sliderTonalGain.setBounds(tn3);
+    hX -= 4;
+    hX -= 64;
+    soloTransToggle.setBounds(hX, 16, 64, 24);
 
-    // 波形エリア: 130 → 120px × 3
-    auto fMixArea = area.removeFromTop(120).reduced(10, 14);
-    auto fMixExportArea = fMixArea.removeFromRight(125);
-    waveFullMix.setBounds(fMixArea);
-    btnExportFull.setBounds(fMixExportArea.removeFromBottom(24).reduced(0, 2));
-    lblTonalDelay.setBounds(fMixExportArea.removeFromTop(12));
-    sliderTonalDelay.setBounds(fMixExportArea);
+    hX -= 4;
+    hX -= 82;
+    soloFullToggle.setBounds(hX, 16, 82, 24);
 
-    auto transArea = area.removeFromTop(120).reduced(10, 14);
-    auto transBrowserArea = transArea.removeFromRight(125);
-    waveTransient.setBounds(transArea);
-    transientBrowserPanel.setBounds(transBrowserArea.removeFromTop(62));
-    btnExportTransient.setBounds(transBrowserArea.removeFromBottom(24).reduced(0, 2));
+    // --- 2段目: FullMixPreview ---
+    int curY = kHeaderH + 4;
+    int fullW = getWidth() - kMargin * 2;
+    int waveW = fullW - 130;
 
-    auto tonalArea = area.removeFromTop(120).reduced(10, 14);
-    auto tonalBrowserArea = tonalArea.removeFromRight(125);
-    waveTonal.setBounds(tonalArea);
-    tonalBrowserPanel.setBounds(tonalBrowserArea.removeFromTop(62));
-    btnExportTonal.setBounds(tonalBrowserArea.removeFromBottom(24).reduced(0, 2));
+    waveFullMix.setBounds(kMargin, curY + 20, waveW, kFullMixH - 24);
+
+    // 右側コントロール
+    int ctrlX = kMargin + waveW + 10;
+    lblTonalDelay.setBounds(ctrlX, curY + 16, 110, 14);
+    knobTonalDelay.setBounds(ctrlX + 26, curY + 32, 58, 58);
+    btnExportFullMix.setBounds(ctrlX + 10, curY + 98, 90, 22);
+
+    curY += kFullMixH + 6;
+
+    // --- 3段目: TransientView & TonalView (50% スプリット) ---
+    int laneGap = 10;
+    int laneW = (fullW - laneGap) / 2;
+
+    transientLane.setBounds(kMargin, curY, laneW, kLanesH);
+    tonalLane.setBounds(kMargin + laneW + laneGap, curY, laneW, kLanesH);
+
+    curY += kLanesH + 8;
+
+    // --- 4段目: Card FX Rack ---
+    fxRackView.setBounds(kMargin, curY, fullW, kFxH);
 }

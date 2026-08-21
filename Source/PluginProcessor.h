@@ -22,6 +22,21 @@
 #include "DSP/BeforeAfterBypasser.h"
 #include "DSP/OfflineMixRenderer.h"
 
+namespace ExportRecordingCore
+{
+    enum class State { Idle, Request, Recording, PendingWrite, Ready };
+    struct Lane {
+        std::atomic<State> state{ State::Idle };
+        juce::AudioBuffer<float> buffer;
+        int writePos = 0;
+        int sampleCounter = 0;
+        int noteOffSample = 0;
+        bool isNoteOffTriggered = false;
+        juce::File file;
+    };
+    extern Lane lanes[3];
+}
+
 class AnatomyAudioProcessor final : public juce::AudioProcessor,
     public juce::Thread,
     public juce::AudioProcessorValueTreeState::Listener
