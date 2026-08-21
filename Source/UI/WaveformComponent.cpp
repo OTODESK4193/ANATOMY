@@ -180,8 +180,8 @@ void WaveformComponent::paint(juce::Graphics& g)
         g.fillEllipse(endX - 3.5f, h - 9.0f, 7.0f, 7.0f);
     }
 
-    // 5. ズームボタン（FullMixまたは波形右下）
-    if (numSamples > 0 && laneIndex == 0)
+    // 5. ズームボタン（全波形右下に配置）
+    if (numSamples > 0)
     {
         auto drawZoomBtn = [&](const juce::Rectangle<int>& area, const juce::String& label, bool enabled) {
             g.setColour(enabled ? AnatomyColors::knobTrack : AnatomyColors::panel);
@@ -226,23 +226,20 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
 
     if (internalBuffer.getNumSamples() == 0) return;
 
-    // ズームボタン判定
-    if (laneIndex == 0)
+    // ズームボタン判定（全レーン）
+    if (zoomInArea.contains(e.getPosition()) && zoomLevel < zoomMax)
     {
-        if (zoomInArea.contains(e.getPosition()) && zoomLevel < zoomMax)
-        {
-            zoomLevel *= 2.0f;
-            zoomLevel = juce::jmin(zoomLevel, zoomMax);
-            repaint();
-            return;
-        }
-        if (zoomOutArea.contains(e.getPosition()) && zoomLevel > zoomMin)
-        {
-            zoomLevel /= 2.0f;
-            zoomLevel = juce::jmax(zoomLevel, zoomMin);
-            repaint();
-            return;
-        }
+        zoomLevel *= 2.0f;
+        zoomLevel = juce::jmin(zoomLevel, zoomMax);
+        repaint();
+        return;
+    }
+    if (zoomOutArea.contains(e.getPosition()) && zoomLevel > zoomMin)
+    {
+        zoomLevel /= 2.0f;
+        zoomLevel = juce::jmax(zoomLevel, zoomMin);
+        repaint();
+        return;
     }
 
     if (laneIndex != 0)

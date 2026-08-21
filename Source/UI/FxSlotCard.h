@@ -33,7 +33,7 @@ public:
     void setTargetRoute(TargetRoute r);
     void updateFromRoute();
 
-    int getEffectType() const { return typeBox.getSelectedId() - 1; }
+    int getEffectType() const { return typeBox.getSelectedId() - 2; }
     void setEffectType(int fxType);
 
     void mouseDown(const juce::MouseEvent& e) override;

@@ -45,13 +45,16 @@ private:
     AnatomyAudioProcessor& proc;
     TargetRoute activeRoute = TargetRoute::Transient;
 
+    // レーンごとの6スロットのFX種別保持 (-1 = None, 0..5 = 各種FX)
+    static constexpr int kNumSlots = 6;
+    std::array<std::array<int, kNumSlots>, 3> laneSlotTypes;
+
     // タブボタン
     juce::TextButton btnTabTransient{ "TRANSIENT FX" };
     juce::TextButton btnTabTonal{ "TONAL FX" };
     juce::TextButton btnTabFullMix{ "FULL MIX FX" };
 
     // 6スロットカード
-    static constexpr int kNumSlots = 6;
     std::array<std::unique_ptr<FxSlotCard>, kNumSlots> cards;
     int selectedSlot = 0;
 

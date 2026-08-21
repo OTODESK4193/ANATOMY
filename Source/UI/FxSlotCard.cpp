@@ -113,8 +113,28 @@ void FxSlotCard::updateFromRoute()
 
 void FxSlotCard::setEffectType(int fxType)
 {
-    typeBox.setSelectedId(fxType + 2, juce::dontSendNotification);
-    amountKnob.setEnabled(fxType >= 0 && fxType < 6);
+    typeBox.setSelectedId(fxType >= 0 ? fxType + 2 : 1, juce::dontSendNotification);
+    if (fxType >= 0 && fxType < 6)
+    {
+        juce::String pre = getPrefix();
+        juce::String mixParamId;
+        switch (fxType)
+        {
+            case 0: mixParamId = pre + "SatMix"; break;
+            case 1: mixParamId = pre + "BcMix"; break;
+            case 2: mixParamId = pre + "NsMix"; break;
+            case 3: mixParamId = pre + "OttDepth"; break;
+            case 4: mixParamId = pre + "GlueDepth"; break;
+            case 5: mixParamId = pre + "LimMix"; break;
+        }
+        if (auto* val = proc.apvts.getRawParameterValue(mixParamId))
+            amountKnob.setValue(val->load(), juce::dontSendNotification);
+        amountKnob.setEnabled(true);
+    }
+    else
+    {
+        amountKnob.setEnabled(false);
+    }
     repaint();
 }
 
@@ -178,12 +198,23 @@ void FxSlotCard::mouseDown(const juce::MouseEvent&)
 
 void FxSlotCard::mouseDrag(const juce::MouseEvent& e)
 {
-    if (e.mouseDownPosition.getY() <= 22.0f)
+    if (e.mouseDownPosition.getY() <= 24.0f)
     {
         if (auto* container = juce::DragAndDropContainer::findParentDragContainerFor(this))
         {
             if (!container->isDragAndDropActive())
-                container->startDragging(juce::var(slot), this);
+            {
+                juce::Image dragImage(juce::Image::ARGB, getWidth(), 24, true);
+                juce::Graphics dg(dragImage);
+                dg.setColour(AnatomyColors::accentFull.withAlpha(0.75f));
+                dg.fillRoundedRectangle(dragImage.getBounds().toFloat(), 4.0f);
+                dg.setColour(juce::Colours::black);
+                dg.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
+                dg.drawText("SLOT " + juce::String(slot + 1) + " : " + typeBox.getText(),
+                            dragImage.getBounds(), juce::Justification::centred);
+
+                container->startDragging(juce::var(slot), this, dragImage, true);
+            }
         }
     }
 }

@@ -13,6 +13,21 @@ namespace
 
 FxRackView::FxRackView(AnatomyAudioProcessor& p) : proc(p)
 {
+    // 全レーンのスロットを初期化 (-1 = None)
+    for (int r = 0; r < 3; ++r)
+        for (int s = 0; s < kNumSlots; ++s)
+            laneSlotTypes[(size_t)r][(size_t)s] = -1;
+
+    // プロセッサに既存の初期エフェクト順序があればスロットに展開
+    for (int r = 0; r < 3; ++r)
+    {
+        TargetRoute rt = (r == 0) ? TargetRoute::Transient :
+                         (r == 1) ? TargetRoute::Tonal : TargetRoute::FullMix;
+        const auto& order = proc.getEffectOrder(rt);
+        for (size_t i = 0; i < order.size() && i < (size_t)kNumSlots; ++i)
+            laneSlotTypes[(size_t)r][i] = order[i];
+    }
+
     // タブボタン設定
     auto styleTab = [this](juce::TextButton& b, juce::Colour c) {
         b.setClickingTogglesState(false);
@@ -88,9 +103,7 @@ void FxRackView::setTargetRoute(TargetRoute route)
     btnTabFullMix.setColour(juce::TextButton::textColourOffId,
         (route == TargetRoute::FullMix) ? AnatomyColors::accentFull : AnatomyColors::textDim);
 
-    for (int i = 0; i < kNumSlots; ++i)
-        cards[(size_t)i]->setTargetRoute(route);
-
+    updateAllCardStates();
     selectSlot(0);
     repaint();
 }
@@ -98,7 +111,11 @@ void FxRackView::setTargetRoute(TargetRoute route)
 int FxRackView::getSlotEffectType(int slot) const
 {
     if (slot >= 0 && slot < kNumSlots)
-        return cards[(size_t)slot]->getEffectType();
+    {
+        int routeIdx = (activeRoute == TargetRoute::Transient) ? 0 :
+                       (activeRoute == TargetRoute::Tonal)     ? 1 : 2;
+        return laneSlotTypes[(size_t)routeIdx][(size_t)slot];
+    }
     return -1;
 }
 
@@ -116,25 +133,42 @@ void FxRackView::swapSlots(int a, int b)
     if (a == b || a < 0 || b < 0 || a >= kNumSlots || b >= kNumSlots)
         return;
 
-    auto order = proc.getEffectOrder(activeRoute);
-    if (a < (int)order.size() && b < (int)order.size())
-    {
-        std::swap(order[(size_t)a], order[(size_t)b]);
-        proc.updateRouteOrder(activeRoute, order);
-    }
+    int routeIdx = (activeRoute == TargetRoute::Transient) ? 0 :
+                   (activeRoute == TargetRoute::Tonal)     ? 1 : 2;
+
+    std::swap(laneSlotTypes[(size_t)routeIdx][(size_t)a], laneSlotTypes[(size_t)routeIdx][(size_t)b]);
     updateAllCardStates();
+
+    // アクティブ順序を更新
+    std::vector<int> newOrder;
+    for (int i = 0; i < kNumSlots; ++i)
+    {
+        int t = laneSlotTypes[(size_t)routeIdx][(size_t)i];
+        if (t >= 0 && t < 6)
+        {
+            if (std::find(newOrder.begin(), newOrder.end(), t) == newOrder.end())
+                newOrder.push_back(t);
+        }
+    }
+    proc.updateRouteOrder(activeRoute, newOrder);
     selectSlot(b);
 }
 
 void FxRackView::handleSlotTypeChanged(int slot)
 {
+    int routeIdx = (activeRoute == TargetRoute::Transient) ? 0 :
+                   (activeRoute == TargetRoute::Tonal)     ? 1 : 2;
+
+    int newType = cards[(size_t)slot]->getEffectType(); // -1..5
+    laneSlotTypes[(size_t)routeIdx][(size_t)slot] = newType;
+
+    // スロット1〜6を順に走査し、アクティブなエフェクト順序を生成
     std::vector<int> newOrder;
     for (int i = 0; i < kNumSlots; ++i)
     {
-        int t = cards[(size_t)i]->getEffectType(); // 0: Sat, 1: Bc, 2: Ns, 3: Ott, 4: Glue, 5: Lim, -1: None
+        int t = laneSlotTypes[(size_t)routeIdx][(size_t)i];
         if (t >= 0 && t < 6)
         {
-            // 重複を避けて追加
             if (std::find(newOrder.begin(), newOrder.end(), t) == newOrder.end())
                 newOrder.push_back(t);
         }
@@ -152,19 +186,24 @@ void FxRackView::handleSlotTypeChanged(int slot)
     }
 
     proc.updateRouteOrder(activeRoute, newOrder);
-    updateAllCardStates();
     rebuildDetails();
 }
 
 void FxRackView::updateAllCardStates()
 {
+    int routeIdx = (activeRoute == TargetRoute::Transient) ? 0 :
+                   (activeRoute == TargetRoute::Tonal)     ? 1 : 2;
+
     for (int i = 0; i < kNumSlots; ++i)
-        cards[(size_t)i]->updateFromRoute();
+    {
+        cards[(size_t)i]->setTargetRoute(activeRoute);
+        cards[(size_t)i]->setEffectType(laneSlotTypes[(size_t)routeIdx][(size_t)i]);
+    }
 }
 
 void FxRackView::synchronizeDetailsFromParameters()
 {
-    // タイマーからの呼び出し用（必要に応じ）
+    // タイマーからの呼び出し用
 }
 
 void FxRackView::rebuildDetails()
@@ -394,7 +433,7 @@ void FxRackView::paint(juce::Graphics& g)
         g.drawText(">", arrX, kCardY + kCardH / 2 - 10, 12, 20, juce::Justification::centred);
     }
 
-    // 詳細エリア ヘッダー
+    // 詳細エリア ヘッダー (文字化けしないハイフンを使用)
     g.setColour(accent);
     g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
 
@@ -402,7 +441,7 @@ void FxRackView::paint(juce::Graphics& g)
     int t = getSlotEffectType(selectedSlot);
     juce::String fxName = (t >= 0 && t < 6) ? typeNames[t] : "NONE";
 
-    g.drawText("DETAILS  —  SLOT " + juce::String(selectedSlot + 1) + "  [" + fxName + "]",
+    g.drawText("DETAILS  -  SLOT " + juce::String(selectedSlot + 1) + "  [" + fxName + "]",
                20, kDetailY, 600, 16, juce::Justification::centredLeft);
 
     g.setColour(accent.withAlpha(0.35f));
