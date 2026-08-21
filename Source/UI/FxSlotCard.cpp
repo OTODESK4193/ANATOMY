@@ -24,6 +24,7 @@ FxSlotCard::FxSlotCard(AnatomyAudioProcessor& processor, int slotIndex,
 
     typeBox.onChange = [this]
     {
+        setEffectType(getEffectType());
         if (onSelect != nullptr) onSelect(slot);
         if (onTypeChanged != nullptr) onTypeChanged();
     };
@@ -93,6 +94,7 @@ void FxSlotCard::setEffectType(int fxType)
         }
 
         amountKnob.setEnabled(true);
+        amountKnob.setAlpha(1.0f);
         if (proc.apvts.getParameter(mixParamId) != nullptr)
         {
             amountAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -102,6 +104,8 @@ void FxSlotCard::setEffectType(int fxType)
     else
     {
         amountKnob.setEnabled(false);
+        amountKnob.setValue(0.0, juce::dontSendNotification);
+        amountKnob.setAlpha(0.35f);
     }
     repaint();
 }
