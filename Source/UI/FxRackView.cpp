@@ -381,27 +381,31 @@ void FxRackView::layoutDetails()
         x += 86;
     }
 
-    // OTT BANDS / Band Selectors
-    if (fxType == 3)
-    {
-        int btnX = getWidth() - 90;
-        ottBandsBtn.setBounds(btnX, kDetailY + 2, 70, 20);
-        if (showOttBands)
-        {
-            for (int i = 2; i >= 0; --i) // HIGH(2), MID(1), LOW(0) の順に左へ
-            {
-                btnX -= 55;
-                ottBandSelectBtns[i].setBounds(btnX, kDetailY + 2, 50, 20);
-            }
-        }
-    }
-
     // ノブ配置
     for (size_t i = 0; i < detailKnobs.size(); ++i)
     {
         detailKnobLabels[i]->setBounds(x, y, 68, 14);
         detailKnobs[i]->setBounds(x + 5, y + 15, 58, 58);
         x += 76;
+    }
+
+    // OTT BANDS / Band Selectors
+    if (fxType == 3)
+    {
+        int btnY = y + 35; // ノブエリアの中央の高さ
+        int btnX = x + 10; // 最後のノブの右側
+        
+        ottBandsBtn.setBounds(btnX, btnY, 60, 20);
+        btnX += 70;
+
+        if (showOttBands)
+        {
+            for (int i = 0; i < 3; ++i) // LOW(0), MID(1), HIGH(2) の順
+            {
+                ottBandSelectBtns[i].setBounds(btnX, btnY, 46, 20);
+                btnX += 50;
+            }
+        }
     }
 }
 
