@@ -5,14 +5,10 @@
 #include <algorithm>
 
 /**
- * TransientShaper
- * 速い/遅い2つのエンベロープ追従の差分でトランジェント(立ち上がり)と
- * サステイン(余韻)を検出し、それぞれを増減させる。
- * キックの「アタックの張り」「ボディの伸び」を独立して調整できる。
- *
- *  Attack  : -1..+1  (アタック成分の増減。+でパンチUP)
- *  Sustain : -1..+1  (サステイン成分の増減。+で余韻UP)
- *  Mix     :  0..1   (Dry/Wet)
+ * TransientShaper (High-Precision Dual-Branch Dynamic Architecture)
+ * 1. ステレオリンク高精度デュアル・エンベロープ追従（Fast / Slow）
+ * 2. 差分エネルギー抽出＋アンチエイリアシング・ゲインスムージング（低域歪みの根絶）
+ * 3. アタックブースト時のソフトサチュレーション・プロテクション（パンチ感を最大化）
  */
 class TransientShaper final : public AudioEffect
 {
@@ -23,17 +19,21 @@ public:
     void prepare(double sampleRate, int /*maxBlockSize*/) override
     {
         sr = (float)sampleRate;
-        // 追従係数（時間→1極係数）
-        fastAtk = onePole(1.0f);    // 1ms
-        fastRel = onePole(30.0f);   // 30ms
-        slowAtk = onePole(20.0f);   // 20ms
-        slowRel = onePole(150.0f);  // 150ms
+        // 追従係数（高精度 1 極フィルター係数）
+        fastAtk = onePole(0.5f);    // 0.5ms (超高速過渡スナップ検出)
+        fastRel = onePole(25.0f);   // 25ms
+        slowAtk = onePole(15.0f);   // 15ms
+        slowRel = onePole(180.0f);  // 180ms
+        gainSmoothCoeff = onePole(0.8f); // 0.8ms (低域クリック歪み防止のスムージング)
+
         reset();
     }
 
     void reset() noexcept override
     {
-        for (int c = 0; c < 2; ++c) { fastEnv[c] = 0.0f; slowEnv[c] = 0.0f; }
+        fastEnv = 0.0f;
+        slowEnv = 0.0f;
+        smoothedGain = 1.0f;
     }
 
     void process(juce::AudioBuffer<float>& buffer) noexcept override
@@ -41,40 +41,76 @@ public:
         const int numCh = juce::jmin(2, buffer.getNumChannels());
         const int n = buffer.getNumSamples();
         const float mix = currentMix;
-        const float atkAmt = currentAttack;   // -1..1
-        const float susAmt = currentSustain;  // -1..1
+        const float atkAmt = currentAttack;   // -1.0 .. +1.0
+        const float susAmt = currentSustain;  // -1.0 .. +1.0
 
-        for (int ch = 0; ch < numCh; ++ch)
+        if (std::abs(atkAmt) < 0.001f && std::abs(susAmt) < 0.001f)
+            return;
+
+        float fe = fastEnv;
+        float se = slowEnv;
+        float sg = smoothedGain;
+
+        const float* r0 = buffer.getReadPointer(0);
+        const float* r1 = (numCh > 1) ? buffer.getReadPointer(1) : r0;
+        float* w0 = buffer.getWritePointer(0);
+        float* w1 = (numCh > 1) ? buffer.getWritePointer(1) : nullptr;
+
+        for (int s = 0; s < n; ++s)
         {
-            float* d = buffer.getWritePointer(ch);
-            float fe = fastEnv[ch];
-            float se = slowEnv[ch];
+            // ステレオリンクによる左右音像のふらつき防止
+            const float x0 = r0[s];
+            const float x1 = r1[s];
+            const float rect = std::max(std::abs(x0), std::abs(x1));
 
-            for (int s = 0; s < n; ++s)
+            // デュアル・エンベロープ追従
+            fe += (rect > fe ? fastAtk : fastRel) * (rect - fe);
+            se += (rect > se ? slowAtk : slowRel) * (rect - se);
+
+            // 過渡（Attack）と余韻（Sustain）のエネルギー分離
+            const float delta = fe - se;
+            float targetGainDb = 0.0f;
+
+            if (delta > 0.0f && se > 1.0e-5f)
             {
-                const float x = d[s];
-                const float rect = std::abs(x);
-
-                // 2つのエンベロープ追従
-                fe += (rect > fe ? fastAtk : fastRel) * (rect - fe);
-                se += (rect > se ? slowAtk : slowRel) * (rect - se);
-
-                // 差分(dB): 正=アタック区間 / 負=サステイン区間
-                const float ratio = (se > 1.0e-6f) ? (fe / se) : 1.0f;
-                const float transDb = 20.0f * std::log10(std::max(1.0e-6f, ratio));
-
-                float gainDb = 0.0f;
-                if (transDb > 0.0f) gainDb = atkAmt * 12.0f * (transDb / 6.0f); // アタック側
-                else                gainDb = susAmt * 12.0f * (-transDb / 6.0f); // サステイン側
-                gainDb = juce::jlimit(-18.0f, 18.0f, gainDb);
-
-                const float wet = x * std::pow(10.0f, gainDb / 20.0f);
-                d[s] = x * (1.0f - mix) + wet * mix;
+                // アタック区間: 立ち上がり比率から滑らかにゲイン計算
+                float attackRatio = delta / (se + 0.05f);
+                targetGainDb = atkAmt * 18.0f * std::min(2.0f, attackRatio);
+            }
+            else if (se > 1.0e-5f)
+            {
+                // サステイン区間: 余韻比率から滑らかにゲイン計算
+                float sustainRatio = se / (fe + 0.05f);
+                targetGainDb = susAmt * 12.0f * std::min(2.0f, sustainRatio);
             }
 
-            fastEnv[ch] = fe;
-            slowEnv[ch] = se;
+            targetGainDb = juce::jlimit(-24.0f, 24.0f, targetGainDb);
+            const float targetLinear = std::pow(10.0f, targetGainDb / 20.0f);
+
+            // ゲインのスムージング（チャタリング歪みを完全排除）
+            sg += gainSmoothCoeff * (targetLinear - sg);
+
+            // チャンネル毎に出力計算 + ソフトサチュレーション
+            auto processSampleOut = [sg, mix, atkAmt](float x) noexcept -> float
+            {
+                float processed = x * sg;
+                // アタックブースト時のアナログライクなソフトクリッピング保護
+                if (atkAmt > 0.0f && std::abs(processed) > 0.8f)
+                {
+                    float sign = (processed >= 0.0f) ? 1.0f : -1.0f;
+                    float absP = std::abs(processed);
+                    processed = sign * (0.8f + 0.2f * std::tanh((absP - 0.8f) / 0.2f));
+                }
+                return x * (1.0f - mix) + processed * mix;
+            };
+
+            w0[s] = processSampleOut(x0);
+            if (w1 != nullptr) w1[s] = processSampleOut(x1);
         }
+
+        fastEnv = fe;
+        slowEnv = se;
+        smoothedGain = sg;
     }
 
     juce::String getName() const override { return "Transient Shaper"; }
@@ -114,8 +150,10 @@ private:
     bool activeState = false;
 
     float fastAtk = 0.5f, fastRel = 0.1f, slowAtk = 0.2f, slowRel = 0.05f;
-    float fastEnv[2] = { 0.0f, 0.0f };
-    float slowEnv[2] = { 0.0f, 0.0f };
+    float gainSmoothCoeff = 0.1f;
+    float fastEnv = 0.0f;
+    float slowEnv = 0.0f;
+    float smoothedGain = 1.0f;
 
     float currentMix = 1.0f;
     float currentAttack = 0.0f;

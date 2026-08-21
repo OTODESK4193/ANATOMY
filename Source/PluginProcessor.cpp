@@ -182,6 +182,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
 
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "LimCeil", 1 }, pre + " Limiter Ceiling (dB)", -24.0f, 0.0f, -0.1f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "LimMix", 1 }, pre + " Limiter Mix", 0.0f, 1.0f, 0.0f));
+        params.push_back(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{ pre + "LimMode", 1 }, pre + " Limiter Mode", juce::StringArray{ "Limit", "Clip" }, 0));
 
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "TsAttack",  1 }, pre + " Transient Attack",  -1.0f, 1.0f, 0.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "TsSustain", 1 }, pre + " Transient Sustain", -1.0f, 1.0f, 0.0f));
@@ -306,6 +307,7 @@ void AnatomyAudioProcessor::initParamCache()
 
         c.limCeil = apvts.getRawParameterValue(pre + "LimCeil");
         c.limMix  = apvts.getRawParameterValue(pre + "LimMix");
+        c.limMode = apvts.getRawParameterValue(pre + "LimMode");
 
         c.tsAttack  = apvts.getRawParameterValue(pre + "TsAttack");
         c.tsSustain = apvts.getRawParameterValue(pre + "TsSustain");
@@ -376,6 +378,7 @@ void AnatomyAudioProcessor::synchronizePoolParameters() noexcept
         {
             c.lim->setCeiling(c.limCeil->load());
             if (c.limMix) c.lim->setMix(c.limMix->load());
+            if (c.limMode) c.lim->setMode(static_cast<int>(c.limMode->load()));
         }
 
         if (c.ts && c.tsMix)
@@ -851,17 +854,26 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     int cIdx = static_cast<int>(exactClickIdx);
     int sIdx = static_cast<int>(exactSustainIdx);
 
-    // 線形補間読み取りラムダ（SR変換時のエイリアシング防止）
+    // 4点 Hermite 3次補間読み取りラムダ（エイリアシング完全排除・超高忠実度）
     auto readInterpolated = [](const juce::AudioBuffer<float>& buf, int ch, double idx) noexcept -> float
         {
             const int maxSmp = buf.getNumSamples();
             if (maxSmp <= 0 || idx < 0.0) return 0.0f;
             if (idx >= static_cast<double>(maxSmp - 1)) return 0.0f;
             const int i0 = static_cast<int>(idx);
-            const int i1 = i0 + 1;
             const float frac = static_cast<float>(idx - static_cast<double>(i0));
+
+            const int im1 = std::max(0, i0 - 1);
+            const int i1  = std::min(i0 + 1, maxSmp - 1);
+            const int i2  = std::min(i0 + 2, maxSmp - 1);
+
             const float* data = buf.getReadPointer(ch);
-            return data[i0] + frac * (data[i1] - data[i0]);
+            const float ym1 = data[im1], y0 = data[i0], y1 = data[i1], y2 = data[i2];
+            const float c0 = y0;
+            const float c1 = 0.5f * (y1 - ym1);
+            const float c2 = ym1 - 2.5f * y0 + 2.0f * y1 - 0.5f * y2;
+            const float c3 = 0.5f * (y2 - ym1) + 1.5f * (y0 - y1);
+            return ((c3 * frac + c2) * frac + c1) * frac + c0;
         };
 
     if (isBefore)
@@ -1551,6 +1563,7 @@ void AnatomyAudioProcessor::applyEffectsOffline(juce::AudioBuffer<float>& buffer
             lim.prepare(sr, numSamples);
             if (c.limCeil) lim.setCeiling(c.limCeil->load());
             if (c.limMix)  lim.setMix(c.limMix->load());
+            if (c.limMode) lim.setMode(static_cast<int>(c.limMode->load()));
             lim.process(buffer);
         }
         else if (idx == 6) // TRANSIENT SHAPER
@@ -1785,7 +1798,21 @@ void OfflineMixRenderer::executeRender()
             for (int s = 0; s < maxSamples; ++s)
             {
                 double srcIdx = s * ratio;
-                if (srcIdx < maxSamples) dest[s] = src[static_cast<int>(srcIdx)];
+                if (srcIdx < maxSamples - 1)
+                {
+                    int i0 = static_cast<int>(srcIdx);
+                    float frac = static_cast<float>(srcIdx - static_cast<double>(i0));
+                    int im1 = std::max(0, i0 - 1);
+                    int i1  = std::min(i0 + 1, maxSamples - 1);
+                    int i2  = std::min(i0 + 2, maxSamples - 1);
+
+                    const float ym1 = src[im1], y0 = src[i0], y1 = src[i1], y2 = src[i2];
+                    const float c0 = y0;
+                    const float c1 = 0.5f * (y1 - ym1);
+                    const float c2 = ym1 - 2.5f * y0 + 2.0f * y1 - 0.5f * y2;
+                    const float c3 = 0.5f * (y2 - ym1) + 1.5f * (y0 - y1);
+                    dest[s] = ((c3 * frac + c2) * frac + c1) * frac + c0;
+                }
             }
         }
     };

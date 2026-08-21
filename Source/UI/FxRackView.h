@@ -65,10 +65,14 @@ private:
     std::vector<std::unique_ptr<juce::Label>> detailKnobLabels;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>> detailAttachments;
 
-    // 特殊コントロール (SatType用コンボ、Noise用ラジオボタン、OTT用BANDSボタン等)
+    // 特殊コントロール (SatType用コンボ、LimMode用コンボ、Noise用ラジオボタン、OTT用BANDSボタン等)
     juce::ComboBox satTypeCombo;
     juce::Label satTypeLabel;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> satTypeAttachment;
+
+    juce::ComboBox limModeCombo;
+    juce::Label limModeLabel;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> limModeAttachment;
 
     std::vector<std::unique_ptr<juce::TextButton>> noiseTypeButtons;
     juce::TextButton ottBandsBtn{ "BANDS" };

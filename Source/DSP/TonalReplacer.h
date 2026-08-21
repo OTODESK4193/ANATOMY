@@ -104,10 +104,18 @@ public:
                 if (srcPos < 0.0) srcPos = 0.0;
 
                 int idx0 = static_cast<int>(srcPos);
-                int idx1 = std::min(idx0 + 1, maxSamples - 1);
                 float frac = static_cast<float>(srcPos - idx0);
 
-                return src[idx0] + frac * (src[idx1] - src[idx0]);
+                int idxM1 = std::max(0, idx0 - 1);
+                int idx1  = std::min(idx0 + 1, maxSamples - 1);
+                int idx2  = std::min(idx0 + 2, maxSamples - 1);
+
+                const float ym1 = src[idxM1], y0 = src[idx0], y1 = src[idx1], y2 = src[idx2];
+                const float c0 = y0;
+                const float c1 = 0.5f * (y1 - ym1);
+                const float c2 = ym1 - 2.5f * y0 + 2.0f * y1 - 0.5f * y2;
+                const float c3 = 0.5f * (y2 - ym1) + 1.5f * (y0 - y1);
+                return ((c3 * frac + c2) * frac + c1) * frac + c0;
             };
 
         float sampleA = readSourceInterpolated(baseTimelinePos, delayA);

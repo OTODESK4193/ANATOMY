@@ -230,6 +230,9 @@ void FxRackView::rebuildDetails()
     satTypeAttachment.reset();
     removeChildComponent(&satTypeCombo);
     removeChildComponent(&satTypeLabel);
+    limModeAttachment.reset();
+    removeChildComponent(&limModeCombo);
+    removeChildComponent(&limModeLabel);
     noiseTypeButtons.clear();
     removeChildComponent(&ottBandsBtn);
     for (auto& b : ottBandSelectBtns) removeChildComponent(&b);
@@ -365,11 +368,33 @@ void FxRackView::rebuildDetails()
             { pre + "GlueDepth", "DRY/WET" }
         };
         break;
-    case 5: // Limiter
-        knobDefs = {
-            { pre + "LimCeil", "CEILING dB" },
-            { pre + "LimMix",  "DRY/WET" }
-        };
+    case 5: // Limiter (Limit / Clip モード切替 + Ceiling + Dry/Wet)
+        {
+            limModeLabel.setText("MODE", juce::dontSendNotification);
+            limModeLabel.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
+            limModeLabel.setColour(juce::Label::textColourId, accent.withAlpha(0.9f));
+            limModeLabel.setJustificationType(juce::Justification::centred);
+            addAndMakeVisible(limModeLabel);
+
+            limModeCombo.clear();
+            limModeCombo.addItem("Limit", 1);
+            limModeCombo.addItem("Clip", 2);
+            limModeCombo.setColour(juce::ComboBox::backgroundColourId, AnatomyColors::knobTrack);
+            limModeCombo.setColour(juce::ComboBox::textColourId, AnatomyColors::text);
+            limModeCombo.setColour(juce::ComboBox::outlineColourId, accent.withAlpha(0.6f));
+            addAndMakeVisible(limModeCombo);
+
+            if (proc.apvts.getParameter(pre + "LimMode") != nullptr)
+            {
+                limModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+                    proc.apvts, pre + "LimMode", limModeCombo);
+            }
+
+            knobDefs = {
+                { pre + "LimCeil", "CEILING dB" },
+                { pre + "LimMix",  "DRY/WET" }
+            };
+        }
         break;
     case 6: // Transient Shaper (NextGenKick2完全移植)
         knobDefs = {
@@ -421,6 +446,14 @@ void FxRackView::layoutDetails()
         satTypeLabel.setBounds(x, y, 108, 14);
         satTypeCombo.setBounds(x, y + 26, 108, 24);
         x += 120;
+    }
+
+    // Limiter Mode コンボボックス
+    if (fxType == 5)
+    {
+        limModeLabel.setBounds(x, y, 84, 14);
+        limModeCombo.setBounds(x, y + 26, 84, 24);
+        x += 96;
     }
 
     // Noise Type ボタン

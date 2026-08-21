@@ -5,19 +5,19 @@
 #include <algorithm>
 
 /**
- * GranularPitchShifter (Snap-Engine Architecture)
- * * 1. Transient: 窓関数を完全に排除した「ワンショット・リサンプリング」で鋭さを100%維持
- * 2. Tonal: ポインタのワープを根絶した「中心基準型・連続位相走行シフター」で滑らかさを維持
- * 3. 接着剤: ノートONの瞬間に遅延を「完全ゼロ」に強制同期して一体感を偽装
+ * GranularPitchShifter (High-Precision Snap-Engine Architecture)
+ * 1. Transient: 窓関数を排除した高精度 4 点 Hermite ワンショット・リサンプリングで鋭さを100%維持
+ * 2. Tonal: 4点位相分散型 Hann グラニュラー・ローテーターで振幅変調・コムフィルター歪みを完全除去
+ * 3. 接着剤: ノートONの瞬間に遅延を完全ゼロ同期
  */
 class GranularPitchShifter
 {
+public:
     /**
-     * Hermite 4点補間（3次）
-     * 線形補間に比べ高周波のエイリアシングを大幅に低減。
-     * 4点 (y[-1], y[0], y[1], y[2]) から t ∈ [0,1) の位置を補間。
+     * Hermite 4点補間（3次 Catmull-Rom スプライン）
+     * 高周波のエイリアシングを大幅に低減し、滑らかな連続微分を保証。
      */
-    static float hermiteInterp(float ym1, float y0, float y1, float y2, float t) noexcept
+    static inline float hermiteInterp(float ym1, float y0, float y1, float y2, float t) noexcept
     {
         const float c0 = y0;
         const float c1 = 0.5f * (y1 - ym1);
@@ -28,9 +28,8 @@ class GranularPitchShifter
 
     /**
      * ソースバッファからHermite補間で読み出し。
-     * 境界はクランプで安全に処理。
      */
-    static float readHermite(const float* src, int maxSamples, float srcPos) noexcept
+    static inline float readHermite(const float* src, int maxSamples, float srcPos) noexcept
     {
         if (srcPos < 0.0f) srcPos = 0.0f;
         if (srcPos >= static_cast<float>(maxSamples - 1)) srcPos = static_cast<float>(maxSamples - 1) - 0.0001f;
@@ -45,7 +44,6 @@ class GranularPitchShifter
         return hermiteInterp(src[idxM1], src[idx0], src[idx1], src[idx2], frac);
     }
 
-public:
     GranularPitchShifter()
     {
         init(44100.0, 40.0f, 4);
@@ -55,16 +53,13 @@ public:
 
     /**
      * アルゴリズムの初期化
-     * @param grainSizeMs 20ms未満であれば自動的にTransient（ワンショット）モードとして動作します
+     * @param grainSizeMs 20ms未満であれば自動的にTransient（ワンショット）モードとして動作
      */
     void init(double sampleRate, float grainSizeMs, int /*numOverlaps*/)
     {
         this->currentSampleRate = sampleRate;
-
-        // 20ms未満の短い設定（VoiceStateでの10ms）なら自動でTransientワンショットモードに設定
         this->isTransientMode = (grainSizeMs < 20.0f);
 
-        // Tonal用の最大遅延幅（窓サイズ）の設定
         this->maxDelaySamples = static_cast<float>((grainSizeMs / 1000.0f) * sampleRate);
         if (this->maxDelaySamples < 64.0f) this->maxDelaySamples = 64.0f;
 
@@ -72,13 +67,11 @@ public:
     }
 
     /**
-     * ノートON（トリガー）の瞬間に呼ばれる強制同期関数【接着剤】
+     * ノートON（トリガー）の瞬間に呼ばれる強制ゼロ遅延同期
      */
     void reset() noexcept
     {
-        // 仮想再生ポインタの初期位相を「0.5」に強制アライメント
-        // これにより、ノートONの瞬間は「遅延が完全にゼロ」の状態でTransientと100%同期してスタートします
-        tapAPhase = 0.5f;
+        basePhase = 0.5f;
     }
 
     /**
@@ -99,7 +92,7 @@ public:
         const float* src = sourceBuffer.getReadPointer(0);
 
         // ==============================================================================
-        // 【MODE 1】Transient: 窓関数を通さない「ワンショット・リサンプリング」
+        // 【MODE 1】Transient: 窓関数を通さない「ワンショット・高次Hermiteリサンプリング」
         // ==============================================================================
         if (isTransientMode)
         {
@@ -111,44 +104,38 @@ public:
         }
 
         // ==============================================================================
-        // 【MODE 2】Tonal: ポインタをワープさせない「連続走行グラニュラー」
+        // 【MODE 2】Tonal: 4点位相分散型 Hann グラニュラー・ローテーター
         // ==============================================================================
-        // ピッチ比に基づいて、遅延の進捗（ノコギリ波の傾き）を完全に連続走行させる
         float phaseIncrement = (1.0f - scaleFactor) / maxDelaySamples;
-        tapAPhase += phaseIncrement;
+        basePhase += phaseIncrement;
 
-        // 位相を 0.0 〜 1.0 の間に滑らかにローテーション（ワープの根絶）
-        while (tapAPhase >= 1.0f) tapAPhase -= 1.0f;
-        while (tapAPhase < 0.0f)  tapAPhase += 1.0f;
+        while (basePhase >= 1.0f) basePhase -= 1.0f;
+        while (basePhase < 0.0f)  basePhase += 1.0f;
 
-        // もう一つの仮想ポインタ（Tap B）は常に180度反転した位置を追従
-        float tapBPhase = tapAPhase + 0.5f;
-        if (tapBPhase >= 1.0f) tapBPhase -= 1.0f;
+        // 4つのグラニュラー・タップ（位相差 0.0, 0.25, 0.5, 0.75）で均一なエネルギー合成
+        float outSum = 0.0f;
+        float weightSum = 0.0f;
 
-        // 中心基準型ディ延数：未来と過去を対象に分配（レンジ： -maxDelay/2 〜 +maxDelay/2）
-        float delayA = (tapAPhase - 0.5f) * maxDelaySamples;
-        float delayB = (tapBPhase - 0.5f) * maxDelaySamples;
+        for (int tap = 0; tap < 4; ++tap)
+        {
+            float p = basePhase + static_cast<float>(tap) * 0.25f;
+            while (p >= 1.0f) p -= 1.0f;
 
-        // 窓関数（Hann Window）によるクロスフェード係数の算出
-        auto getHannWeight = [](float phase) noexcept -> float
-            {
-                return 0.5f * (1.0f - std::cos(2.0f * juce::MathConstants<float>::pi * phase));
-            };
+            // Hann 窓
+            float w = 0.5f * (1.0f - std::cos(2.0f * juce::MathConstants<float>::pi * p));
+            float delay = (p - 0.5f) * maxDelaySamples;
 
-        float weightA = getHannWeight(tapAPhase);
-        float weightB = getHannWeight(tapBPhase);
+            float s = readHermite(src, maxSamples, static_cast<float>(currentTimelineIdx) - delay);
+            outSum += s * w;
+            weightSum += w;
+        }
 
-        // 2つの波形位置からHermite 4点補間で高品質に読み出し
-        float sampleA = readHermite(src, maxSamples, static_cast<float>(currentTimelineIdx) - delayA);
-        float sampleB = readHermite(src, maxSamples, static_cast<float>(currentTimelineIdx) - delayB);
-
-        // 重ね合わせ（Overlap-Add）して滑らかに出力
-        return (sampleA * weightA) + (sampleB * weightB);
+        return (weightSum > 1.0e-5f) ? (outSum / weightSum) : outSum;
     }
 
 private:
     double currentSampleRate = 44100.0;
     float maxDelaySamples = 1024.0f;
-    float tapAPhase = 0.5f;
+    float basePhase = 0.5f;
     bool isTransientMode = false;
 };

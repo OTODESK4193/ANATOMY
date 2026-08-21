@@ -288,6 +288,7 @@ private:
 
         std::atomic<float>* limCeil = nullptr;
         std::atomic<float>* limMix  = nullptr;
+        std::atomic<float>* limMode = nullptr;
         
         std::atomic<float>* tsAttack  = nullptr;
         std::atomic<float>* tsSustain = nullptr;
