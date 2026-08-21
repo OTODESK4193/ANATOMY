@@ -50,17 +50,21 @@ public:
         }
     }
 
-    // 💥【仕様拡張】4レーンすべての加工済み（FX適用後）バッファを一括して安全に非同期取得（新レンダ時のみtrueを返す）
+    // 💥【仕様拡張】4レーンすべての加工済み（FX適用後）バッファを一括して安全に非同期取得（新レンダ時またはforce=true時に取得）
     bool getRenderedResults(juce::AudioBuffer<float>& destFull,
         juce::AudioBuffer<float>& destTrans,
         juce::AudioBuffer<float>& destTonal,
         juce::AudioBuffer<float>& destLayer,
-        std::vector<float>& destRatios)
+        std::vector<float>& destRatios,
+        bool force = false)
     {
-        if (!hasNewRender.exchange(false, std::memory_order_acq_rel))
+        if (!force && !hasNewRender.exchange(false, std::memory_order_acq_rel))
             return false;
 
         const juce::ScopedLock sl(renderLock);
+        if (renderedFullMix.getNumSamples() == 0 && renderedTransient.getNumSamples() == 0)
+            return false;
+
         destFull.makeCopyOf(renderedFullMix);
         destTrans.makeCopyOf(renderedTransient);
         destTonal.makeCopyOf(renderedTonal);

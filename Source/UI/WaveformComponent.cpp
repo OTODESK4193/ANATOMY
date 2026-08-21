@@ -271,9 +271,11 @@ void WaveformComponent::paint(juce::Graphics& g)
     // 3. 高精度波形描画
     if (samplesPerPixel >= 1.0f)
     {
-        if (laneIndex == 0 && !isBeforeMode && componentRatios.size() >= static_cast<size_t>(numSamples))
+        if (laneIndex == 0 && !isBeforeMode && !componentRatios.empty())
         {
-            // FullMix 2色比率グラデーション描画
+            // FullMix 3色（Transient: Mint / Layer: Peach / Tonal: Pink）比率グラデーション加算描画
+            bool hasDualRatios = (componentRatios.size() >= static_cast<size_t>(numSamples * 2));
+
             for (int xPix = 0; xPix < static_cast<int>(w); ++xPix)
             {
                 int s0 = startSampleIdx + static_cast<int>(static_cast<float>(xPix) * samplesPerPixel);
@@ -282,7 +284,9 @@ void WaveformComponent::paint(juce::Graphics& g)
                 s1 = juce::jlimit(s0 + 1, numSamples, s1);
 
                 float minV = 0.0f, maxV = 0.0f;
-                float rTrans = componentRatios[s0];
+                float rTrans = hasDualRatios ? componentRatios[s0 * 2] : componentRatios[s0];
+                float rLayer = hasDualRatios ? componentRatios[s0 * 2 + 1] : 0.0f;
+
                 for (int s = s0; s < s1; ++s)
                 {
                     float v = data[s];
@@ -294,15 +298,28 @@ void WaveformComponent::paint(juce::Graphics& g)
                 float yBtm = mid - minV * (mid - 2.0f);
                 float peak = std::max(std::abs(maxV), std::abs(minV));
                 float yTrans = peak * (mid - 2.0f) * rTrans;
+                float yLayer = peak * (mid - 2.0f) * rLayer;
 
-                // Transient (Mint)
-                g.setColour(AnatomyColors::accentTransient.withAlpha(0.95f));
-                g.drawVerticalLine(xPix, mid - yTrans, mid + yTrans);
+                // 1. Transient (Mint - 中心)
+                if (yTrans > 0.4f)
+                {
+                    g.setColour(AnatomyColors::accentTransient.withAlpha(0.95f));
+                    g.drawVerticalLine(xPix, mid - yTrans, mid + yTrans);
+                }
 
-                // Tonal (Pink)
+                // 2. Layer (Peach - 中間層)
+                if (yLayer > 0.4f)
+                {
+                    g.setColour(AnatomyColors::peach.withAlpha(0.90f));
+                    g.drawVerticalLine(xPix, mid - (yTrans + yLayer), mid - yTrans);
+                    g.drawVerticalLine(xPix, mid + yTrans, mid + (yTrans + yLayer));
+                }
+
+                // 3. Tonal (Pink - 外側)
+                float yInner = yTrans + yLayer;
                 g.setColour(AnatomyColors::accentTonal.withAlpha(0.75f));
-                g.drawVerticalLine(xPix, yTop, mid - yTrans);
-                g.drawVerticalLine(xPix, mid + yTrans, yBtm);
+                if (yTop < mid - yInner) g.drawVerticalLine(xPix, yTop, mid - yInner);
+                if (yBtm > mid + yInner) g.drawVerticalLine(xPix, mid + yInner, yBtm);
             }
         }
         else

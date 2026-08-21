@@ -1773,8 +1773,7 @@ void OfflineMixRenderer::executeRender()
     outTransRendered.clear();
     outTonalRendered.clear();
     outLayerRendered.clear();
-    outLayerRendered.clear();
-    std::vector<float> ratios(maxSamples, 0.5f);
+    std::vector<float> ratios(maxSamples * 2, 0.0f);
 
     float transStart = processor.transStartOffsetMs;
     float transEnd = processor.transEndOffsetMs;
@@ -1907,10 +1906,19 @@ void OfflineMixRenderer::executeRender()
 
         float tEnergy = (tL * tL) + (tR * tR);
         float oEnergy = (oL * oL) + (oR * oR);
-        float sum = tEnergy + oEnergy;
+        float lEnergy = (lL * lL) + (lR * lR);
+        float sum = tEnergy + oEnergy + lEnergy;
 
-        if (sum > 1.0e-6f) ratios[s] = tEnergy / sum;
-        else               ratios[s] = 0.5f;
+        if (sum > 1.0e-6f)
+        {
+            ratios[s * 2]     = tEnergy / sum;
+            ratios[s * 2 + 1] = lEnergy / sum;
+        }
+        else
+        {
+            ratios[s * 2]     = 0.5f;
+            ratios[s * 2 + 1] = 0.0f;
+        }
     }
 
     processor.applyEffectsOffline(outputMix, TargetRoute::FullMix, sr);

@@ -38,13 +38,15 @@ public:
         styleBtn(browseBtn, AnatomyColors::peach);
         styleBtn(resetBtn, AnatomyColors::textDim);
 
-        browseBtn.setButtonText("BROWSE");
+        auto sName = processor.getCustomSampleName(3);
+        browseBtn.setButtonText(sName.isNotEmpty() ? sName : "BROWSE");
         browseBtn.onClick = [this] { openBrowser(); };
         addAndMakeVisible(browseBtn);
 
         resetBtn.setButtonText("RESET");
         resetBtn.onClick = [this] {
             processor.clearCustomSampleFromUI(3);
+            processor.setCustomSampleName(3, {});
             browseBtn.setButtonText("BROWSE");
             processor.setFadeFromUI(3, 0.0f, 0.0f, 0.0f, 0.0f);
             float durationMs = processor.layerEndOffsetMs;
@@ -224,7 +226,9 @@ private:
             juce::AudioBuffer<float> tempBuf((int)reader->numChannels, (int)reader->lengthInSamples);
             reader->read(&tempBuf, 0, (int)reader->lengthInSamples, 0, true, true);
             processor.storeCustomSampleFromUI(3, tempBuf, reader->sampleRate);
-            browseBtn.setButtonText(file.getFileNameWithoutExtension().substring(0, 8));
+            auto name = file.getFileNameWithoutExtension().substring(0, 8);
+            processor.setCustomSampleName(3, name);
+            browseBtn.setButtonText(name);
             waveform.setOffsets(0.0f, (float)(tempBuf.getNumSamples() / reader->sampleRate) * 1000.0f, reader->sampleRate);
             waveform.setBuffer(tempBuf);
             if (onSampleChanged) onSampleChanged();

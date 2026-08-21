@@ -166,6 +166,27 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     addAndMakeVisible(fxRackView);
 
     updateSoloButtonStates();
+
+    // 画面を開き直した際にも既存のレンダリング結果を即時反映して波形を表示
+    juce::AudioBuffer<float> initFull, initTrans, initTonal, initLayer;
+    std::vector<float> initRatios;
+    if (audioProcessor.offlineMixRenderer.getRenderedResults(initFull, initTrans, initTonal, initLayer, initRatios, true))
+    {
+        if (beforeToggle.getToggleState())
+            waveFullMix.setBuffer(audioProcessor.getRawInputBufferForUI());
+        else
+        {
+            waveFullMix.setBuffer(initFull);
+            waveFullMix.setRatioData(initRatios);
+        }
+        transientLane.setWaveBuffer(initTrans);
+        tonalLane.setWaveBuffer(initTonal);
+        layerLane.setWaveBuffer(initLayer);
+    }
+
+    // 最新レンダリングをバックグラウンドにリクエスト
+    audioProcessor.offlineMixRenderer.triggerRender();
+
     setSize(1080, 720);
     startTimer(30); // 30Hzで波形とHUDをリフレッシュ
 }
@@ -185,6 +206,7 @@ void AnatomyAudioProcessorEditor::updateSoloButtonStates()
 {
     transientLane.updateSoloState();
     tonalLane.updateSoloState();
+    layerLane.updateSoloState();
 }
 
 void AnatomyAudioProcessorEditor::resetAllParameters()

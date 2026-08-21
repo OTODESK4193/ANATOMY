@@ -157,6 +157,19 @@ public:
         return false;
     }
 
+    void setCustomSampleName(int laneIndex, const juce::String& name) noexcept
+    {
+        if (laneIndex >= 0 && laneIndex < 4)
+            customSampleNames[laneIndex] = name;
+    }
+
+    juce::String getCustomSampleName(int laneIndex) const noexcept
+    {
+        return (laneIndex >= 0 && laneIndex < 4) ? customSampleNames[laneIndex] : juce::String();
+    }
+
+    juce::String customSampleNames[4] = { {}, {}, {}, {} };
+
 private:
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
