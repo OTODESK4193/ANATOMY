@@ -194,6 +194,12 @@ void AnatomyAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
 
 void AnatomyAudioProcessor::releaseResources() {}
 
+bool AnatomyAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
+{
+    return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::mono()
+        || layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+}
+
 void AnatomyAudioProcessor::initParamCache()
 {
     // エフェクト型ポインタとAPVTSパラメータポインタを一括キャッシュ。

@@ -5,7 +5,6 @@ C:/JUCE/extras/Build/CMake/JUCEConfig.cmake.in
 C:/JUCE/extras/Build/CMake/JUCEHelperTargets.cmake
 C:/JUCE/extras/Build/CMake/JUCEModuleSupport.cmake
 C:/JUCE/extras/Build/CMake/JUCEUtils.cmake
-C:/JUCE/extras/Build/CMake/juce_runtime_arch_detection.cpp
 C:/Program Files/CMake/share/cmake-4.3/Modules/BasicConfigVersion-ExactVersion.cmake.in
 C:/Program Files/CMake/share/cmake-4.3/Modules/CMakeDependentOption.cmake
 C:/Program Files/CMake/share/cmake-4.3/Modules/CMakePackageConfigHelpers.cmake

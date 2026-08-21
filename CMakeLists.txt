@@ -27,17 +27,20 @@ add_subdirectory(${JUCE_DIR} build_juce)
 # ==============================================================================
 juce_add_plugin(${PROJECT_NAME}
     COMPANY_NAME "OTODESK"
-    IS_SYNTH TRUE                    # 修正：FALSE から TRUE に変更し、シンセとして昇格
-    NEEDS_MIDI_INPUT TRUE
-    NEEDS_MIDI_OUTPUT FALSE
-    IS_MIDI_EFFECT FALSE
-    EDITOR_WANTS_KEYBOARD_FOCUS TRUE
-    COPY_PLUGIN_AFTER_BUILD FALSE 
-    VST3_AUTO_MANIFEST FALSE         # ← これが最も重要です
     PLUGIN_MANUFACTURER_CODE "Otdk"
     PLUGIN_CODE "Anat"
     FORMATS VST3 Standalone
-    PRODUCT_NAME "ANATOMY")
+    PRODUCT_NAME "ANATOMY"
+    PLUGIN_DESCRIPTION "HPSS Audio Splice & Synthesis"
+    IS_SYNTH TRUE
+    NEEDS_MIDI_INPUT TRUE
+    NEEDS_MIDI_OUTPUT FALSE
+    IS_MIDI_EFFECT FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+    VST3_AUTO_MANIFEST FALSE
+    COPY_PLUGIN_AFTER_BUILD TRUE
+    VERSION "1.1.0"
+)
 
 # ==============================================================================
 # コンパイラオプション (文字コードエラーの無視と最適化)
