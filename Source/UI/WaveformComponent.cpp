@@ -517,7 +517,7 @@ void WaveformComponent::paint(juce::Graphics& g)
         // ── START マーカー (上部 ▶ 三角形 ＋ 縦線) ──
         if (startX >= -5.0f && startX <= w + 5.0f)
         {
-            g.setColour(AnatomyColors::peach);
+            g.setColour(juce::Colours::white.withAlpha(0.6f));
             g.drawVerticalLine(static_cast<int>(startX), 12.0f, h);
 
             juce::Path tri;
@@ -525,10 +525,14 @@ void WaveformComponent::paint(juce::Graphics& g)
             tri.lineTo(startX + 10.0f, 6.0f);
             tri.lineTo(startX, 12.0f);
             tri.closeSubPath();
-            g.fillPath(tri);
+            
+            // 影/縁取り効果として少しずらして黒で描画
+            g.setColour(juce::Colours::black.withAlpha(0.5f));
+            g.strokePath(tri, juce::PathStrokeType(2.5f));
+            
             g.setColour(juce::Colours::white);
-            g.strokePath(tri, juce::PathStrokeType(1.0f));
-
+            g.fillPath(tri);
+            
             if (isSnappedToZeroCrossing && currentDragMode == DragMode::StartMarker)
             {
                 g.setColour(AnatomyColors::mint);
@@ -539,7 +543,7 @@ void WaveformComponent::paint(juce::Graphics& g)
         // ── END マーカー (上部 ◀ 三角形 ＋ 縦線) ──
         if (endX >= -5.0f && endX <= w + 5.0f)
         {
-            g.setColour(AnatomyColors::rose);
+            g.setColour(juce::Colours::white.withAlpha(0.6f));
             g.drawVerticalLine(static_cast<int>(endX), 12.0f, h);
 
             juce::Path tri;
@@ -547,9 +551,13 @@ void WaveformComponent::paint(juce::Graphics& g)
             tri.lineTo(endX - 10.0f, 6.0f);
             tri.lineTo(endX, 12.0f);
             tri.closeSubPath();
-            g.fillPath(tri);
+
+            // 影/縁取り効果として少しずらして黒で描画
+            g.setColour(juce::Colours::black.withAlpha(0.5f));
+            g.strokePath(tri, juce::PathStrokeType(2.5f));
+
             g.setColour(juce::Colours::white);
-            g.strokePath(tri, juce::PathStrokeType(1.0f));
+            g.fillPath(tri);
 
             if (isSnappedToZeroCrossing && currentDragMode == DragMode::EndMarker)
             {

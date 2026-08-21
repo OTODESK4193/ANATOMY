@@ -20,6 +20,7 @@ FxSlotCard::FxSlotCard(AnatomyAudioProcessor& processor, int slotIndex,
     typeBox.addItem("OTT", 5);
     typeBox.addItem("Glue Comp", 6);
     typeBox.addItem("Limiter", 7);
+    typeBox.addItem("Transient Shaper", 8);
     typeBox.setSelectedId(1, juce::dontSendNotification);
 
     typeBox.onChange = [this]
@@ -48,7 +49,8 @@ FxSlotCard::FxSlotCard(AnatomyAudioProcessor& processor, int slotIndex,
 juce::String FxSlotCard::getPrefix() const
 {
     return (currentRoute == TargetRoute::Transient) ? "trans" :
-           (currentRoute == TargetRoute::Tonal)     ? "tonal" : "full";
+           (currentRoute == TargetRoute::Tonal)     ? "tonal" :
+           (currentRoute == TargetRoute::Layer)     ? "layer" : "full";
 }
 
 void FxSlotCard::setTargetRoute(TargetRoute r)
@@ -59,6 +61,11 @@ void FxSlotCard::setTargetRoute(TargetRoute r)
 
 void FxSlotCard::updateFromRoute()
 {
+    // Limiter (7) and Glue Comp (6) disabled for non-FullMix routes
+    bool isFullMix = (currentRoute == TargetRoute::FullMix);
+    typeBox.setItemEnabled(6, isFullMix); // Glue Comp
+    typeBox.setItemEnabled(7, isFullMix); // Limiter
+
     const auto& order = proc.getEffectOrder(currentRoute);
     if (slot < (int)order.size())
     {
@@ -79,7 +86,7 @@ void FxSlotCard::setEffectType(int fxType)
 
     typeBox.setSelectedId(fxType >= 0 ? fxType + 2 : 1, juce::dontSendNotification);
 
-    if (fxType >= 0 && fxType < 6)
+    if (fxType >= 0 && fxType < 7)
     {
         juce::String pre = getPrefix();
         juce::String mixParamId;
@@ -91,6 +98,7 @@ void FxSlotCard::setEffectType(int fxType)
             case 3: mixParamId = pre + "OttDepth"; break;
             case 4: mixParamId = pre + "GlueDepth"; break;
             case 5: mixParamId = pre + "LimMix"; break;
+            case 6: mixParamId = pre + "TsMix"; break;
         }
 
         amountKnob.setEnabled(true);

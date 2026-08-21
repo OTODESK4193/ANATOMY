@@ -16,6 +16,7 @@
 #include "UI/WaveformComponent.h"
 #include "UI/TransientLaneView.h"
 #include "UI/TonalLaneView.h"
+#include "UI/LayerLaneView.h"
 #include "UI/FxRackView.h"
 #include <memory>
 
@@ -62,6 +63,7 @@ private:
     // --- 3段目: TransientView & TonalView ---
     TransientLaneView transientLane;
     TonalLaneView tonalLane;
+    LayerLaneView layerLane;
 
     // --- 4段目: Card FX Rack ---
     FxRackView fxRackView;

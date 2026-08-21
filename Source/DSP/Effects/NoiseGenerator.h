@@ -164,6 +164,7 @@ public:
     /** バンドパス Q 値 0.1〜10 (固定 2.0 がデフォルト) */
     void setBpQ(float q) noexcept        { bpQ            = juce::jlimit(0.1f, 10.0f, q); }
 
+    float getIndexedParameter(int index) const noexcept override { return 0.0f; }
     void setIndexedParameter(int index, float value) noexcept override
     {
         if      (index == 0) setDecay(value);

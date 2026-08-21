@@ -98,6 +98,7 @@ public:
     void setDownsample(float newDownsample) noexcept { currentDownsample = juce::jlimit(1.0f, 32.0f, newDownsample); }
     void setJitter(float newJitter) noexcept { currentJitter = juce::jlimit(0.0f, 1.0f, newJitter); }
 
+    float getIndexedParameter(int index) const noexcept override { return 0.0f; }
     void setIndexedParameter(int index, float value) noexcept override
     {
         if (index == 0)      setBits(value);

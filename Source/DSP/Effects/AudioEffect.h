@@ -7,7 +7,8 @@ enum class TargetRoute
 {
     Transient,
     Tonal,
-    FullMix
+    FullMix,
+    Layer
 };
 
 /**
@@ -37,4 +38,5 @@ public:
 
     // 💥【新設】下段ParameterDockPanelと汎用バインドするためのインデックス式パラメータ設定
     virtual void setIndexedParameter(int index, float value) noexcept = 0;
+    virtual float getIndexedParameter(int index) const noexcept = 0;
 };

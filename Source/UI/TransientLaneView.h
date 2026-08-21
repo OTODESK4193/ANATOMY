@@ -109,7 +109,7 @@ public:
 
     void updateSoloState()
     {
-        soloToggle.setToggleState(processor.isLaneSolo(true), juce::dontSendNotification);
+        soloToggle.setToggleState(processor.isLaneSolo(1), juce::dontSendNotification);
     }
 
     void resetCustomSampleState()
@@ -228,10 +228,14 @@ private:
         browserTree->addListener(this);
         browserComponent = std::make_unique<juce::Component>();
         browserComponent->addAndMakeVisible(*browserTree);
-        browserTree->setBounds(0, 0, getWidth() - 20, getHeight() - 20);
+        browserTree->setBounds(0, 0, getWidth() - 20, getHeight() - 40);
         addAndMakeVisible(*browserComponent);
-        browserComponent->setBounds(getLocalBounds().reduced(10));
-        browseBtn.setButtonText("CLOSE");
+        browserComponent->setBounds(10, 32, getWidth() - 20, getHeight() - 38);
+        
+        browseBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffe74c3c));
+        browseBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+        browseBtn.setButtonText("CLOSE (X)");
+        browseBtn.toFront(true);
     }
 
     void closeBrowser()
@@ -241,7 +245,9 @@ private:
             removeChildComponent(browserComponent.get());
             browserComponent.reset();
             browserTree.reset();
-            browseBtn.setButtonText(processor.isCustomSampleLoaded(true) ? "CUSTOM" : "BROWSE");
+            browseBtn.setColour(juce::TextButton::buttonColourId, AnatomyColors::knobTrack);
+            browseBtn.setColour(juce::TextButton::textColourOffId, AnatomyColors::accentTransient);
+            browseBtn.setButtonText(processor.isCustomSampleLoaded(1) ? "CUSTOM" : "BROWSE");
         }
     }
 

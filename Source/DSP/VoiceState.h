@@ -14,6 +14,7 @@ struct VoiceState
     const SharedSampleData* sampleData = nullptr;
     double clickReadIndex = 0.0;
     double sustainReadIndex = 0.0;
+    double layerReadIndex = 0.0;
     double pitchRatio = 1.0;
     float triggerVelocity = 0.0f;
     bool isActive = false;
@@ -52,6 +53,7 @@ struct VoiceState
         sampleData = nullptr;
         clickReadIndex = 0.0;
         sustainReadIndex = 0.0;
+        layerReadIndex = 0.0;
         pitchRatio = 1.0;
         triggerVelocity = 0.0f;
         isActive = false;

@@ -21,6 +21,7 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
       audioProcessor(p),
       transientLane(p),
       tonalLane(p),
+      layerLane(p),
       fxRackView(p)
 {
     formatManager.registerBasicFormats();
@@ -97,7 +98,7 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     };
     addAndMakeVisible(themeCombo);
 
-    // --- 2段目: FullMixPreview (全幅表示) ---
+    // --- 2段目: FullMixPreview (左半分表示に変更) ---
     waveFullMix.setLaneProperties(audioProcessor, 0);
     waveFullMix.setSelected(true); // 初期選択
     waveFullMix.onFocusClicked = [this] {
@@ -105,8 +106,25 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
         waveFullMix.setSelected(true);
         transientLane.setSelected(false);
         tonalLane.setSelected(false);
+        layerLane.setSelected(false);
     };
     addAndMakeVisible(waveFullMix);
+
+    // LayerLaneView (右半分表示)
+    layerLane.onSelectLane = [this] {
+        fxRackView.setTargetRoute(TargetRoute::Layer);
+        waveFullMix.setSelected(false);
+        transientLane.setSelected(false);
+        tonalLane.setSelected(false);
+        layerLane.setSelected(true);
+    };
+    layerLane.onSampleChanged = [this] {
+        audioProcessor.offlineMixRenderer.triggerRender();
+    };
+    layerLane.onSoloChanged = [this] {
+        updateSoloButtonStates();
+    };
+    addAndMakeVisible(layerLane);
 
     // --- 3段目: TransientView & TonalView ---
     transientLane.onSelectLane = [this] {
@@ -114,6 +132,7 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
         waveFullMix.setSelected(false);
         transientLane.setSelected(true);
         tonalLane.setSelected(false);
+        layerLane.setSelected(false);
     };
     transientLane.onSampleChanged = [this] {
         audioProcessor.offlineMixRenderer.triggerRender();
@@ -128,6 +147,7 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
         waveFullMix.setSelected(false);
         transientLane.setSelected(false);
         tonalLane.setSelected(true);
+        layerLane.setSelected(false);
     };
     tonalLane.onSampleChanged = [this] {
         audioProcessor.offlineMixRenderer.triggerRender();
@@ -165,8 +185,9 @@ void AnatomyAudioProcessorEditor::updateSoloButtonStates()
 void AnatomyAudioProcessorEditor::resetAllParameters()
 {
     // 1. カスタムサンプルをクリアして最初のHPSS分離音源に戻す
-    audioProcessor.clearCustomSampleFromUI(true);
-    audioProcessor.clearCustomSampleFromUI(false);
+    audioProcessor.clearCustomSampleFromUI(1);
+    audioProcessor.clearCustomSampleFromUI(2);
+    audioProcessor.clearCustomSampleFromUI(3);
 
     // 2. APVTS パラメータをデフォルト値に戻す
     for (auto* param : audioProcessor.getParameters())
@@ -189,8 +210,10 @@ void AnatomyAudioProcessorEditor::resetAllParameters()
     audioProcessor.setOffsetsFromUI(0, 0.0f, durMs);
     audioProcessor.setOffsetsFromUI(1, 0.0f, durMs);
     audioProcessor.setOffsetsFromUI(2, 0.0f, durMs);
-    audioProcessor.setFadeFromUI(true, 0.0f, 0.0f, 0.0f, 0.0f);
-    audioProcessor.setFadeFromUI(false, 0.0f, 0.0f, 0.0f, 0.0f);
+    audioProcessor.setOffsetsFromUI(3, 0.0f, durMs);
+    audioProcessor.setFadeFromUI(1, 0.0f, 0.0f, 0.0f, 0.0f);
+    audioProcessor.setFadeFromUI(2, 0.0f, 0.0f, 0.0f, 0.0f);
+    audioProcessor.setFadeFromUI(3, 0.0f, 0.0f, 0.0f, 0.0f);
 
     audioProcessor.offlineMixRenderer.triggerRender();
     repaint();
@@ -240,9 +263,9 @@ void AnatomyAudioProcessorEditor::timerCallback()
     audioProcessor.flushPendingExports();
 
     // 波形バッファの取得と更新
-    juce::AudioBuffer<float> tempTrans, tempTonal, tempFullMix;
+    juce::AudioBuffer<float> tempTrans, tempTonal, tempFullMix, tempLayer;
     std::vector<float> mixRatios;
-    audioProcessor.offlineMixRenderer.getRenderedResults(tempFullMix, tempTrans, tempTonal, mixRatios);
+    audioProcessor.offlineMixRenderer.getRenderedResults(tempFullMix, tempTrans, tempTonal, tempLayer, mixRatios);
 
     if (beforeToggle.getToggleState())
         waveFullMix.setBuffer(audioProcessor.getRawInputBufferForUI());
@@ -254,20 +277,26 @@ void AnatomyAudioProcessorEditor::timerCallback()
 
     transientLane.setWaveBuffer(tempTrans);
     tonalLane.setWaveBuffer(tempTonal);
+    layerLane.setWaveBuffer(tempLayer);
 
     double sr = audioProcessor.getFileSampleRate();
     waveFullMix.setOffsets(audioProcessor.fullMixStartOffsetMs, audioProcessor.fullMixEndOffsetMs, sr);
     transientLane.setWaveOffsets(audioProcessor.transStartOffsetMs, audioProcessor.transEndOffsetMs, sr);
     tonalLane.setWaveOffsets(audioProcessor.tonalStartOffsetMs, audioProcessor.tonalEndOffsetMs, sr);
+    layerLane.setWaveOffsets(audioProcessor.layerStartOffsetMs, audioProcessor.layerEndOffsetMs, sr);
 
     // フェード設定の反映
     float tInMs, tOutMs, tInTension, tOutTension;
-    audioProcessor.getFadeForUI(true, tInMs, tOutMs, tInTension, tOutTension);
+    audioProcessor.getFadeForUI(1, tInMs, tOutMs, tInTension, tOutTension);
     transientLane.setWaveFade(tInMs, tOutMs, tInTension, tOutTension);
 
     float oInMs, oOutMs, oInTension, oOutTension;
-    audioProcessor.getFadeForUI(false, oInMs, oOutMs, oInTension, oOutTension);
+    audioProcessor.getFadeForUI(2, oInMs, oOutMs, oInTension, oOutTension);
     tonalLane.setWaveFade(oInMs, oOutMs, oInTension, oOutTension);
+    
+    float lInMs, lOutMs, lInTension, lOutTension;
+    audioProcessor.getFadeForUI(3, lInMs, lOutMs, lInTension, lOutTension);
+    layerLane.setWaveFade(lInMs, lOutMs, lInTension, lOutTension);
 
     // HUD更新
     auto& rawBuf = audioProcessor.getRawInputBufferForUI();
@@ -386,11 +415,13 @@ void AnatomyAudioProcessorEditor::resized()
     hX -= 68;
     btnExportFullMix.setBounds(hX, 16, 68, 24);
 
-    // --- 2段目: FullMixPreview (全幅いっぱい) ---
+    // --- 2段目: FullMixPreview & LayerView (50% スプリット) ---
     int curY = kHeaderH + 4;
     int fullW = getWidth() - kMargin * 2;
+    int halfW = (fullW - 10) / 2;
 
-    waveFullMix.setBounds(kMargin, curY + 20, fullW, kFullMixH - 24);
+    waveFullMix.setBounds(kMargin, curY + 20, halfW, kFullMixH - 24);
+    layerLane.setBounds(kMargin + halfW + 10, curY, halfW, kFullMixH + 4); // 少し高さを確保
 
     curY += kFullMixH + 6;
 

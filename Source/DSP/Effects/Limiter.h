@@ -84,6 +84,7 @@ public:
 
     void setCeiling(float db) noexcept { ceilingDb = db; }
 
+    float getIndexedParameter(int index) const noexcept override { return 0.0f; }
     void setIndexedParameter(int index, float value) noexcept override
     {
         if (index == 0)      setCeiling(value);

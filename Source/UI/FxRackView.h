@@ -48,12 +48,13 @@ private:
 
     // レーンごとの6スロットのFX種別保持 (-1 = None, 0..5 = 各種FX)
     static constexpr int kNumSlots = 6;
-    std::array<std::array<int, kNumSlots>, 3> laneSlotTypes;
+    std::array<std::array<int, kNumSlots>, 4> laneSlotTypes;
 
     // タブボタン
     juce::TextButton btnTabTransient{ "TRANSIENT FX" };
     juce::TextButton btnTabTonal{ "TONAL FX" };
     juce::TextButton btnTabFullMix{ "FULL MIX FX" };
+    juce::TextButton btnTabLayer{ "LAYER FX" };
 
     // 6スロットカード
     std::array<std::unique_ptr<FxSlotCard>, kNumSlots> cards;
@@ -64,7 +65,8 @@ private:
     std::vector<std::unique_ptr<juce::Label>> detailKnobLabels;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>> detailAttachments;
 
-    // 特殊コントロール (Noise用ラジオボタン、OTT用BANDSボタン等)
+    // 特殊コントロール (SatType用、Noise用ラジオボタン、OTT用BANDSボタン等)
+    std::vector<std::unique_ptr<juce::TextButton>> satTypeButtons;
     std::vector<std::unique_ptr<juce::TextButton>> noiseTypeButtons;
     juce::TextButton ottBandsBtn{ "BANDS" };
     juce::TextButton ottBandSelectBtns[3];

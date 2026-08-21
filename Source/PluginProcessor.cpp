@@ -14,7 +14,7 @@
 // ここでは、オーディオスレッドとUI間で共有される実体（Entity）の定義のみを記述する。
 namespace ExportRecordingCore
 {
-    Lane lanes[3]; // 0: Full, 1: Trans, 2: Tonal
+    Lane lanes[4]; // 0: Full, 1: Trans, 2: Tonal, 3: Layer
 }
 
 AnatomyAudioProcessor::AnatomyAudioProcessor()
@@ -41,12 +41,14 @@ AnatomyAudioProcessor::AnatomyAudioProcessor()
         pool[3] = std::make_unique<OTT_Multiband>();
         pool[4] = std::make_unique<GlueCompressor>();
         pool[5] = std::make_unique<Limiter>();
-        for (int i = 0; i < 6; ++i) pool[i]->setTargetRoute(route);
-        };
+        pool[6] = std::make_unique<TransientShaper>();
+        for (int i = 0; i < 7; ++i) pool[i]->setTargetRoute(route);
+    };
 
     instantiatePool(transientPool, TargetRoute::Transient);
     instantiatePool(tonalPool, TargetRoute::Tonal);
     instantiatePool(fullMixPool, TargetRoute::FullMix);
+    instantiatePool(layerPool, TargetRoute::Layer);
 
     initParamCache();
 
@@ -56,8 +58,9 @@ AnatomyAudioProcessor::AnatomyAudioProcessor()
     juce::StringArray ottParams{ "transOttDepth", "transOttTime", "transOttLowMidXOver", "transOttMidHighXOver",
                                  "tonalOttDepth", "tonalOttTime", "tonalOttLowMidXOver", "tonalOttMidHighXOver",
                                  "fullOttDepth", "fullOttTime", "fullOttLowMidXOver", "fullOttMidHighXOver",
+                                 "layerOttDepth", "layerOttTime", "layerOttLowMidXOver", "layerOttMidHighXOver",
                                  "transPitch", "tonalPitch", "transMixGain", "tonalMixGain",
-                                 "tonalDelay" };
+                                 "layerGain", "layerOffset", "tonalDelay" };
     for (const auto& pid : ottParams) apvts.addParameterListener(pid, this);
 
     synchronizePoolParameters();
@@ -72,8 +75,9 @@ AnatomyAudioProcessor::~AnatomyAudioProcessor()
     juce::StringArray ottParams{ "transOttDepth", "transOttTime", "transOttLowMidXOver", "transOttMidHighXOver",
                                  "tonalOttDepth", "tonalOttTime", "tonalOttLowMidXOver", "tonalOttMidHighXOver",
                                  "fullOttDepth", "fullOttTime", "fullOttLowMidXOver", "fullOttMidHighXOver",
+                                 "layerOttDepth", "layerOttTime", "layerOttLowMidXOver", "layerOttMidHighXOver",
                                  "transPitch", "tonalPitch", "transMixGain", "tonalMixGain",
-                                 "tonalDelay" };
+                                 "layerGain", "layerOffset", "tonalDelay" };
     for (const auto& pid : ottParams) apvts.removeParameterListener(pid, this);
 
     signalThreadShouldExit();
@@ -101,20 +105,26 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transMixGain", 1 }, "Transient Mix Gain (dB)", -60.0f, 6.0f, 0.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalMixGain", 1 }, "Tonal Mix Gain (dB)", -60.0f, 6.0f, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "layerGain", 1 }, "Layer Mix Gain (dB)", -60.0f, 6.0f, 0.0f));
 
     // Tonal の再生開始位置を前後にずらす（負=前、正=後ろ）
-    // symmetricSkew=true, skew=0.5 → 中央付近の微調整とフルレンジのバランスが良い操作感
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{ "tonalDelay", 1 }, "Tonal Offset (ms)",
         juce::NormalisableRange<float>(-500.0f, 500.0f, 0.1f, 0.5f, true),
         0.0f));
 
-    juce::StringArray prefixes{ "trans", "tonal", "full" };
+    // Layer の再生開始位置オフセット（0〜500ms）
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{ "layerOffset", 1 }, "Layer Offset (ms)",
+        juce::NormalisableRange<float>(0.0f, 500.0f, 0.1f, 0.5f),
+        0.0f));
+
+    juce::StringArray prefixes{ "trans", "tonal", "full", "layer" };
     for (const auto& pre : prefixes)
     {
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "SatDrive", 1 }, pre + " Saturation Drive", 1.0f, 16.0f, 2.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "SatMix", 1 }, pre + " Saturation Mix", 0.0f, 1.0f, 0.0f));
-        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "SatAsym", 1 }, pre + " Saturation Asymmetry", 0.0f, 1.0f, 0.0f));
+        params.push_back(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{ pre + "SatType", 1 }, pre + " Saturation Type", juce::StringArray{ "Tube", "Tape", "Diode", "Fuzz" }, 0));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "SatTrim", 1 }, pre + " Saturation Output Trim (dB)", -12.0f, 12.0f, 0.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "SatPre", 1 }, pre + " Saturation Pre HPF (Hz)", 20.0f, 2000.0f, 20.0f));
 
@@ -156,6 +166,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
 
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "LimCeil", 1 }, pre + " Limiter Ceiling (dB)", -24.0f, 0.0f, -0.1f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "LimMix", 1 }, pre + " Limiter Mix", 0.0f, 1.0f, 0.0f));
+
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "TsAttack",  1 }, pre + " Transient Attack",  -1.0f, 1.0f, 0.0f));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "TsSustain", 1 }, pre + " Transient Sustain", -1.0f, 1.0f, 0.0f));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "TsMix",     1 }, pre + " Transient Shaper Mix", 0.0f, 1.0f, 0.0f));
     }
 
     return { params.begin(), params.end() };
@@ -175,21 +189,25 @@ void AnatomyAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     const int safetyBufferSize = std::max(4096, samplesPerBlock * 2);
     transientBlockBuffer.setSize(2, safetyBufferSize, false, false, true);
     tonalBlockBuffer.setSize(2, safetyBufferSize, false, false, true);
+    layerBlockBuffer.setSize(2, safetyBufferSize, false, false, true);
 
-    for (int i = 0; i < 6; ++i)
+    for (int i = 0; i < 7; ++i)
     {
         transientPool[i]->prepare(sampleRate, safetyBufferSize);
         tonalPool[i]->prepare(sampleRate, safetyBufferSize);
         fullMixPool[i]->prepare(sampleRate, safetyBufferSize);
+        layerPool[i]->prepare(sampleRate, safetyBufferSize);
     }
 
     transientChain.prepare(sampleRate, safetyBufferSize);
     tonalChain.prepare(sampleRate, safetyBufferSize);
     fullMixChain.prepare(sampleRate, safetyBufferSize);
+    layerChain.prepare(sampleRate, safetyBufferSize);
 
     // SmoothedValue: ~5ms のランプタイムでジッパーノイズを排除
     smoothedTransGain.reset(sampleRate, 0.005);
     smoothedTonalGain.reset(sampleRate, 0.005);
+    smoothedLayerGain.reset(sampleRate, 0.005);
 }
 
 void AnatomyAudioProcessor::releaseResources() {}
@@ -204,11 +222,11 @@ void AnatomyAudioProcessor::initParamCache()
 {
     // エフェクト型ポインタとAPVTSパラメータポインタを一括キャッシュ。
     // コンストラクタで1回だけ呼ばれ、processBlock毎のdynamic_cast/ハッシュ検索を完全排除。
-    std::unique_ptr<AudioEffect>* pools[3] = { transientPool, tonalPool, fullMixPool };
-    const juce::String prefixes[3] = { "trans", "tonal", "full" };
+    std::unique_ptr<AudioEffect>* pools[4] = { transientPool, tonalPool, fullMixPool, layerPool };
+    const juce::String prefixes[4] = { "trans", "tonal", "full", "layer" };
     const juce::String bandNames[3] = { "Low", "Mid", "High" };
 
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 4; ++i)
     {
         auto& c = cachedLanes[i];
         const auto& pre = prefixes[i];
@@ -220,10 +238,11 @@ void AnatomyAudioProcessor::initParamCache()
         c.ott  = static_cast<OTT_Multiband*>(pool[3].get());
         c.glue = static_cast<GlueCompressor*>(pool[4].get());
         c.lim  = static_cast<Limiter*>(pool[5].get());
+        c.ts   = static_cast<TransientShaper*>(pool[6].get());
 
         c.satDrive = apvts.getRawParameterValue(pre + "SatDrive");
         c.satMix   = apvts.getRawParameterValue(pre + "SatMix");
-        c.satAsym  = apvts.getRawParameterValue(pre + "SatAsym");
+        c.satType  = apvts.getRawParameterValue(pre + "SatType");
         c.satTrim  = apvts.getRawParameterValue(pre + "SatTrim");
         c.satPre   = apvts.getRawParameterValue(pre + "SatPre");
 
@@ -260,55 +279,84 @@ void AnatomyAudioProcessor::initParamCache()
 
         c.limCeil = apvts.getRawParameterValue(pre + "LimCeil");
         c.limMix  = apvts.getRawParameterValue(pre + "LimMix");
+
+        c.tsAttack  = apvts.getRawParameterValue(pre + "TsAttack");
+        c.tsSustain = apvts.getRawParameterValue(pre + "TsSustain");
+        c.tsMix     = apvts.getRawParameterValue(pre + "TsMix");
     }
 }
 
 void AnatomyAudioProcessor::synchronizePoolParameters() noexcept
 {
     // キャッシュ済みポインタからの直接ロード。dynamic_cast・ハッシュ検索ゼロ。
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 4; ++i)
     {
         const auto& c = cachedLanes[i];
 
-        c.sat->setDrive(c.satDrive->load());
-        c.sat->setMix(c.satMix->load());
-        c.sat->setAsymmetry(c.satAsym->load());
-        c.sat->setOutputTrimDb(c.satTrim->load());
-        c.sat->setPreCutoffHz(c.satPre->load());
-
-        c.bc->setBits(c.bcBits->load());
-        c.bc->setDownsample(c.bcDown->load());
-        c.bc->setMix(c.bcMix->load());
-        c.bc->setJitter(c.bcJitter->load());
-
-        c.ns->setDecay(c.nsDecay->load());
-        c.ns->setMix(c.nsMix->load());
-        c.ns->setNoiseType(static_cast<int>(c.nsType->load()));
-        c.ns->setGainDb(c.nsGain->load());
-        c.ns->setAttack(c.nsAttack->load());
-        c.ns->setBpCenterHz(c.nsBpFreq->load());
-
-        c.ott->setMix(c.ottDepth->load());
-        c.ott->setTimeMultiplier(c.ottTime->load());
-        c.ott->setLowMidXOver(c.ottLowMidXOver->load());
-        c.ott->setMidHighXOver(c.ottMidHighXOver->load());
-        c.ott->setGateFloorDb(c.ottGateFloor->load());
-        for (int b = 0; b < 3; ++b)
+        if (c.sat && c.satDrive)
         {
-            c.ott->setBandUpward(b, c.ottBandUp[b]->load());
-            c.ott->setBandDownward(b, c.ottBandDown[b]->load());
-            c.ott->setBandGainDb(b, c.ottBandGain[b]->load());
+            c.sat->setDrive(c.satDrive->load());
+            if (c.satMix) c.sat->setMix(c.satMix->load());
+            if (c.satType) c.sat->setType(static_cast<int>(c.satType->load()));
+            if (c.satTrim) c.sat->setOutputTrimDb(c.satTrim->load());
+            if (c.satPre) c.sat->setPreCutoffHz(c.satPre->load());
         }
 
-        c.glue->setMix(c.glueDepth->load());
-        c.glue->setThresholdDb(c.glueThr->load());
-        c.glue->setRatio(c.glueRatio->load());
-        c.glue->setAttackMs(c.glueAtk->load());
-        c.glue->setReleaseMs(c.glueRel->load());
-        c.glue->setMakeupDb(c.glueMkp->load());
+        if (c.bc && c.bcBits)
+        {
+            c.bc->setBits(c.bcBits->load());
+            if (c.bcDown) c.bc->setDownsample(c.bcDown->load());
+            if (c.bcMix) c.bc->setMix(c.bcMix->load());
+            if (c.bcJitter) c.bc->setJitter(c.bcJitter->load());
+        }
 
-        c.lim->setCeiling(c.limCeil->load());
-        c.lim->setMix(c.limMix->load());
+        if (c.ns && c.nsDecay)
+        {
+            c.ns->setDecay(c.nsDecay->load());
+            if (c.nsMix) c.ns->setMix(c.nsMix->load());
+            if (c.nsType) c.ns->setNoiseType(static_cast<int>(c.nsType->load()));
+            if (c.nsGain) c.ns->setGainDb(c.nsGain->load());
+            if (c.nsAttack) c.ns->setAttack(c.nsAttack->load());
+            if (c.nsBpFreq) c.ns->setBpCenterHz(c.nsBpFreq->load());
+        }
+
+        if (c.ott && c.ottDepth)
+        {
+            c.ott->setMix(c.ottDepth->load());
+            if (c.ottTime) c.ott->setTimeMultiplier(c.ottTime->load());
+            if (c.ottLowMidXOver) c.ott->setLowMidXOver(c.ottLowMidXOver->load());
+            if (c.ottMidHighXOver) c.ott->setMidHighXOver(c.ottMidHighXOver->load());
+            if (c.ottGateFloor) c.ott->setGateFloorDb(c.ottGateFloor->load());
+            for (int b = 0; b < 3; ++b)
+            {
+                if (c.ottBandUp[b]) c.ott->setBandUpward(b, c.ottBandUp[b]->load());
+                if (c.ottBandDown[b]) c.ott->setBandDownward(b, c.ottBandDown[b]->load());
+                if (c.ottBandGain[b]) c.ott->setBandGainDb(b, c.ottBandGain[b]->load());
+            }
+        }
+
+        if (c.glue && c.glueDepth)
+        {
+            c.glue->setMix(c.glueDepth->load());
+            if (c.glueThr) c.glue->setThresholdDb(c.glueThr->load());
+            if (c.glueRatio) c.glue->setRatio(c.glueRatio->load());
+            if (c.glueAtk) c.glue->setAttackMs(c.glueAtk->load());
+            if (c.glueRel) c.glue->setReleaseMs(c.glueRel->load());
+            if (c.glueMkp) c.glue->setMakeupDb(c.glueMkp->load());
+        }
+
+        if (c.lim && c.limCeil)
+        {
+            c.lim->setCeiling(c.limCeil->load());
+            if (c.limMix) c.lim->setMix(c.limMix->load());
+        }
+
+        if (c.ts && c.tsMix)
+        {
+            if (c.tsAttack) c.ts->setAttack(c.tsAttack->load());
+            if (c.tsSustain) c.ts->setSustain(c.tsSustain->load());
+            c.ts->setMix(c.tsMix->load());
+        }
     }
 }
 
@@ -475,10 +523,12 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     float* transR = numChannels > 1 ? transientBlockBuffer.getWritePointer(1) : nullptr;
     float* tonalL = tonalBlockBuffer.getWritePointer(0);
     float* tonalR = numChannels > 1 ? tonalBlockBuffer.getWritePointer(1) : nullptr;
+    float* layerL = layerBlockBuffer.getWritePointer(0);
+    float* layerR = numChannels > 1 ? layerBlockBuffer.getWritePointer(1) : nullptr;
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
-        for (int l = 0; l < 3; ++l)
+        for (int l = 0; l < 4; ++l)
         {
             if (ExportRecordingCore::lanes[l].state.load() == ExportRecordingCore::State::Recording)
             {
@@ -497,6 +547,7 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
         float mixedTransL = 0.0f, mixedTransR = 0.0f;
         float mixedTonalL = 0.0f, mixedTonalR = 0.0f;
+        float mixedLayerL = 0.0f, mixedLayerR = 0.0f;
 
         float transEndSamples = (transEndOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
         float tonalEndSamples = (tonalEndOffsetMs / 1000.0f) * static_cast<float>(fileSampleRate);
@@ -508,7 +559,8 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
         if (activeVoice.isActive)
         {
             float vTransL = 0.0f, vTransR = 0.0f; float vTonalL = 0.0f, vTonalR = 0.0f;
-            generateVoiceSample(activeVoice, vTransL, vTransR, vTonalL, vTonalR, clickHold, clickCurve, transScale, tonalScale, currentSampleRate);
+            float vLayerL = 0.0f, vLayerR = 0.0f;
+            generateVoiceSample(activeVoice, vTransL, vTransR, vTonalL, vTonalR, vLayerL, vLayerR, clickHold, clickCurve, transScale, tonalScale, currentSampleRate);
 
             if (activeVoice.isReleasing) activeVoice.releaseGain *= dynamicReleaseFactor;
             if (activeIsMuting) activeMuteGain *= muteFactor;
@@ -556,6 +608,7 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
             mixedTransL += vTransL * activeMuteGain; mixedTransR += vTransR * activeMuteGain;
             mixedTonalL += vTonalL * activeMuteGain; mixedTonalR += vTonalR * activeMuteGain;
+            mixedLayerL += vLayerL * activeMuteGain; mixedLayerR += vLayerR * activeMuteGain;
         }
 
         for (int i = 0; i < maxReleasingVoices; ++i)
@@ -563,7 +616,8 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
             if (releasingVoices[i].isActive)
             {
                 float vTransL = 0.0f, vTransR = 0.0f; float vTonalL = 0.0f, vTonalR = 0.0f;
-                generateVoiceSample(releasingVoices[i], vTransL, vTransR, vTonalL, vTonalR, clickHold, clickCurve, transScale, tonalScale, currentSampleRate);
+                float vLayerL = 0.0f, vLayerR = 0.0f;
+                generateVoiceSample(releasingVoices[i], vTransL, vTransR, vTonalL, vTonalR, vLayerL, vLayerR, clickHold, clickCurve, transScale, tonalScale, currentSampleRate);
 
                 if (releasingVoices[i].isReleasing) releasingVoices[i].releaseGain *= dynamicReleaseFactor;
                 if (releasingIsMuting[i]) releasingMuteGain[i] *= muteFactor;
@@ -608,11 +662,13 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
                 mixedTransL += vTransL * releasingMuteGain[i]; mixedTransR += vTransR * releasingMuteGain[i];
                 mixedTonalL += vTonalL * releasingMuteGain[i]; mixedTonalR += vTonalR * releasingMuteGain[i];
+                mixedLayerL += vLayerL * releasingMuteGain[i]; mixedLayerR += vLayerR * releasingMuteGain[i];
             }
         }
 
         transL[sample] = mixedTransL; if (transR != nullptr) transR[sample] = mixedTransR;
         tonalL[sample] = mixedTonalL; if (tonalR != nullptr) tonalR[sample] = mixedTonalR;
+        layerL[sample] = mixedLayerL; if (layerR != nullptr) layerR[sample] = mixedLayerR;
     }
 
     if (isBeforeMode)
@@ -628,31 +684,35 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
     transientChain.process(transientBlockBuffer);
     tonalChain.process(tonalBlockBuffer);
+    layerChain.process(layerBlockBuffer);
 
     // ⑥ SmoothedValue によるジッパーノイズ防止
     {
-        const float transTargetGain = (currentSoloMode == 2) ? 0.0f : std::pow(10.0f, apvts.getRawParameterValue("transMixGain")->load() / 20.0f);
-        const float tonalTargetGain = (currentSoloMode == 1) ? 0.0f : std::pow(10.0f, apvts.getRawParameterValue("tonalMixGain")->load() / 20.0f);
+        const float transTargetGain = (currentSoloMode == 2 || currentSoloMode == 3) ? 0.0f : std::pow(10.0f, apvts.getRawParameterValue("transMixGain")->load() / 20.0f);
+        const float tonalTargetGain = (currentSoloMode == 1 || currentSoloMode == 3) ? 0.0f : std::pow(10.0f, apvts.getRawParameterValue("tonalMixGain")->load() / 20.0f);
+        const float layerTargetGain = (currentSoloMode == 1 || currentSoloMode == 2) ? 0.0f : std::pow(10.0f, apvts.getRawParameterValue("layerGain")->load() / 20.0f);
 
         smoothedTransGain.setTargetValue(transTargetGain);
         smoothedTonalGain.setTargetValue(tonalTargetGain);
+        smoothedLayerGain.setTargetValue(layerTargetGain);
 
         for (int sample = 0; sample < numSamples; ++sample)
         {
             const float tg = smoothedTransGain.getNextValue();
             const float ng = smoothedTonalGain.getNextValue();
+            const float lg = smoothedLayerGain.getNextValue();
 
-            outL[sample] = (transL[sample] * tg) + (tonalL[sample] * ng);
-            if (outR != nullptr && transR != nullptr && tonalR != nullptr)
+            outL[sample] = (transL[sample] * tg) + (tonalL[sample] * ng) + (layerL[sample] * lg);
+            if (outR != nullptr && transR != nullptr && tonalR != nullptr && layerR != nullptr)
             {
-                outR[sample] = (transR[sample] * tg) + (tonalR[sample] * ng);
+                outR[sample] = (transR[sample] * tg) + (tonalR[sample] * ng) + (layerR[sample] * lg);
             }
         }
     }
 
     fullMixChain.process(buffer);
 
-    for (int l = 0; l < 3; ++l)
+    for (int l = 0; l < 4; ++l)
     {
         if (ExportRecordingCore::lanes[l].state.load() == ExportRecordingCore::State::Recording)
         {
@@ -666,6 +726,7 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
                 if (l == 0) srcBuf = &buffer;
                 if (l == 1) srcBuf = &transientBlockBuffer;
                 if (l == 2) srcBuf = &tonalBlockBuffer;
+                if (l == 3) srcBuf = &layerBlockBuffer;
 
                 for (int ch = 0; ch < 2; ++ch)
                 {
@@ -676,7 +737,7 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
             }
 
             bool isSilent = true;
-            const juce::AudioBuffer<float>* checkBuf = (l == 0) ? &buffer : ((l == 1) ? &transientBlockBuffer : &tonalBlockBuffer);
+            const juce::AudioBuffer<float>* checkBuf = (l == 0) ? &buffer : ((l == 1) ? &transientBlockBuffer : ((l == 2) ? &tonalBlockBuffer : &layerBlockBuffer));
             for (int ch = 0; ch < 2; ++ch)
             {
                 int srcCh = std::min(ch, checkBuf->getNumChannels() - 1);
@@ -714,10 +775,10 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 }
 
 void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
-    float& outTransL, float& outTransR, float& outTonalL, float& outTonalR,
+    float& outTransL, float& outTransR, float& outTonalL, float& outTonalR, float& outLayerL, float& outLayerR,
     float clickHold, float clickCurve, float transScale, float tonalScale, double hostSampleRate) noexcept
 {
-    outTransL = 0.0f; outTransR = 0.0f; outTonalL = 0.0f; outTonalR = 0.0f;
+    outTransL = 0.0f; outTransR = 0.0f; outTonalL = 0.0f; outTonalR = 0.0f; outLayerL = 0.0f; outLayerR = 0.0f;
     if (voice.sampleData == nullptr) return;
 
     bool isBefore = beforeAfterBypasser.julesIsBeforeBypassed();
@@ -958,70 +1019,85 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
         offlineMixRenderer.triggerRender();
     }
 
-    void AnatomyAudioProcessor::setFadeFromUI(bool isTransient, float inMs, float outMs, float inTension, float outTension) noexcept
+    void AnatomyAudioProcessor::setFadeFromUI(int laneIndex, float inMs, float outMs, float inTension, float outTension) noexcept
     {
-        if (isTransient)
+        if (laneIndex == 1)
         {
             customTransientReplacer.setFadeInMs(inMs);
             customTransientReplacer.setFadeOutMs(outMs);
             customTransientReplacer.setFadeInTension(inTension);
             customTransientReplacer.setFadeOutTension(outTension);
         }
-        else
+        else if (laneIndex == 2)
         {
             customTonalReplacer.setFadeInMs(inMs);
             customTonalReplacer.setFadeOutMs(outMs);
             customTonalReplacer.setFadeInTension(inTension);
             customTonalReplacer.setFadeOutTension(outTension);
         }
+        else if (laneIndex == 3)
+        {
+            customLayerReplacer.setFadeInMs(inMs);
+            customLayerReplacer.setFadeOutMs(outMs);
+            customLayerReplacer.setFadeInTension(inTension);
+            customLayerReplacer.setFadeOutTension(outTension);
+        }
         offlineMixRenderer.triggerRender();
     }
 
-    void AnatomyAudioProcessor::getFadeForUI(bool isTransient, float& inMs, float& outMs, float& inTension, float& outTension) const noexcept
+    void AnatomyAudioProcessor::getFadeForUI(int laneIndex, float& inMs, float& outMs, float& inTension, float& outTension) const noexcept
     {
-        if (isTransient)
+        if (laneIndex == 1)
         {
             inMs = customTransientReplacer.getFadeInMs();
             outMs = customTransientReplacer.getFadeOutMs();
             inTension = customTransientReplacer.getFadeInTension();
             outTension = customTransientReplacer.getFadeOutTension();
         }
-        else
+        else if (laneIndex == 2)
         {
             inMs = customTonalReplacer.getFadeInMs();
             outMs = customTonalReplacer.getFadeOutMs();
             inTension = customTonalReplacer.getFadeInTension();
             outTension = customTonalReplacer.getFadeOutTension();
         }
-    }
-
-    void AnatomyAudioProcessor::setLaneSolo(bool isTransient, bool isSolo)
-    {
-        int current = getSoloMode();
-        if (isTransient)
+        else if (laneIndex == 3)
         {
-            if (isSolo) setSoloMode(current == 2 ? 0 : 1);
-            else        setSoloMode(current == 1 ? 0 : current);
+            inMs = customLayerReplacer.getFadeInMs();
+            outMs = customLayerReplacer.getFadeOutMs();
+            inTension = customLayerReplacer.getFadeInTension();
+            outTension = customLayerReplacer.getFadeOutTension();
         }
         else
         {
-            if (isSolo) setSoloMode(current == 1 ? 0 : 2);
-            else        setSoloMode(current == 2 ? 0 : current);
+            inMs = 0.0f; outMs = 0.0f; inTension = 0.0f; outTension = 0.0f;
         }
     }
 
-    bool AnatomyAudioProcessor::isLaneSolo(bool isTransient) const noexcept
+    void AnatomyAudioProcessor::setLaneSolo(int laneIndex, bool isSolo)
     {
-        int m = getSoloMode();
-        return isTransient ? (m == 1) : (m == 2);
+        int current = getSoloMode();
+        if (isSolo)
+        {
+            setSoloMode(laneIndex);
+        }
+        else
+        {
+            if (current == laneIndex) setSoloMode(0);
+        }
     }
 
-    void AnatomyAudioProcessor::storeCustomSampleFromUI(bool isTransient, const juce::AudioBuffer<float>& newBuffer, double sr) noexcept
+    bool AnatomyAudioProcessor::isLaneSolo(int laneIndex) const noexcept
+    {
+        return getSoloMode() == laneIndex;
+    }
+
+    void AnatomyAudioProcessor::storeCustomSampleFromUI(int laneIndex, const juce::AudioBuffer<float>& newBuffer, double sr) noexcept
     {
         const juce::ScopedLock sl(lock);
         float durationMs = (sr > 0.0) ? (static_cast<float>(newBuffer.getNumSamples()) / static_cast<float>(sr)) * 1000.0f : 0.0f;
 
-        if (isTransient)
+        if (laneIndex == 1)
         {
             customTransBuffer.makeCopyOf(newBuffer);
             customTransientReplacer.loadSample(newBuffer, sr);
@@ -1030,7 +1106,7 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
             customTransientReplacer.setStartOffsetMs(0.0f);
             customTransientReplacer.setEndOffsetMs(durationMs);
         }
-        else
+        else if (laneIndex == 2)
         {
             customTonalBuffer.makeCopyOf(newBuffer);
             customTonalReplacer.loadSample(newBuffer, sr);
@@ -1039,14 +1115,23 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
             customTonalReplacer.setStartOffsetMs(0.0f);
             customTonalReplacer.setEndOffsetMs(durationMs);
         }
+        else if (laneIndex == 3)
+        {
+            customLayerBuffer.makeCopyOf(newBuffer);
+            customLayerReplacer.loadSample(newBuffer, sr);
+            layerStartOffsetMs = 0.0f;
+            layerEndOffsetMs = durationMs;
+            customLayerReplacer.setStartOffsetMs(0.0f);
+            customLayerReplacer.setEndOffsetMs(durationMs);
+        }
         updateActiveSampleData();
         offlineMixRenderer.triggerRender();
     }
 
-    void AnatomyAudioProcessor::clearCustomSampleFromUI(bool isTransient) noexcept
+    void AnatomyAudioProcessor::clearCustomSampleFromUI(int laneIndex) noexcept
     {
         const juce::ScopedLock sl(lock);
-        if (isTransient)
+        if (laneIndex == 1)
         {
             customTransBuffer.setSize(0, 0);
             customTransientReplacer.clearSample();
@@ -1056,7 +1141,7 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
             customTransientReplacer.setStartOffsetMs(0.0f);
             customTransientReplacer.setEndOffsetMs(origDurationMs);
         }
-        else
+        else if (laneIndex == 2)
         {
             customTonalBuffer.setSize(0, 0);
             customTonalReplacer.clearSample();
@@ -1065,6 +1150,15 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
             tonalEndOffsetMs = origDurationMs;
             customTonalReplacer.setStartOffsetMs(0.0f);
             customTonalReplacer.setEndOffsetMs(origDurationMs);
+        }
+        else if (laneIndex == 3)
+        {
+            customLayerBuffer.setSize(0, 0);
+            customLayerReplacer.clearSample();
+            layerStartOffsetMs = 0.0f;
+            layerEndOffsetMs = 0.0f;
+            customLayerReplacer.setStartOffsetMs(0.0f);
+            customLayerReplacer.setEndOffsetMs(0.0f);
         }
 
         updateActiveSampleData();
@@ -1158,21 +1252,25 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     {
         const juce::AudioBuffer<float>& transSrc = (customTransBuffer.getNumSamples() > 0) ? customTransBuffer : transBufferThread;
         const juce::AudioBuffer<float>& tonalSrc = (customTonalBuffer.getNumSamples() > 0) ? customTonalBuffer : tonalBufferThread;
+        const juce::AudioBuffer<float>& layerSrc = customLayerBuffer;
 
         const int transSamples = transSrc.getNumSamples();
         const int tonalSamples = tonalSrc.getNumSamples();
-        const int maxSamples = std::max(transSamples, tonalSamples);
+        const int layerSamples = layerSrc.getNumSamples();
+        const int maxSamples = std::max({ transSamples, tonalSamples, layerSamples });
 
         if (maxSamples == 0) return;
 
         juce::AudioBuffer<float> activeClick(1, maxSamples);
         juce::AudioBuffer<float> activeSustain(1, maxSamples);
-        activeClick.clear(); activeSustain.clear();
+        juce::AudioBuffer<float> activeLayer(1, maxSamples);
+        activeClick.clear(); activeSustain.clear(); activeLayer.clear();
 
         if (currentSoloMode == 0)
         {
             if (transSamples > 0) activeClick.copyFrom(0, 0, transSrc, 0, 0, transSamples);
             if (tonalSamples > 0) activeSustain.copyFrom(0, 0, tonalSrc, 0, 0, tonalSamples);
+            if (layerSamples > 0) activeLayer.copyFrom(0, 0, layerSrc, 0, 0, layerSamples);
         }
         else if (currentSoloMode == 1)
         {
@@ -1182,11 +1280,15 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
         {
             if (tonalSamples > 0) activeSustain.copyFrom(0, 0, tonalSrc, 0, 0, tonalSamples);
         }
+        else if (currentSoloMode == 3)
+        {
+            if (layerSamples > 0) activeLayer.copyFrom(0, 0, layerSrc, 0, 0, layerSamples);
+        }
 
-    SharedSampleData* newData = new SharedSampleData(std::move(activeClick), std::move(activeSustain), fileSampleRate);
-    SharedSampleData* oldData = masterSampleData.exchange(newData, std::memory_order_acq_rel);
-    if (oldData != nullptr) garbageBin.push_back(oldData);
-}
+        SharedSampleData* newData = new SharedSampleData(std::move(activeClick), std::move(activeSustain), std::move(activeLayer), fileSampleRate);
+        SharedSampleData* oldData = masterSampleData.exchange(newData, std::memory_order_acq_rel);
+        if (oldData != nullptr) garbageBin.push_back(oldData);
+    }
 
 void AnatomyAudioProcessor::cleanUpGarbageBin()
 {
@@ -1215,7 +1317,7 @@ void AnatomyAudioProcessor::cleanUpGarbageBin()
 
 void AnatomyAudioProcessor::flushPendingExports()
 {
-    for (int l = 0; l < 3; ++l)
+    for (int l = 0; l < 4; ++l)
     {
         if (ExportRecordingCore::lanes[l].state.load() != ExportRecordingCore::State::PendingWrite)
             continue;
@@ -1252,7 +1354,7 @@ void AnatomyAudioProcessor::applyEffectsOffline(juce::AudioBuffer<float>& buffer
     const std::vector<int>& order = getEffectOrder(route);
     if (order.empty()) return;
 
-    int laneIdx = (route == TargetRoute::Transient) ? 0 : ((route == TargetRoute::Tonal) ? 1 : 2);
+    int laneIdx = (route == TargetRoute::Transient) ? 0 : ((route == TargetRoute::Tonal) ? 1 : ((route == TargetRoute::FullMix) ? 2 : 3));
     const auto& c = cachedLanes[laneIdx];
     const int numSamples = buffer.getNumSamples();
 
@@ -1262,33 +1364,33 @@ void AnatomyAudioProcessor::applyEffectsOffline(juce::AudioBuffer<float>& buffer
         {
             ADAA_Saturation sat;
             sat.prepare(sr, numSamples);
-            sat.setDrive(c.satDrive->load());
-            sat.setMix(c.satMix->load());
-            sat.setAsymmetry(c.satAsym->load());
-            sat.setOutputTrimDb(c.satTrim->load());
-            sat.setPreCutoffHz(c.satPre->load());
+            if (c.satDrive) sat.setDrive(c.satDrive->load());
+            if (c.satMix)   sat.setMix(c.satMix->load());
+            if (c.satType)  sat.setType(static_cast<int>(c.satType->load()));
+            if (c.satTrim)  sat.setOutputTrimDb(c.satTrim->load());
+            if (c.satPre)   sat.setPreCutoffHz(c.satPre->load());
             sat.process(buffer);
         }
         else if (idx == 1) // BITCRUSH
         {
             BitCrusher bc;
             bc.prepare(sr, numSamples);
-            bc.setBits(c.bcBits->load());
-            bc.setDownsample(c.bcDown->load());
-            bc.setMix(c.bcMix->load());
-            bc.setJitter(c.bcJitter->load());
+            if (c.bcBits)   bc.setBits(c.bcBits->load());
+            if (c.bcDown)   bc.setDownsample(c.bcDown->load());
+            if (c.bcMix)    bc.setMix(c.bcMix->load());
+            if (c.bcJitter) bc.setJitter(c.bcJitter->load());
             bc.process(buffer);
         }
         else if (idx == 2) // NOISE
         {
             NoiseGenerator ns;
             ns.prepare(sr, numSamples);
-            ns.setDecay(c.nsDecay->load());
-            ns.setMix(c.nsMix->load());
-            ns.setNoiseType(static_cast<int>(c.nsType->load()));
-            ns.setGainDb(c.nsGain->load());
-            ns.setAttack(c.nsAttack->load());
-            ns.setBpCenterHz(c.nsBpFreq->load());
+            if (c.nsDecay)  ns.setDecay(c.nsDecay->load());
+            if (c.nsMix)    ns.setMix(c.nsMix->load());
+            if (c.nsType)   ns.setNoiseType(static_cast<int>(c.nsType->load()));
+            if (c.nsGain)   ns.setGainDb(c.nsGain->load());
+            if (c.nsAttack) ns.setAttack(c.nsAttack->load());
+            if (c.nsBpFreq) ns.setBpCenterHz(c.nsBpFreq->load());
             ns.trigger();
             ns.process(buffer);
         }
@@ -1296,16 +1398,16 @@ void AnatomyAudioProcessor::applyEffectsOffline(juce::AudioBuffer<float>& buffer
         {
             OTT_Multiband ott;
             ott.prepare(sr, numSamples);
-            ott.setMix(c.ottDepth->load());
-            ott.setTimeMultiplier(c.ottTime->load());
-            ott.setLowMidXOver(c.ottLowMidXOver->load());
-            ott.setMidHighXOver(c.ottMidHighXOver->load());
-            ott.setGateFloorDb(c.ottGateFloor->load());
+            if (c.ottDepth) ott.setMix(c.ottDepth->load());
+            if (c.ottTime)  ott.setTimeMultiplier(c.ottTime->load());
+            if (c.ottLowMidXOver) ott.setLowMidXOver(c.ottLowMidXOver->load());
+            if (c.ottMidHighXOver) ott.setMidHighXOver(c.ottMidHighXOver->load());
+            if (c.ottGateFloor) ott.setGateFloorDb(c.ottGateFloor->load());
             for (int b = 0; b < 3; ++b)
             {
-                ott.setBandUpward(b, c.ottBandUp[b]->load());
-                ott.setBandDownward(b, c.ottBandDown[b]->load());
-                ott.setBandGainDb(b, c.ottBandGain[b]->load());
+                if (c.ottBandUp[b])   ott.setBandUpward(b, c.ottBandUp[b]->load());
+                if (c.ottBandDown[b]) ott.setBandDownward(b, c.ottBandDown[b]->load());
+                if (c.ottBandGain[b]) ott.setBandGainDb(b, c.ottBandGain[b]->load());
             }
             ott.process(buffer);
         }
@@ -1313,21 +1415,30 @@ void AnatomyAudioProcessor::applyEffectsOffline(juce::AudioBuffer<float>& buffer
         {
             GlueCompressor glue;
             glue.prepare(sr, numSamples);
-            glue.setMix(c.glueDepth->load());
-            glue.setThresholdDb(c.glueThr->load());
-            glue.setRatio(c.glueRatio->load());
-            glue.setAttackMs(c.glueAtk->load());
-            glue.setReleaseMs(c.glueRel->load());
-            glue.setMakeupDb(c.glueMkp->load());
+            if (c.glueDepth) glue.setMix(c.glueDepth->load());
+            if (c.glueThr)   glue.setThresholdDb(c.glueThr->load());
+            if (c.glueRatio) glue.setRatio(c.glueRatio->load());
+            if (c.glueAtk)   glue.setAttackMs(c.glueAtk->load());
+            if (c.glueRel)   glue.setReleaseMs(c.glueRel->load());
+            if (c.glueMkp)   glue.setMakeupDb(c.glueMkp->load());
             glue.process(buffer);
         }
         else if (idx == 5) // LIMITER
         {
             Limiter lim;
             lim.prepare(sr, numSamples);
-            lim.setCeiling(c.limCeil->load());
-            lim.setMix(c.limMix->load());
+            if (c.limCeil) lim.setCeiling(c.limCeil->load());
+            if (c.limMix)  lim.setMix(c.limMix->load());
             lim.process(buffer);
+        }
+        else if (idx == 6) // TRANSIENT SHAPER
+        {
+            TransientShaper ts;
+            ts.prepare(sr, numSamples);
+            if (c.tsAttack)  ts.setAttack(c.tsAttack->load());
+            if (c.tsSustain) ts.setSustain(c.tsSustain->load());
+            if (c.tsMix)     ts.setMix(c.tsMix->load());
+            ts.process(buffer);
         }
     }
 }
@@ -1356,13 +1467,16 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
     // 1. レンダリング用のバッファと VoiceState の準備
     juce::AudioBuffer<float> renderedTrans(2, maxSamples);
     juce::AudioBuffer<float> renderedTonal(2, maxSamples);
+    juce::AudioBuffer<float> renderedLayer(2, maxSamples);
     renderedTrans.clear();
     renderedTonal.clear();
+    renderedLayer.clear();
 
     VoiceState exportVoice;
     exportVoice.sampleData = masterSampleData.load(std::memory_order_relaxed); // atomic load
     exportVoice.clickReadIndex = 0.0;
     exportVoice.sustainReadIndex = 0.0;
+    exportVoice.layerReadIndex = 0.0;
     
     // ピッチレシオ（generateVoiceSample は内部でこれを使う）
     exportVoice.pitchRatio = 1.0; 
@@ -1386,6 +1500,7 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
     // Mix Gain の適用は generateVoiceSample 内には無いので後でかける
     float transMixGain = std::pow(10.0f, apvts.getRawParameterValue("transMixGain")->load() / 20.0f);
     float tonalMixGain = std::pow(10.0f, apvts.getRawParameterValue("tonalMixGain")->load() / 20.0f);
+    float layerGain    = std::pow(10.0f, apvts.getRawParameterValue("layerGain")->load() / 20.0f);
 
     // 一時的にSoloモードを解除して、全パートが鳴る状態(0)でレンダリングする
     int savedSolo = currentSoloMode.load();
@@ -1393,13 +1508,15 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
 
     for (int s = 0; s < maxSamples; ++s)
     {
-        float outTransL = 0.0f, outTransR = 0.0f, outTonalL = 0.0f, outTonalR = 0.0f;
-        generateVoiceSample(exportVoice, outTransL, outTransR, outTonalL, outTonalR, clickHold, clickCurve, transScale, tonalScale, sr);
+        float outTransL = 0.0f, outTransR = 0.0f, outTonalL = 0.0f, outTonalR = 0.0f, outLayerL = 0.0f, outLayerR = 0.0f;
+        generateVoiceSample(exportVoice, outTransL, outTransR, outTonalL, outTonalR, outLayerL, outLayerR, clickHold, clickCurve, transScale, tonalScale, sr);
         
         renderedTrans.setSample(0, s, outTransL * transMixGain);
         renderedTrans.setSample(1, s, outTransR * transMixGain);
         renderedTonal.setSample(0, s, outTonalL * tonalMixGain);
         renderedTonal.setSample(1, s, outTonalR * tonalMixGain);
+        renderedLayer.setSample(0, s, outLayerL * layerGain);
+        renderedLayer.setSample(1, s, outLayerR * layerGain);
     }
     
     // Soloモード復元
@@ -1408,6 +1525,7 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
     // 2. 専用 FX 適用！
     applyEffectsOffline(renderedTrans, TargetRoute::Transient, sr);
     applyEffectsOffline(renderedTonal, TargetRoute::Tonal, sr);
+    applyEffectsOffline(renderedLayer, TargetRoute::Layer, sr);
 
     // 3. 出力バッファ決定
     juce::AudioBuffer<float> exportBuf;
@@ -1420,6 +1538,10 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
     {
         exportBuf.makeCopyOf(renderedTonal);
     }
+    else if (laneIndex == 3) // Layer EXPORT
+    {
+        exportBuf.makeCopyOf(renderedLayer);
+    }
     else // FullMix EXPORT (laneIndex == 0)
     {
         int soloMode = getSoloMode();
@@ -1428,13 +1550,15 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
 
         for (int s = 0; s < maxSamples; ++s)
         {
-            float tL = (soloMode == 2) ? 0.0f : renderedTrans.getSample(0, s);
-            float tR = (soloMode == 2) ? 0.0f : renderedTrans.getSample(1, s);
-            float oL = (soloMode == 1) ? 0.0f : renderedTonal.getSample(0, s);
-            float oR = (soloMode == 1) ? 0.0f : renderedTonal.getSample(1, s);
+            float tL = (soloMode == 2 || soloMode == 3) ? 0.0f : renderedTrans.getSample(0, s);
+            float tR = (soloMode == 2 || soloMode == 3) ? 0.0f : renderedTrans.getSample(1, s);
+            float oL = (soloMode == 1 || soloMode == 3) ? 0.0f : renderedTonal.getSample(0, s);
+            float oR = (soloMode == 1 || soloMode == 3) ? 0.0f : renderedTonal.getSample(1, s);
+            float lL = (soloMode == 1 || soloMode == 2) ? 0.0f : renderedLayer.getSample(0, s);
+            float lR = (soloMode == 1 || soloMode == 2) ? 0.0f : renderedLayer.getSample(1, s);
 
-            fullMixBuf.setSample(0, s, tL + oL);
-            fullMixBuf.setSample(1, s, tR + oR);
+            fullMixBuf.setSample(0, s, tL + oL + lL);
+            fullMixBuf.setSample(1, s, tR + oR + lR);
         }
 
         // FullMix 専用 FX 適用！
@@ -1483,31 +1607,35 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
 
 void OfflineMixRenderer::executeRender()
 {
-    juce::AudioBuffer<float> localTrans, localTonal;
+    juce::AudioBuffer<float> localTrans, localTonal, localLayer;
     double sr = 44100.0;
 
     {
         const juce::ScopedLock sl(processor.lock);
         localTrans.makeCopyOf(processor.customTransBuffer.getNumSamples() > 0 ? processor.customTransBuffer : processor.transBufferThread);
         localTonal.makeCopyOf(processor.customTonalBuffer.getNumSamples() > 0 ? processor.customTonalBuffer : processor.tonalBufferThread);
+        localLayer.makeCopyOf(processor.customLayerBuffer);
         sr = processor.fileSampleRate;
     }
 
     const int transSamples = localTrans.getNumSamples();
     const int tonalSamples = localTonal.getNumSamples();
-    const int maxSamples = std::max(transSamples, tonalSamples);
+    const int layerSamples = localLayer.getNumSamples();
+    const int maxSamples = std::max({transSamples, tonalSamples, layerSamples});
     if (maxSamples == 0) return;
 
-    if (localTrans.getNumChannels() <= 0 || localTonal.getNumChannels() <= 0) return;
+    if (localTrans.getNumChannels() <= 0 && localTonal.getNumChannels() <= 0 && localLayer.getNumChannels() <= 0) return;
 
     juce::AudioBuffer<float> workTrans(2, maxSamples);
     juce::AudioBuffer<float> workTonal(2, maxSamples);
-    workTrans.clear(); workTonal.clear();
+    juce::AudioBuffer<float> workLayer(2, maxSamples);
+    workTrans.clear(); workTonal.clear(); workLayer.clear();
 
     for (int ch = 0; ch < 2; ++ch)
     {
-        if (transSamples > 0) workTrans.copyFrom(ch, 0, localTrans, std::min(ch, localTrans.getNumChannels() - 1), 0, transSamples);
-        if (tonalSamples > 0) workTonal.copyFrom(ch, 0, localTonal, std::min(ch, localTonal.getNumChannels() - 1), 0, tonalSamples);
+        if (transSamples > 0 && ch < localTrans.getNumChannels()) workTrans.copyFrom(ch, 0, localTrans, ch, 0, transSamples);
+        if (tonalSamples > 0 && ch < localTonal.getNumChannels()) workTonal.copyFrom(ch, 0, localTonal, ch, 0, tonalSamples);
+        if (layerSamples > 0 && ch < localLayer.getNumChannels()) workLayer.copyFrom(ch, 0, localLayer, ch, 0, layerSamples);
     }
 
     float transPitch = processor.apvts.getRawParameterValue("transPitch")->load();
@@ -1535,12 +1663,19 @@ void OfflineMixRenderer::executeRender()
 
     float transGain = std::pow(10.0f, processor.apvts.getRawParameterValue("transMixGain")->load() / 20.0f);
     float tonalGain = std::pow(10.0f, processor.apvts.getRawParameterValue("tonalMixGain")->load() / 20.0f);
+    float layerGain = std::pow(10.0f, processor.apvts.getRawParameterValue("layerGain")->load() / 20.0f);
+    
+    float layerOffsetMs = processor.apvts.getRawParameterValue("layerOffset")->load();
+    int layerOffsetSamples = static_cast<int>((layerOffsetMs / 1000.0f) * sr);
 
     juce::AudioBuffer<float> outputMix(2, maxSamples);
     juce::AudioBuffer<float> outTransRendered(2, maxSamples);
     juce::AudioBuffer<float> outTonalRendered(2, maxSamples);
+    juce::AudioBuffer<float> outLayerRendered(2, maxSamples);
     outTransRendered.clear();
     outTonalRendered.clear();
+    outLayerRendered.clear();
+    outLayerRendered.clear();
     std::vector<float> ratios(maxSamples, 0.5f);
 
     float transStart = processor.transStartOffsetMs;

@@ -1,7 +1,6 @@
 // ==========================================
-// File: TonalLaneView.h
-// ANATOMY 3段目 右側: Tonal レーンビュー (幅50%)
-// [TONAL OFFSET] ノブ統合 ＆ 4基ノブ均等配置版
+// File: LayerLaneView.h
+// ANATOMY 3段目 左側: Layer レーンビュー (幅50%)
 // ==========================================
 #pragma once
 
@@ -17,17 +16,17 @@
 #include <functional>
 #include <memory>
 
-class TonalLaneView final : public juce::Component,
-                            public juce::FileBrowserListener,
-                            public juce::FileDragAndDropTarget
+class LayerLaneView final : public juce::Component,
+                                public juce::FileBrowserListener,
+                                public juce::FileDragAndDropTarget
 {
 public:
-    TonalLaneView(AnatomyAudioProcessor& p) : processor(p)
+    LayerLaneView(AnatomyAudioProcessor& p) : processor(p)
     {
         formatManager.registerBasicFormats();
 
         // 波形設定
-        waveform.setLaneProperties(p, 2);
+        waveform.setLaneProperties(p, 3);
         waveform.onFocusClicked = [this] { if (onSelectLane) onSelectLane(); };
         addAndMakeVisible(waveform);
 
@@ -37,7 +36,7 @@ public:
             b.setColour(juce::TextButton::textColourOffId, c);
         };
 
-        styleBtn(browseBtn, AnatomyColors::accentTonal);
+        styleBtn(browseBtn, AnatomyColors::peach);
         styleBtn(resetBtn, AnatomyColors::textDim);
 
         browseBtn.setButtonText("BROWSE");
@@ -46,10 +45,10 @@ public:
 
         resetBtn.setButtonText("RESET");
         resetBtn.onClick = [this] {
-            processor.clearCustomSampleFromUI(false);
+            processor.clearCustomSampleFromUI(3);
             browseBtn.setButtonText("BROWSE");
-            processor.setFadeFromUI(false, 0.0f, 0.0f, 0.0f, 0.0f);
-            float durationMs = processor.tonalEndOffsetMs;
+            processor.setFadeFromUI(3, 0.0f, 0.0f, 0.0f, 0.0f);
+            float durationMs = processor.layerEndOffsetMs;
             waveform.setOffsets(0.0f, durationMs, processor.getFileSampleRate());
             waveform.setFade(0.0f, 0.0f, 0.0f, 0.0f);
             if (onSampleChanged) onSampleChanged();
@@ -57,12 +56,12 @@ public:
         addAndMakeVisible(resetBtn);
 
         // D&D対応 EXPORT ボタン
-        exportBtn.setFileGenerator([this] { return processor.createTemporaryWavForExport(2); });
+        exportBtn.setFileGenerator([this] { return processor.createTemporaryWavForExport(3); });
         addAndMakeVisible(exportBtn);
 
         // SOLO ボタン
         soloToggle.onClick = [this] {
-            processor.setLaneSolo(false, soloToggle.getToggleState());
+            processor.setLaneSolo(3, soloToggle.getToggleState());
             if (onSoloChanged) onSoloChanged();
         };
         addAndMakeVisible(soloToggle);
@@ -74,7 +73,7 @@ public:
         };
         addAndMakeVisible(snapToggle);
 
-        // ノブ設定 (4基: TONAL OFFSET, RELEASE, PITCH, GAIN)
+        // ノブ設定 (2基: OFFSET, GAIN を右端に配置)
         auto setupKnob = [this](ValueKnob& k, juce::Label& l, const juce::String& text, juce::Colour c) {
             k.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
             k.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 58, 14);
@@ -84,30 +83,22 @@ public:
             addAndMakeVisible(k);
 
             l.setText(text, juce::dontSendNotification);
-            l.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
+            l.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
             l.setJustificationType(juce::Justification::centred);
             l.setColour(juce::Label::textColourId, c.withAlpha(0.9f));
             addAndMakeVisible(l);
         };
 
-        setupKnob(knobTonalDelay, lblTonalDelay, "TONAL OFFSET", AnatomyColors::accentTonal);
-        setupKnob(knobRelease,    lblRelease,    "RELEASE",      AnatomyColors::accentTonal);
-        setupKnob(knobPitch,      lblPitch,      "PITCH (st)",   AnatomyColors::accentTonal);
-        setupKnob(knobGain,       lblGain,       "GAIN (dB)",     AnatomyColors::accentTonal);
+        setupKnob(knobOffset, lblOffset, "OFFSET (ms)", AnatomyColors::peach);
+        setupKnob(knobGain,   lblGain,   "GAIN (dB)",   AnatomyColors::peach);
 
-        knobTonalDelay.setTextValueSuffix(" ms");
-
-        attachTonalDelay = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-            processor.apvts, "tonalDelay", knobTonalDelay);
-        attachRelease = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-            processor.apvts, "sustainRelease", knobRelease);
-        attachPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-            processor.apvts, "tonalPitch", knobPitch);
+        attachOffset = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            processor.apvts, "layerOffset", knobOffset);
         attachGain = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-            processor.apvts, "tonalMixGain", knobGain);
+            processor.apvts, "layerGain", knobGain);
     }
 
-    ~TonalLaneView() override { closeBrowser(); }
+    ~LayerLaneView() override { closeBrowser(); }
 
     void setWaveBuffer(const juce::AudioBuffer<float>& buf) { waveform.setBuffer(buf); }
     void setWaveOffsets(float s, float e, double sr) { waveform.setOffsets(s, e, sr); }
@@ -115,7 +106,7 @@ public:
 
     void updateSoloState()
     {
-        soloToggle.setToggleState(processor.isLaneSolo(2), juce::dontSendNotification);
+        soloToggle.setToggleState(processor.isLaneSolo(3), juce::dontSendNotification);
     }
 
     void resetCustomSampleState()
@@ -142,13 +133,13 @@ public:
         g.fillRoundedRectangle(bounds, 8.0f);
 
         // アクセント枠線
-        g.setColour(isSelected ? AnatomyColors::accentTonal.withAlpha(0.85f) : AnatomyColors::panelLine);
+        g.setColour(isSelected ? AnatomyColors::peach.withAlpha(0.85f) : AnatomyColors::panelLine);
         g.drawRoundedRectangle(bounds.reduced(0.5f), 8.0f, isSelected ? 1.5f : 1.0f);
 
         // ヘッダー部
         g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
-        g.setColour(AnatomyColors::accentTonal);
-        g.drawText("TONAL (BODY / HARMONICS)", 12, 6, getWidth() - 250, 20, juce::Justification::centredLeft);
+        g.setColour(AnatomyColors::peach);
+        g.drawText("LAYER", 12, 6, getWidth() - 250, 20, juce::Justification::centredLeft);
 
         // ヘッダー下仕切り線
         g.setColour(AnatomyColors::panelLine);
@@ -167,24 +158,21 @@ public:
         bx -= (gap + 44); resetBtn.setBounds(bx, 5, 44, 21);
         bx -= (gap + 52); browseBtn.setBounds(bx, 5, 52, 21);
 
-        // 波形エリア
-        waveform.setBounds(10, 36, getWidth() - 20, getHeight() - 120);
+        // 右端ノブエリア (2基: OFFSET, GAIN)
+        int knobW = 60;
+        int knobAreaW = knobW * 2 + 10;
+        int knobAreaX = getWidth() - knobAreaW - 10;
+        int knobY = 36;
 
-        // 下部ノブエリア (4基均等配置: TONAL OFFSET, RELEASE, PITCH, GAIN)
-        int knobY = getHeight() - 80;
-        int totalW = getWidth() - 20;
-        int kw = totalW / 4;
+        lblOffset.setBounds(knobAreaX, knobY, knobW, 14);
+        knobOffset.setBounds(knobAreaX + (knobW - 56) / 2, knobY + 16, 56, 56);
 
-        auto placeKnob = [&](ValueKnob& k, juce::Label& l, int index) {
-            int x = 10 + index * kw;
-            l.setBounds(x, knobY, kw, 14);
-            k.setBounds(x + (kw - 56) / 2, knobY + 16, 56, 56);
-        };
+        lblGain.setBounds(knobAreaX + knobW + 10, knobY, knobW, 14);
+        knobGain.setBounds(knobAreaX + knobW + 10 + (knobW - 56) / 2, knobY + 16, 56, 56);
 
-        placeKnob(knobTonalDelay, lblTonalDelay, 0);
-        placeKnob(knobRelease,    lblRelease,    1);
-        placeKnob(knobPitch,      lblPitch,      2);
-        placeKnob(knobGain,       lblGain,       3);
+        // 波形エリア (左側からノブの手前まで)
+        int waveW = knobAreaX - 18;
+        waveform.setBounds(10, 36, waveW, getHeight() - 44);
 
         if (browserComponent != nullptr)
             browserComponent->setBounds(getLocalBounds().reduced(10));
@@ -239,7 +227,7 @@ private:
         addAndMakeVisible(*browserComponent);
         browserComponent->setBounds(10, 32, getWidth() - 20, getHeight() - 38);
         
-        browseBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffe74c3c));
+        browseBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffe74c3c)); // 鮮やかな赤で目立たせる
         browseBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
         browseBtn.setButtonText("CLOSE (X)");
         browseBtn.toFront(true);
@@ -253,8 +241,8 @@ private:
             browserComponent.reset();
             browserTree.reset();
             browseBtn.setColour(juce::TextButton::buttonColourId, AnatomyColors::knobTrack);
-            browseBtn.setColour(juce::TextButton::textColourOffId, AnatomyColors::accentTonal);
-            browseBtn.setButtonText(processor.isCustomSampleLoaded(2) ? "CUSTOM" : "BROWSE");
+            browseBtn.setColour(juce::TextButton::textColourOffId, AnatomyColors::peach);
+            browseBtn.setButtonText(processor.isCustomSampleLoaded(3) ? "CUSTOM" : "BROWSE");
         }
     }
 
@@ -265,7 +253,7 @@ private:
         {
             juce::AudioBuffer<float> tempBuf((int)reader->numChannels, (int)reader->lengthInSamples);
             reader->read(&tempBuf, 0, (int)reader->lengthInSamples, 0, true, true);
-            processor.storeCustomSampleFromUI(false, tempBuf, reader->sampleRate);
+            processor.storeCustomSampleFromUI(3, tempBuf, reader->sampleRate);
             browseBtn.setButtonText(file.getFileNameWithoutExtension().substring(0, 8));
             waveform.setOffsets(0.0f, (float)(tempBuf.getNumSamples() / reader->sampleRate) * 1000.0f, reader->sampleRate);
             waveform.setBuffer(tempBuf);
@@ -280,23 +268,17 @@ private:
 
     juce::TextButton browseBtn;
     juce::TextButton resetBtn;
-    DragExportButton exportBtn{ "EXPORT", AnatomyColors::accentTonal };
-    GlowToggle soloToggle{ "SOLO", AnatomyColors::accentTonal };
+    DragExportButton exportBtn{ "EXPORT", AnatomyColors::peach };
+    GlowToggle soloToggle{ "SOLO", AnatomyColors::peach };
     GlowToggle snapToggle{ "SNAP", AnatomyColors::mint };
 
-    ValueKnob knobTonalDelay;
-    ValueKnob knobRelease;
-    ValueKnob knobPitch;
+    ValueKnob knobOffset;
     ValueKnob knobGain;
 
-    juce::Label lblTonalDelay;
-    juce::Label lblRelease;
-    juce::Label lblPitch;
+    juce::Label lblOffset;
     juce::Label lblGain;
 
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachTonalDelay;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachRelease;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachPitch;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachOffset;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachGain;
 
     std::unique_ptr<juce::Component> browserComponent;
@@ -304,5 +286,5 @@ private:
 
     bool isSelected = false;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TonalLaneView)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LayerLaneView)
 };

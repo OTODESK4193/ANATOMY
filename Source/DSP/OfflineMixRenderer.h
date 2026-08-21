@@ -53,12 +53,14 @@ public:
     void getRenderedResults(juce::AudioBuffer<float>& destFull,
         juce::AudioBuffer<float>& destTrans,
         juce::AudioBuffer<float>& destTonal,
+        juce::AudioBuffer<float>& destLayer,
         std::vector<float>& destRatios)
     {
         const juce::ScopedLock sl(renderLock);
         destFull.makeCopyOf(renderedFullMix);
         destTrans.makeCopyOf(renderedTransient);
         destTonal.makeCopyOf(renderedTonal);
+        destLayer.makeCopyOf(renderedLayer);
         destRatios = componentRatios;
     }
 
@@ -70,8 +72,9 @@ private:
     std::atomic<bool> triggerFlag;
 
     juce::AudioBuffer<float> renderedFullMix;
-    juce::AudioBuffer<float> renderedTransient; // 💥新設：FX適用後Transient波形バッファ
-    juce::AudioBuffer<float> renderedTonal;     // 💥新設：FX適用後Tonal波形バッファ
+    juce::AudioBuffer<float> renderedTransient; 
+    juce::AudioBuffer<float> renderedTonal;     
+    juce::AudioBuffer<float> renderedLayer;     
     std::vector<float> componentRatios;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OfflineMixRenderer)
