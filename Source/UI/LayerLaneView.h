@@ -17,8 +17,7 @@
 #include <memory>
 
 class LayerLaneView final : public juce::Component,
-                                public juce::FileBrowserListener,
-                                public juce::FileDragAndDropTarget
+                            public juce::FileDragAndDropTarget
 {
 public:
     LayerLaneView(AnatomyAudioProcessor& p) : processor(p)
@@ -98,7 +97,7 @@ public:
             processor.apvts, "layerGain", knobGain);
     }
 
-    ~LayerLaneView() override { closeBrowser(); }
+    ~LayerLaneView() override = default;
 
     void setWaveBuffer(const juce::AudioBuffer<float>& buf) { waveform.setBuffer(buf); }
     void setWaveOffsets(float s, float e, double sr) { waveform.setOffsets(s, e, sr); }
@@ -173,9 +172,6 @@ public:
         // 波形エリア (左側からノブの手前まで)
         int waveW = knobAreaX - 18;
         waveform.setBounds(10, 36, waveW, getHeight() - 44);
-
-        if (browserComponent != nullptr)
-            browserComponent->setBounds(getLocalBounds().reduced(10));
     }
 
     void mouseDown(const juce::MouseEvent&) override
@@ -196,18 +192,6 @@ public:
         if (files.size() >= 1) loadFile(juce::File(files[0]));
     }
 
-    // --- FileBrowserListener ---
-    void selectionChanged() override {}
-    void fileClicked(const juce::File& file, const juce::MouseEvent&) override
-    {
-        if (!file.isDirectory()) { loadFile(file); closeBrowser(); }
-    }
-    void fileDoubleClicked(const juce::File& file) override
-    {
-        if (!file.isDirectory()) { loadFile(file); closeBrowser(); }
-    }
-    void browserRootChanged(const juce::File&) override {}
-
     std::function<void()> onSelectLane;
     std::function<void()> onSampleChanged;
     std::function<void()> onSoloChanged;
@@ -215,35 +199,21 @@ public:
 private:
     void openBrowser()
     {
-        if (browserComponent != nullptr) { closeBrowser(); return; }
-        browserTree = std::make_unique<juce::FileBrowserComponent>(
-            juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        fileChooser = std::make_unique<juce::FileChooser>(
+            "Select Audio Sample for Layer",
             juce::File::getSpecialLocation(juce::File::userMusicDirectory),
-            nullptr, nullptr);
-        browserTree->addListener(this);
-        browserComponent = std::make_unique<juce::Component>();
-        browserComponent->addAndMakeVisible(*browserTree);
-        browserTree->setBounds(0, 0, getWidth() - 20, getHeight() - 40);
-        addAndMakeVisible(*browserComponent);
-        browserComponent->setBounds(10, 32, getWidth() - 20, getHeight() - 38);
-        
-        browseBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffe74c3c)); // 鮮やかな赤で目立たせる
-        browseBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
-        browseBtn.setButtonText("CLOSE (X)");
-        browseBtn.toFront(true);
-    }
+            "*.wav;*.aif;*.aiff;*.flac;*.mp3");
 
-    void closeBrowser()
-    {
-        if (browserComponent != nullptr)
-        {
-            removeChildComponent(browserComponent.get());
-            browserComponent.reset();
-            browserTree.reset();
-            browseBtn.setColour(juce::TextButton::buttonColourId, AnatomyColors::knobTrack);
-            browseBtn.setColour(juce::TextButton::textColourOffId, AnatomyColors::peach);
-            browseBtn.setButtonText(processor.isCustomSampleLoaded(3) ? "CUSTOM" : "BROWSE");
-        }
+        fileChooser->launchAsync(
+            juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+            [this](const juce::FileChooser& fc)
+            {
+                auto file = fc.getResult();
+                if (file.existsAsFile())
+                {
+                    loadFile(file);
+                }
+            });
     }
 
     void loadFile(const juce::File& file)
@@ -281,8 +251,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachOffset;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachGain;
 
-    std::unique_ptr<juce::Component> browserComponent;
-    std::unique_ptr<juce::FileBrowserComponent> browserTree;
+    std::unique_ptr<juce::FileChooser> fileChooser;
 
     bool isSelected = false;
 
