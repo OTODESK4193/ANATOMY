@@ -116,6 +116,7 @@ public:
 
     void flushPendingExports();
     juce::File createTemporaryWavForExport(int laneIndex);
+    void applyEffectsOffline(juce::AudioBuffer<float>& buffer, TargetRoute route, double sr);
     void setOffsetsFromUI(int laneIndex, float startMs, float endMs) noexcept;
     void setFadeFromUI(bool isTransient, float inMs, float outMs, float inTension, float outTension) noexcept;
     void getFadeForUI(bool isTransient, float& inMs, float& outMs, float& inTension, float& outTension) const noexcept;

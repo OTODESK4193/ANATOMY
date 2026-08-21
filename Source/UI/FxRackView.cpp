@@ -474,3 +474,18 @@ void FxRackView::resized()
 
     layoutDetails();
 }
+
+void FxRackView::resetAllSlotsToDefault()
+{
+    for (int r = 0; r < 3; ++r)
+    {
+        for (int s = 0; s < kNumSlots; ++s)
+            laneSlotTypes[(size_t)r][(size_t)s] = s;
+        TargetRoute rt = (r == 0) ? TargetRoute::Transient :
+                         (r == 1) ? TargetRoute::Tonal : TargetRoute::FullMix;
+        proc.updateRouteOrder(rt, { 0, 1, 2, 3, 4, 5 });
+    }
+    updateAllCardStates();
+    rebuildDetails();
+    repaint();
+}

@@ -29,6 +29,7 @@ public:
 
     void updateAllCardStates();
     void synchronizeDetailsFromParameters();
+    void resetAllSlotsToDefault();
 
     std::function<void(TargetRoute)> onRouteTabChanged;
 

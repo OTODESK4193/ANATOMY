@@ -1,6 +1,6 @@
 // ==========================================
 // File: DragExportButton.h
-// DAW/デスクトップへ安全にD&D可能なエクスポートボタン (SafePointer & OLE 安全対応版)
+// DAW/デスクトップへ安全にD&D可能なエクスポートボタン (callAsync & OLE 完全クラッシュ防止版)
 // ==========================================
 #pragma once
 
@@ -52,16 +52,20 @@ public:
                     juce::StringArray files;
                     files.add(wav.getFullPathName());
 
-                    // OLE ドロップ完了後に安全に復帰するための SafePointer
+                    // mouseDrag のイベントディスパッチから完全に脱出してトップレベルメッセージループから OLE DoDragDrop を呼ぶ
                     juce::Component::SafePointer<DragExportButton> safeThis(this);
+                    juce::MessageManager::callAsync([safeThis, files]()
+                    {
+                        if (safeThis == nullptr) return;
 
-                    juce::DragAndDropContainer::performExternalDragDropOfFiles(
-                        files, false, nullptr,
-                        [safeThis]()
-                        {
-                            if (safeThis != nullptr)
-                                safeThis->dragStarted = false;
-                        });
+                        juce::DragAndDropContainer::performExternalDragDropOfFiles(
+                            files, false, nullptr,
+                            [safeThis]()
+                            {
+                                if (safeThis != nullptr)
+                                    safeThis->dragStarted = false;
+                            });
+                    });
                 }
                 else
                 {

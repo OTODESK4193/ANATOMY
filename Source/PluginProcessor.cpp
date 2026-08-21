@@ -821,6 +821,18 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
                 outTonalL *= f; outTonalR *= f;
             }
         }
+
+        // FullMix Start/End トリミングゲート (fast path)
+        if (fullMixEndOffsetMs > 0.0f)
+        {
+            double curMs = (voice.clickReadIndex / fileSampleRate) * 1000.0;
+            if (curMs < fullMixStartOffsetMs || curMs >= fullMixEndOffsetMs)
+            {
+                outTransL = 0.0f; outTransR = 0.0f;
+                outTonalL = 0.0f; outTonalR = 0.0f;
+            }
+        }
+
         voice.clickReadIndex += voice.pitchRatio;
         voice.sustainReadIndex += voice.pitchRatio;
         return;
@@ -872,16 +884,27 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     if (currentMs < clickCurve && clickCurve > 0.0f)
     {
         float progress = currentMs / clickCurve;
-            float angle = progress * juce::MathConstants<float>::halfPi;
-            transFade = std::cos(angle);
-            tonalFade = std::sin(angle);
+        float angle = progress * juce::MathConstants<float>::halfPi;
+        transFade = std::cos(angle);
+        tonalFade = std::sin(angle);
+    }
+
+    float finalClick = shiftedClick * voice.triggerVelocity * voice.releaseGain * transFade;
+    float finalSustain = shiftedSustain * voice.triggerVelocity * voice.releaseGain * tonalFade * tonalEndFade;
+
+    // FullMix Start/End トリミングゲート (normal path)
+    if (fullMixEndOffsetMs > 0.0f)
+    {
+        double curMs = (voice.clickReadIndex / fileSampleRate) * 1000.0;
+        if (curMs < fullMixStartOffsetMs || curMs >= fullMixEndOffsetMs)
+        {
+            finalClick = 0.0f;
+            finalSustain = 0.0f;
         }
+    }
 
-        float finalClick = shiftedClick * voice.triggerVelocity * voice.releaseGain * transFade;
-        float finalSustain = shiftedSustain * voice.triggerVelocity * voice.releaseGain * tonalFade * tonalEndFade;
-
-        outTransL = finalClick; outTransR = finalClick;
-        outTonalL = finalSustain; outTonalR = finalSustain;
+    outTransL = finalClick; outTransR = finalClick;
+    outTonalL = finalSustain; outTonalR = finalSustain;
     }
 
     void AnatomyAudioProcessor::setOffsetsFromUI(int laneIndex, float startMs, float endMs) noexcept
@@ -1230,21 +1253,277 @@ void AnatomyAudioProcessor::flushPendingExports()
     }
 }
 
+void AnatomyAudioProcessor::applyEffectsOffline(juce::AudioBuffer<float>& buffer, TargetRoute route, double sr)
+{
+    const std::vector<int>& order = getEffectOrder(route);
+    if (order.empty()) return;
+
+    int laneIdx = (route == TargetRoute::Transient) ? 0 : ((route == TargetRoute::Tonal) ? 1 : 2);
+    const auto& c = cachedLanes[laneIdx];
+    const int numSamples = buffer.getNumSamples();
+
+    for (int idx : order)
+    {
+        if (idx == 0) // SAT
+        {
+            ADAA_Saturation sat;
+            sat.prepare(sr, numSamples);
+            sat.setDrive(c.satDrive->load());
+            sat.setMix(c.satMix->load());
+            sat.setAsymmetry(c.satAsym->load());
+            sat.setOutputTrimDb(c.satTrim->load());
+            sat.setPreCutoffHz(c.satPre->load());
+            sat.process(buffer);
+        }
+        else if (idx == 1) // BITCRUSH
+        {
+            BitCrusher bc;
+            bc.prepare(sr, numSamples);
+            bc.setBits(c.bcBits->load());
+            bc.setDownsample(c.bcDown->load());
+            bc.setMix(c.bcMix->load());
+            bc.setJitter(c.bcJitter->load());
+            bc.process(buffer);
+        }
+        else if (idx == 2) // NOISE
+        {
+            NoiseGenerator ns;
+            ns.prepare(sr, numSamples);
+            ns.setDecay(c.nsDecay->load());
+            ns.setMix(c.nsMix->load());
+            ns.setNoiseType(static_cast<int>(c.nsType->load()));
+            ns.setGainDb(c.nsGain->load());
+            ns.setAttack(c.nsAttack->load());
+            ns.setBpCenterHz(c.nsBpFreq->load());
+            ns.trigger();
+            ns.process(buffer);
+        }
+        else if (idx == 3) // OTT
+        {
+            OTT_Multiband ott;
+            ott.prepare(sr, numSamples);
+            ott.setMix(c.ottDepth->load());
+            ott.setTimeMultiplier(c.ottTime->load());
+            ott.setLowMidXOver(c.ottLowMidXOver->load());
+            ott.setMidHighXOver(c.ottMidHighXOver->load());
+            ott.setGateFloorDb(c.ottGateFloor->load());
+            for (int b = 0; b < 3; ++b)
+            {
+                ott.setBandUpward(b, c.ottBandUp[b]->load());
+                ott.setBandDownward(b, c.ottBandDown[b]->load());
+                ott.setBandGainDb(b, c.ottBandGain[b]->load());
+            }
+            ott.process(buffer);
+        }
+        else if (idx == 4) // GLUE
+        {
+            GlueCompressor glue;
+            glue.prepare(sr, numSamples);
+            glue.setMix(c.glueDepth->load());
+            glue.setThresholdDb(c.glueThr->load());
+            glue.setRatio(c.glueRatio->load());
+            glue.setAttackMs(c.glueAtk->load());
+            glue.setReleaseMs(c.glueRel->load());
+            glue.setMakeupDb(c.glueMkp->load());
+            glue.process(buffer);
+        }
+        else if (idx == 5) // LIMITER
+        {
+            Limiter lim;
+            lim.prepare(sr, numSamples);
+            lim.setCeiling(c.limCeil->load());
+            lim.setMix(c.limMix->load());
+            lim.process(buffer);
+        }
+    }
+}
+
 juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
 {
-    juce::AudioBuffer<float> exportBuf;
+    // laneIndex: 0 = FullMix, 1 = Transient, 2 = Tonal
     double sr = (fileSampleRate > 0.0) ? fileSampleRate : 44100.0;
 
-    juce::AudioBuffer<float> tempFull, tempTrans, tempTonal;
-    std::vector<float> mixRatios;
-    offlineMixRenderer.getRenderedResults(tempFull, tempTrans, tempTonal, mixRatios);
+    juce::AudioBuffer<float> localTrans, localTonal;
+    {
+        const juce::ScopedLock sl(lock);
+        localTrans.makeCopyOf(customTransBuffer.getNumSamples() > 0 ? customTransBuffer : transBufferThread);
+        localTonal.makeCopyOf(customTonalBuffer.getNumSamples() > 0 ? customTonalBuffer : tonalBufferThread);
+    }
 
-    if (laneIndex == 0)
-        exportBuf.makeCopyOf(tempFull.getNumSamples() > 0 ? tempFull : rawInputBuffer);
-    else if (laneIndex == 1)
-        exportBuf.makeCopyOf(tempTrans.getNumSamples() > 0 ? tempTrans : transBufferThread);
-    else if (laneIndex == 2)
-        exportBuf.makeCopyOf(tempTonal.getNumSamples() > 0 ? tempTonal : tonalBufferThread);
+    int transSamples = localTrans.getNumSamples();
+    int tonalSamples = localTonal.getNumSamples();
+    int maxSamples = std::max(transSamples, tonalSamples);
+    if (maxSamples == 0) return {};
+
+    // 1. Transient ドライ音声レンダリング（Start/End/Fade/Hold/Gain/Pitch）
+    juce::AudioBuffer<float> workTrans(2, maxSamples);
+    workTrans.clear();
+    for (int ch = 0; ch < 2; ++ch)
+        if (transSamples > 0) workTrans.copyFrom(ch, 0, localTrans, std::min(ch, localTrans.getNumChannels() - 1), 0, transSamples);
+
+    float transPitch = apvts.getRawParameterValue("transPitch")->load();
+    if (std::abs(transPitch) >= 0.01f)
+    {
+        float ratio = std::pow(2.0f, transPitch / 12.0f);
+        juce::AudioBuffer<float> copy(workTrans);
+        workTrans.clear();
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            float* d = workTrans.getWritePointer(ch);
+            const float* s = copy.getReadPointer(ch);
+            for (int i = 0; i < maxSamples; ++i)
+            {
+                double srcIdx = i * ratio;
+                if (srcIdx < maxSamples) d[i] = s[static_cast<int>(srcIdx)];
+            }
+        }
+    }
+
+    float transGain = std::pow(10.0f, apvts.getRawParameterValue("transMixGain")->load() / 20.0f);
+    float transStart = transStartOffsetMs;
+    float transEnd = transEndOffsetMs;
+    float clickHold = apvts.getRawParameterValue("clickLength")->load();
+    float sustainFade = apvts.getRawParameterValue("clickCurve")->load();
+    int tStartSmp = static_cast<int>((transStart / 1000.0) * sr);
+    int tEndSmp = static_cast<int>((transEnd / 1000.0) * sr);
+    int tHoldSmp = static_cast<int>(((clickHold + sustainFade) / 1000.0) * sr);
+
+    float tInMs, tOutMs, tInTension, tOutTension;
+    getFadeForUI(true, tInMs, tOutMs, tInTension, tOutTension);
+    int tInSmp = static_cast<int>((tInMs / 1000.0) * sr);
+    int tOutSmp = static_cast<int>((tOutMs / 1000.0) * sr);
+
+    juce::AudioBuffer<float> renderedTrans(2, maxSamples);
+    renderedTrans.clear();
+    for (int s = 0; s < maxSamples; ++s)
+    {
+        int exactClick = tStartSmp + s;
+        if (s < tHoldSmp && exactClick < tEndSmp && exactClick < transSamples)
+        {
+            float fGain = 1.0f;
+            if (tInSmp > 1 && s < tInSmp)
+                fGain *= calculateFadeGain(static_cast<float>(s) / static_cast<float>(tInSmp), tInTension);
+            int remT = tEndSmp - exactClick;
+            if (tOutSmp > 1 && remT < tOutSmp)
+                fGain *= calculateFadeGain(static_cast<float>(remT) / static_cast<float>(tOutSmp), tOutTension);
+
+            renderedTrans.setSample(0, s, workTrans.getSample(0, exactClick) * transGain * fGain);
+            renderedTrans.setSample(1, s, workTrans.getSample(1, exactClick) * transGain * fGain);
+        }
+    }
+
+    // Transient 専用 FX 適用！
+    applyEffectsOffline(renderedTrans, TargetRoute::Transient, sr);
+
+    // 2. Tonal ドライ音声レンダリング（Start/End/Fade/Delay/Gain/Pitch）
+    juce::AudioBuffer<float> workTonal(2, maxSamples);
+    workTonal.clear();
+    for (int ch = 0; ch < 2; ++ch)
+        if (tonalSamples > 0) workTonal.copyFrom(ch, 0, localTonal, std::min(ch, localTonal.getNumChannels() - 1), 0, tonalSamples);
+
+    float tonalPitch = apvts.getRawParameterValue("tonalPitch")->load();
+    if (std::abs(tonalPitch) >= 0.01f)
+    {
+        float ratio = std::pow(2.0f, tonalPitch / 12.0f);
+        juce::AudioBuffer<float> copy(workTonal);
+        workTonal.clear();
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            float* d = workTonal.getWritePointer(ch);
+            const float* s = copy.getReadPointer(ch);
+            for (int i = 0; i < maxSamples; ++i)
+            {
+                double srcIdx = i * ratio;
+                if (srcIdx < maxSamples) d[i] = s[static_cast<int>(srcIdx)];
+            }
+        }
+    }
+
+    float tonalGain = std::pow(10.0f, apvts.getRawParameterValue("tonalMixGain")->load() / 20.0f);
+    float tonalStart = tonalStartOffsetMs;
+    float tonalEnd = tonalEndOffsetMs;
+    float tonalDelayMs = apvts.getRawParameterValue("tonalDelay")->load();
+    int oStartSmp = static_cast<int>((tonalStart / 1000.0) * sr);
+    int oEndSmp = static_cast<int>((tonalEnd / 1000.0) * sr);
+    int tonalOffsetSmp = static_cast<int>(-(tonalDelayMs / 1000.0) * sr);
+
+    float oInMs, oOutMs, oInTension, oOutTension;
+    getFadeForUI(false, oInMs, oOutMs, oInTension, oOutTension);
+    int oInSmp = static_cast<int>((oInMs / 1000.0) * sr);
+    int oOutSmp = static_cast<int>((oOutMs / 1000.0) * sr);
+
+    juce::AudioBuffer<float> renderedTonal(2, maxSamples);
+    renderedTonal.clear();
+    for (int s = 0; s < maxSamples; ++s)
+    {
+        int exactSustain = oStartSmp + s + tonalOffsetSmp;
+        if (exactSustain >= 0 && exactSustain < oEndSmp && exactSustain < tonalSamples)
+        {
+            float fGain = 1.0f;
+            if (oInSmp > 1 && s < oInSmp)
+                fGain *= calculateFadeGain(static_cast<float>(s) / static_cast<float>(oInSmp), oInTension);
+            int remO = oEndSmp - exactSustain;
+            if (oOutSmp > 1 && remO < oOutSmp)
+                fGain *= calculateFadeGain(static_cast<float>(remO) / static_cast<float>(oOutSmp), oOutTension);
+
+            renderedTonal.setSample(0, s, workTonal.getSample(0, exactSustain) * tonalGain * fGain);
+            renderedTonal.setSample(1, s, workTonal.getSample(1, exactSustain) * tonalGain * fGain);
+        }
+    }
+
+    // Tonal 専用 FX 適用！
+    applyEffectsOffline(renderedTonal, TargetRoute::Tonal, sr);
+
+    // 3. 出力バッファ決定
+    juce::AudioBuffer<float> exportBuf;
+
+    if (laneIndex == 1) // Transient EXPORT
+    {
+        exportBuf.makeCopyOf(renderedTrans);
+    }
+    else if (laneIndex == 2) // Tonal EXPORT
+    {
+        exportBuf.makeCopyOf(renderedTonal);
+    }
+    else // FullMix EXPORT (laneIndex == 0)
+    {
+        int soloMode = getSoloMode();
+        juce::AudioBuffer<float> fullMixBuf(2, maxSamples);
+        fullMixBuf.clear();
+
+        for (int s = 0; s < maxSamples; ++s)
+        {
+            float tL = (soloMode == 2) ? 0.0f : renderedTrans.getSample(0, s);
+            float tR = (soloMode == 2) ? 0.0f : renderedTrans.getSample(1, s);
+            float oL = (soloMode == 1) ? 0.0f : renderedTonal.getSample(0, s);
+            float oR = (soloMode == 1) ? 0.0f : renderedTonal.getSample(1, s);
+
+            fullMixBuf.setSample(0, s, tL + oL);
+            fullMixBuf.setSample(1, s, tR + oR);
+        }
+
+        // FullMix 専用 FX 適用！
+        applyEffectsOffline(fullMixBuf, TargetRoute::FullMix, sr);
+
+        // FullMix の Start/End オフセットでトリミング
+        int fStartSmp = static_cast<int>((fullMixStartOffsetMs / 1000.0) * sr);
+        int fEndSmp = (fullMixEndOffsetMs > 0.0f) ? static_cast<int>((fullMixEndOffsetMs / 1000.0) * sr) : maxSamples;
+
+        fStartSmp = juce::jlimit(0, maxSamples, fStartSmp);
+        fEndSmp = juce::jlimit(fStartSmp, maxSamples, fEndSmp);
+        int trimLength = fEndSmp - fStartSmp;
+
+        if (trimLength > 0 && trimLength < maxSamples)
+        {
+            exportBuf.setSize(2, trimLength);
+            for (int ch = 0; ch < 2; ++ch)
+                exportBuf.copyFrom(ch, 0, fullMixBuf, ch, fStartSmp, trimLength);
+        }
+        else
+        {
+            exportBuf.makeCopyOf(fullMixBuf);
+        }
+    }
 
     if (exportBuf.getNumSamples() == 0 || exportBuf.getNumChannels() == 0)
         return {};

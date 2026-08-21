@@ -172,11 +172,18 @@ void AnatomyAudioProcessorEditor::resetAllParameters()
     for (auto* param : audioProcessor.getParameters())
         param->setValueNotifyingHost(param->getDefaultValue());
 
-    // 3. UIのBROWSEボタン表示をリセット
+    // 3. FX ラックのスロット配置・ChipBar をデフォルト順にリセット
+    fxRackView.resetAllSlotsToDefault();
+
+    // 4. Solo モードを解除
+    audioProcessor.setSoloMode(0);
+    updateSoloButtonStates();
+
+    // 5. UIのBROWSEボタン表示をリセット
     transientLane.resetCustomSampleState();
     tonalLane.resetCustomSampleState();
 
-    // 4. Start / End オフセットとフェードを初期化
+    // 6. Start / End オフセットとフェードを初期化
     double sr = audioProcessor.getFileSampleRate();
     float durMs = (sr > 0.0) ? (static_cast<float>(audioProcessor.getRawInputBufferForUI().getNumSamples()) / static_cast<float>(sr)) * 1000.0f : 0.0f;
     audioProcessor.setOffsetsFromUI(0, 0.0f, durMs);
