@@ -1,6 +1,6 @@
 // ==========================================
 // File: WaveformComponent.cpp
-// 高精度波形描画・オートフィット・上部マーカー▶◀・Fade中央●表示
+// 高精度波形描画・PicoSampler式スムーズドラッグ・ゼロクロススナップ・選択枠線
 // ==========================================
 #include "WaveformComponent.h"
 #include "../PluginProcessor.h"
@@ -25,17 +25,83 @@ void WaveformComponent::setBuffer(const juce::AudioBuffer<float>& buffer)
     const juce::ScopedLock sl(renderLock);
     bool isDifferentLength = (internalBuffer.getNumSamples() != buffer.getNumSamples());
     internalBuffer.makeCopyOf(buffer);
-    if (isDifferentLength)
+    if (isDifferentLength || !hasInitializedZoom)
+    {
+        autoFitToContent();
+        hasInitializedZoom = true;
+    }
+    repaint();
+}
+
+void WaveformComponent::autoFitToContent()
+{
+    const int numSamples = internalBuffer.getNumSamples();
+    if (numSamples == 0 || sampleRate <= 0.0)
     {
         zoomLevel = 1.0f;
         viewOffsetMs = 0.0f;
+        return;
     }
-    repaint();
+
+    double totalMs = (static_cast<double>(numSamples) / sampleRate) * 1000.0;
+    const float* data = internalBuffer.getReadPointer(0);
+
+    // 最大ピークを検出
+    float maxPeak = 0.0f;
+    for (int i = 0; i < numSamples; ++i)
+        maxPeak = std::max(maxPeak, std::abs(data[i]));
+
+    if (maxPeak < 0.001f)
+    {
+        zoomLevel = 1.0f;
+        viewOffsetMs = 0.0f;
+        return;
+    }
+
+    // 末尾から有効信号（-42dB）を検出
+    float threshold = maxPeak * 0.008f;
+    int lastActiveSample = numSamples - 1;
+    for (int i = numSamples - 1; i >= 0; --i)
+    {
+        if (std::abs(data[i]) >= threshold)
+        {
+            lastActiveSample = i;
+            break;
+        }
+    }
+
+    double activeMs = (static_cast<double>(lastActiveSample) / sampleRate) * 1000.0;
+    activeMs = std::max(10.0, activeMs);
+
+    if (laneIndex == 1) // Transient レーン
+    {
+        // 過渡音は通常 20ms〜80ms。有効期間が画面の 60〜75% に収まるようにズーム
+        double targetViewMs = std::max(40.0, activeMs * 1.35);
+        if (targetViewMs < totalMs)
+            zoomLevel = juce::jlimit(zoomMin, zoomMax, static_cast<float>(totalMs / targetViewMs));
+        else
+            zoomLevel = 1.0f;
+    }
+    else // Tonal & FullMix レーン
+    {
+        // 有効期間が画面の 85% に収まるようにズーム（末尾の長い無音をカット）
+        double targetViewMs = activeMs * 1.15;
+        if (targetViewMs < totalMs * 0.9)
+            zoomLevel = juce::jlimit(zoomMin, zoomMax, static_cast<float>(totalMs / targetViewMs));
+        else
+            zoomLevel = 1.0f;
+    }
+
+    viewOffsetMs = 0.0f;
 }
 
 void WaveformComponent::setOffsets(float startMs, float endMs, double sr) noexcept
 {
     const juce::ScopedLock sl(renderLock);
+    // ドラッグ中はタイマーによる古い値の上書き（チラつき・点滅・ガタつき）を完全遮断！
+    if (currentDragMode == DragMode::StartMarker || currentDragMode == DragMode::EndMarker)
+        return;
+
     startOffsetMs = startMs;
     endOffsetMs = endMs;
     sampleRate = sr;
@@ -45,6 +111,10 @@ void WaveformComponent::setOffsets(float startMs, float endMs, double sr) noexce
 void WaveformComponent::setFade(float inMs, float outMs, float inTension, float outTension) noexcept
 {
     const juce::ScopedLock sl(renderLock);
+    if (currentDragMode == DragMode::FadeInHandle || currentDragMode == DragMode::FadeOutHandle ||
+        currentDragMode == DragMode::FadeInTension || currentDragMode == DragMode::FadeOutTension)
+        return;
+
     fadeInMs = inMs;
     fadeOutMs = outMs;
     fadeInTension = inTension;
@@ -81,13 +151,24 @@ float WaveformComponent::getXFromMs(float ms) const noexcept
     return static_cast<float>(((static_cast<double>(ms) - viewOffsetMs) / visibleMs) * static_cast<double>(getWidth()));
 }
 
-int WaveformComponent::findNearestZeroCrossing(const float* data, int numSamples, int targetSample, int searchRadius) const noexcept
+float WaveformComponent::findZeroCrossingMs(float targetMs, float magnetPixels) const noexcept
 {
-    if (data == nullptr || numSamples <= 1) return targetSample;
+    const int numSamples = internalBuffer.getNumSamples();
+    if (numSamples <= 1 || sampleRate <= 0.0) return targetMs;
 
+    const float* data = internalBuffer.getReadPointer(0);
+    int targetSample = static_cast<int>((targetMs / 1000.0f) * sampleRate);
     targetSample = juce::jlimit(0, numSamples - 1, targetSample);
-    int startRange = std::max(0, targetSample - searchRadius);
-    int endRange = std::min(numSamples - 2, targetSample + searchRadius);
+
+    // 画面ピクセル距離基準（magnetPixels px）の探索サンプル半径
+    double totalMs = (static_cast<double>(numSamples) / sampleRate) * 1000.0;
+    double visibleMs = totalMs / static_cast<double>(zoomLevel);
+    double msPerPixel = visibleMs / static_cast<double>(std::max(1, getWidth()));
+    int magnetSamples = static_cast<int>((magnetPixels * msPerPixel / 1000.0) * sampleRate);
+    magnetSamples = juce::jlimit(4, 256, magnetSamples);
+
+    int startRange = std::max(0, targetSample - magnetSamples);
+    int endRange = std::min(numSamples - 2, targetSample + magnetSamples);
 
     int bestZeroCrossing = -1;
     int bestDist = 1000000;
@@ -105,20 +186,10 @@ int WaveformComponent::findNearestZeroCrossing(const float* data, int numSamples
         }
     }
 
-    if (bestZeroCrossing >= 0) return bestZeroCrossing;
+    if (bestZeroCrossing >= 0)
+        return (static_cast<float>(bestZeroCrossing) / static_cast<float>(sampleRate)) * 1000.0f;
 
-    float minAbs = 1.0e9f;
-    int minIdx = targetSample;
-    for (int s = startRange; s <= endRange + 1 && s < numSamples; ++s)
-    {
-        float a = std::abs(data[s]);
-        if (a < minAbs)
-        {
-            minAbs = a;
-            minIdx = s;
-        }
-    }
-    return minIdx;
+    return targetMs;
 }
 
 void WaveformComponent::paint(juce::Graphics& g)
@@ -148,8 +219,8 @@ void WaveformComponent::paint(juce::Graphics& g)
         g.setFont(juce::Font(juce::FontOptions(12.0f)));
         g.drawText("Drag & Drop WAV Audio File Here", getLocalBounds(), juce::Justification::centred, false);
 
-        g.setColour(AnatomyColors::panelLine);
-        g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, 1.0f);
+        g.setColour(isSelected ? (laneIndex == 0 ? AnatomyColors::accentFull : (laneIndex == 1 ? AnatomyColors::accentTransient : AnatomyColors::accentTonal)) : AnatomyColors::panelLine);
+        g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, isSelected ? 1.5f : 1.0f);
         return;
     }
 
@@ -167,10 +238,9 @@ void WaveformComponent::paint(juce::Graphics& g)
 
     bool isBeforeMode = (processor != nullptr && processor->beforeAfterBypasser.julesIsBeforeBypassed());
 
-    // 3. 高精度波形描画（エリア一杯にフィット）
+    // 3. 高精度波形描画
     if (samplesPerPixel >= 1.0f)
     {
-        // ── Min/Max ピークレンダリング ──
         if (laneIndex == 0 && !isBeforeMode && componentRatios.size() >= static_cast<size_t>(numSamples))
         {
             // FullMix 2色比率グラデーション描画
@@ -241,7 +311,7 @@ void WaveformComponent::paint(juce::Graphics& g)
     }
     else
     {
-        // ── 極限ズーム時: サンプル点補間 ＆ 個別ドット（●）描画 ──
+        // 極限ズーム時: サンプル点補間 ＆ ドット（●）描画
         juce::Colour waveColour = (laneIndex == 1) ? AnatomyColors::accentTransient :
                                   (laneIndex == 2) ? AnatomyColors::accentTonal :
                                                      AnatomyColors::accentFull;
@@ -307,7 +377,6 @@ void WaveformComponent::paint(juce::Graphics& g)
 
             if (fInW > 1.0f)
             {
-                // フェードイン減衰シェーディング
                 juce::Path fadeArea;
                 fadeArea.startNewSubPath(fInStartX, 0.0f);
                 for (float fx = fInStartX; fx <= fInEndX; fx += 2.0f)
@@ -323,7 +392,6 @@ void WaveformComponent::paint(juce::Graphics& g)
                 g.setColour(AnatomyColors::peach.withAlpha(0.18f));
                 g.fillPath(fadeArea);
 
-                // フェードイン カーブライン
                 juce::Path fadeLine;
                 fadeLine.startNewSubPath(fInStartX, h);
                 for (float fx = fInStartX; fx <= fInEndX; fx += 2.0f)
@@ -335,7 +403,7 @@ void WaveformComponent::paint(juce::Graphics& g)
                 g.setColour(AnatomyColors::peach.withAlpha(0.9f));
                 g.strokePath(fadeLine, juce::PathStrokeType(1.6f));
 
-                // FadeIn テンションハンドル (カーブ上の ●)
+                // FadeIn テンションハンドル (カーブ中央 ●)
                 float midX = (fInStartX + fInEndX) * 0.5f;
                 float midGain = calculateFadeGain(0.5f, fadeInTension);
                 float midY = h - midGain * (h - 4.0f);
@@ -353,12 +421,11 @@ void WaveformComponent::paint(juce::Graphics& g)
         }
         else
         {
-            // フェード長が0のときでも操作できるように微小な FadeIn ポイントを表示
             float fInX = getXFromMs(startOffsetMs);
             if (fInX >= 0.0f && fInX <= w)
             {
-                g.setColour(AnatomyColors::peach.withAlpha(0.7f));
-                g.fillEllipse(fInX + 2.0f, mid - 3.5f, 7.0f, 7.0f);
+                g.setColour(AnatomyColors::peach.withAlpha(0.85f));
+                g.fillEllipse(fInX + 2.0f, mid - 4.0f, 8.0f, 8.0f);
             }
         }
 
@@ -371,7 +438,6 @@ void WaveformComponent::paint(juce::Graphics& g)
 
             if (fOutW > 1.0f)
             {
-                // フェードアウト減衰シェーディング
                 juce::Path fadeArea;
                 fadeArea.startNewSubPath(fOutStartX, 0.0f);
                 for (float fx = fOutStartX; fx <= fOutEndX; fx += 2.0f)
@@ -387,7 +453,6 @@ void WaveformComponent::paint(juce::Graphics& g)
                 g.setColour(AnatomyColors::rose.withAlpha(0.18f));
                 g.fillPath(fadeArea);
 
-                // フェードアウト カーブライン
                 juce::Path fadeLine;
                 fadeLine.startNewSubPath(fOutStartX, 4.0f);
                 for (float fx = fOutStartX; fx <= fOutEndX; fx += 2.0f)
@@ -399,7 +464,7 @@ void WaveformComponent::paint(juce::Graphics& g)
                 g.setColour(AnatomyColors::rose.withAlpha(0.9f));
                 g.strokePath(fadeLine, juce::PathStrokeType(1.6f));
 
-                // FadeOut テンションハンドル (カーブ上の ●)
+                // FadeOut テンションハンドル (カーブ中央 ●)
                 float midX = (fOutStartX + fOutEndX) * 0.5f;
                 float midGain = calculateFadeGain(0.5f, fadeOutTension);
                 float midY = h - midGain * (h - 4.0f);
@@ -417,12 +482,11 @@ void WaveformComponent::paint(juce::Graphics& g)
         }
         else
         {
-            // フェード長が0のときでも操作できるように微小な FadeOut ポイントを表示
             float fOutX = getXFromMs(endOffsetMs);
             if (fOutX >= 0.0f && fOutX <= w)
             {
-                g.setColour(AnatomyColors::rose.withAlpha(0.7f));
-                g.fillEllipse(fOutX - 9.0f, mid - 3.5f, 7.0f, 7.0f);
+                g.setColour(AnatomyColors::rose.withAlpha(0.85f));
+                g.fillEllipse(fOutX - 10.0f, mid - 4.0f, 8.0f, 8.0f);
             }
         }
 
@@ -432,7 +496,6 @@ void WaveformComponent::paint(juce::Graphics& g)
             g.setColour(AnatomyColors::peach);
             g.drawVerticalLine(static_cast<int>(startX), 12.0f, h);
 
-            // 上部 ▶ 三角形
             juce::Path tri;
             tri.startNewSubPath(startX, 0.0f);
             tri.lineTo(startX + 10.0f, 6.0f);
@@ -455,7 +518,6 @@ void WaveformComponent::paint(juce::Graphics& g)
             g.setColour(AnatomyColors::rose);
             g.drawVerticalLine(static_cast<int>(endX), 12.0f, h);
 
-            // 上部 ◀ 三角形
             juce::Path tri;
             tri.startNewSubPath(endX, 0.0f);
             tri.lineTo(endX - 10.0f, 6.0f);
@@ -473,18 +535,41 @@ void WaveformComponent::paint(juce::Graphics& g)
         }
     }
 
-    // 5. 拡大時のみ右下にズーム倍率を控えめに表示
+    // 5. 拡大時の最下部スクロールバー描画 (zoomLevel > 1.05f)
     if (zoomLevel > 1.05f)
     {
+        float sbH = 5.0f;
+        float sbY = h - sbH - 1.0f;
+
+        // トラック（背景溝）
+        g.setColour(AnatomyColors::knobTrack.withAlpha(0.5f));
+        g.fillRoundedRectangle(2.0f, sbY, w - 4.0f, sbH, 2.5f);
+
+        // Thumb（つまみ）
+        float thumbW = static_cast<float>((visibleMs / totalMs) * (w - 4.0f));
+        thumbW = std::max(16.0f, thumbW);
+        float thumbX = 2.0f + static_cast<float>((viewOffsetMs / totalMs) * (w - 4.0f));
+        thumbX = juce::jlimit(2.0f, w - 2.0f - thumbW, thumbX);
+
+        juce::Colour thumbColour = (laneIndex == 1) ? AnatomyColors::accentTransient :
+                                  (laneIndex == 2) ? AnatomyColors::accentTonal :
+                                                     AnatomyColors::accentFull;
+        g.setColour(thumbColour.withAlpha(currentDragMode == DragMode::ScrollBarThumb ? 0.9f : 0.65f));
+        g.fillRoundedRectangle(thumbX, sbY, thumbW, sbH, 2.5f);
+
+        // ズーム倍率表示
         juce::String zoomText = "x" + juce::String(zoomLevel, (zoomLevel >= 10.0f ? 0 : 1));
         g.setColour(AnatomyColors::textDim.withAlpha(0.6f));
         g.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
-        g.drawText(zoomText, getWidth() - 50, getHeight() - 18, 44, 14, juce::Justification::centredRight, false);
+        g.drawText(zoomText, getWidth() - 50, getHeight() - 22, 44, 14, juce::Justification::centredRight, false);
     }
 
-    // 6. 外枠境界線
-    g.setColour(AnatomyColors::panelLine);
-    g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, 1.0f);
+    // 6. 外枠境界線 (選択時は各アクセント色で光る)
+    juce::Colour borderCol = isSelected ? (laneIndex == 0 ? AnatomyColors::accentFull :
+                                           (laneIndex == 1 ? AnatomyColors::accentTransient :
+                                                             AnatomyColors::accentTonal)) : AnatomyColors::panelLine;
+    g.setColour(borderCol);
+    g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, isSelected ? 1.5f : 1.0f);
 }
 
 void WaveformComponent::resized()
@@ -504,6 +589,34 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
         zoomLevel = 1.0f;
         viewOffsetMs = 0.0f;
         repaint();
+        return;
+    }
+
+    // 最下部スクロールバーのクリック判定
+    if (zoomLevel > 1.05f && e.y >= getHeight() - 8)
+    {
+        const int numSamples = internalBuffer.getNumSamples();
+        double totalMs = (static_cast<double>(numSamples) / sampleRate) * 1000.0;
+        double visibleMs = totalMs / static_cast<double>(zoomLevel);
+        float thumbW = static_cast<float>((visibleMs / totalMs) * (getWidth() - 4.0f));
+        thumbW = std::max(16.0f, thumbW);
+        float thumbX = 2.0f + static_cast<float>((viewOffsetMs / totalMs) * (getWidth() - 4.0f));
+
+        if (e.x >= thumbX && e.x <= thumbX + thumbW)
+        {
+            currentDragMode = DragMode::ScrollBarThumb;
+            dragStartPos = e.position;
+            scrollThumbDragStartOffset = viewOffsetMs;
+        }
+        else
+        {
+            float ratio = (static_cast<float>(e.x) - thumbW * 0.5f) / static_cast<float>(getWidth());
+            viewOffsetMs = static_cast<float>(juce::jlimit(0.0, totalMs - visibleMs, ratio * totalMs));
+            currentDragMode = DragMode::ScrollBarThumb;
+            dragStartPos = e.position;
+            scrollThumbDragStartOffset = viewOffsetMs;
+            repaint();
+        }
         return;
     }
 
@@ -528,17 +641,21 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
         float fInX = getXFromMs(startOffsetMs + fadeInMs);
         float fOutX = getXFromMs(endOffsetMs - fadeOutMs);
 
-        // 1. 上部 ▶ / ◀ 三角形マーカー判定 (y <= 16)
+        // 1. 上部 ▶ / ◀ 三角形マーカー判定 (y <= 18)
         if (my <= 18.0f)
         {
-            if (mx >= startX - 4.0f && mx <= startX + 14.0f)
+            if (mx >= startX - 6.0f && mx <= startX + 16.0f)
             {
                 currentDragMode = DragMode::StartMarker;
+                dragStartParamMs = startOffsetMs;
+                dragStartMouseXf = e.position.x;
                 return;
             }
-            if (mx >= endX - 14.0f && mx <= endX + 4.0f)
+            if (mx >= endX - 16.0f && mx <= endX + 6.0f)
             {
                 currentDragMode = DragMode::EndMarker;
+                dragStartParamMs = endOffsetMs;
+                dragStartMouseXf = e.position.x;
                 return;
             }
         }
@@ -548,10 +665,11 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
         {
             float fMidX = (startX + fInX) * 0.5f;
             float fMidY = getHeight() - calculateFadeGain(0.5f, fadeInTension) * (getHeight() - 4.0f);
-            if (std::abs(mx - fMidX) <= 8.0f && std::abs(my - fMidY) <= 8.0f)
+            if (std::abs(mx - fMidX) <= 10.0f && std::abs(my - fMidY) <= 10.0f)
             {
                 currentDragMode = DragMode::FadeInTension;
                 dragStartPos = e.position;
+                dragStartTension = fadeInTension;
                 return;
             }
         }
@@ -561,39 +679,46 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
         {
             float fMidX = (fOutX + endX) * 0.5f;
             float fMidY = getHeight() - calculateFadeGain(0.5f, fadeOutTension) * (getHeight() - 4.0f);
-            if (std::abs(mx - fMidX) <= 8.0f && std::abs(my - fMidY) <= 8.0f)
+            if (std::abs(mx - fMidX) <= 10.0f && std::abs(my - fMidY) <= 10.0f)
             {
                 currentDragMode = DragMode::FadeOutTension;
                 dragStartPos = e.position;
+                dragStartTension = fadeOutTension;
                 return;
             }
         }
 
         // 4. FadeIn ハンドル判定 (真ん中 y=mid 付近の ●)
-        if (std::abs(mx - fInX) <= 8.0f && std::abs(my - midY) <= 14.0f)
+        if (std::abs(mx - fInX) <= 10.0f && std::abs(my - midY) <= 16.0f)
         {
             currentDragMode = DragMode::FadeInHandle;
-            dragStartMs = fadeInMs;
+            dragStartParamMs = fadeInMs;
+            dragStartMouseXf = e.position.x;
             return;
         }
 
         // 5. FadeOut ハンドル判定 (真ん中 y=mid 付近の ●)
-        if (std::abs(mx - fOutX) <= 8.0f && std::abs(my - midY) <= 14.0f)
+        if (std::abs(mx - fOutX) <= 10.0f && std::abs(my - midY) <= 16.0f)
         {
             currentDragMode = DragMode::FadeOutHandle;
-            dragStartMs = fadeOutMs;
+            dragStartParamMs = fadeOutMs;
+            dragStartMouseXf = e.position.x;
             return;
         }
 
         // 6. 縦線マーカー判定
-        if (std::abs(mx - startX) <= 6.0f)
+        if (std::abs(mx - startX) <= 8.0f)
         {
             currentDragMode = DragMode::StartMarker;
+            dragStartParamMs = startOffsetMs;
+            dragStartMouseXf = e.position.x;
             return;
         }
-        if (std::abs(mx - endX) <= 6.0f)
+        if (std::abs(mx - endX) <= 8.0f)
         {
             currentDragMode = DragMode::EndMarker;
+            dragStartParamMs = endOffsetMs;
+            dragStartMouseXf = e.position.x;
             return;
         }
     }
@@ -614,89 +739,102 @@ void WaveformComponent::mouseDrag(const juce::MouseEvent& e)
     if (numSamples == 0 || sampleRate <= 0.0) return;
 
     double totalMs = (static_cast<double>(numSamples) / sampleRate) * 1000.0;
-    const float* data = internalBuffer.getReadPointer(0);
+    double visibleMs = totalMs / static_cast<double>(zoomLevel);
+    double msPerPixel = visibleMs / static_cast<double>(std::max(1, getWidth()));
 
-    float mouseMs = getMsFromX(static_cast<float>(e.x));
     bool shouldSnap = snapEnabled && !e.mods.isShiftDown();
 
     switch (currentDragMode)
     {
     case DragMode::StartMarker:
     {
-        float targetMs = juce::jlimit(0.0f, endOffsetMs - 0.5f, mouseMs);
+        // PicoSampler 方式: サブピクセル変位を加算
+        double deltaMs = static_cast<double>(e.position.x - dragStartMouseXf) * msPerPixel;
+        double targetMs = juce::jlimit(0.0, static_cast<double>(endOffsetMs) - 0.5, dragStartParamMs + deltaMs);
+
         if (shouldSnap)
         {
-            int targetSmp = static_cast<int>((targetMs / 1000.0f) * sampleRate);
-            int snappedSmp = findNearestZeroCrossing(data, numSamples, targetSmp);
-            targetMs = (static_cast<float>(snappedSmp) / static_cast<float>(sampleRate)) * 1000.0f;
+            targetMs = static_cast<double>(findZeroCrossingMs(static_cast<float>(targetMs), 14.0f));
             isSnappedToZeroCrossing = true;
         }
         else
         {
             isSnappedToZeroCrossing = false;
         }
-        startOffsetMs = targetMs;
-        synchronizeToTargetSliders(startOffsetMs, endOffsetMs);
+
+        startOffsetMs = static_cast<float>(targetMs);
+        synchronizeToTargetSliders(startOffsetMs, endOffsetMs, false); // ドラッグ中は高速反映
         repaint();
         break;
     }
     case DragMode::EndMarker:
     {
-        float targetMs = juce::jlimit(startOffsetMs + 0.5f, static_cast<float>(totalMs), mouseMs);
+        double deltaMs = static_cast<double>(e.position.x - dragStartMouseXf) * msPerPixel;
+        double targetMs = juce::jlimit(static_cast<double>(startOffsetMs) + 0.5, totalMs, dragStartParamMs + deltaMs);
+
         if (shouldSnap)
         {
-            int targetSmp = static_cast<int>((targetMs / 1000.0f) * sampleRate);
-            int snappedSmp = findNearestZeroCrossing(data, numSamples, targetSmp);
-            targetMs = (static_cast<float>(snappedSmp) / static_cast<float>(sampleRate)) * 1000.0f;
+            targetMs = static_cast<double>(findZeroCrossingMs(static_cast<float>(targetMs), 14.0f));
             isSnappedToZeroCrossing = true;
         }
         else
         {
             isSnappedToZeroCrossing = false;
         }
-        endOffsetMs = targetMs;
-        synchronizeToTargetSliders(startOffsetMs, endOffsetMs);
+
+        endOffsetMs = static_cast<float>(targetMs);
+        synchronizeToTargetSliders(startOffsetMs, endOffsetMs, false); // ドラッグ中は高速反映
         repaint();
         break;
     }
     case DragMode::FadeInHandle:
     {
-        float newFadeIn = juce::jlimit(0.0f, (endOffsetMs - startOffsetMs) * 0.95f, mouseMs - startOffsetMs);
-        fadeInMs = newFadeIn;
+        double deltaMs = static_cast<double>(e.position.x - dragStartMouseXf) * msPerPixel;
+        float maxFade = (endOffsetMs - startOffsetMs) * 0.95f;
+        fadeInMs = juce::jlimit(0.0f, maxFade, static_cast<float>(dragStartParamMs + deltaMs));
         updateFadeToProcessor();
         repaint();
         break;
     }
     case DragMode::FadeOutHandle:
     {
-        float newFadeOut = juce::jlimit(0.0f, (endOffsetMs - startOffsetMs) * 0.95f, endOffsetMs - mouseMs);
-        fadeOutMs = newFadeOut;
+        double deltaMs = static_cast<double>(dragStartMouseXf - e.position.x) * msPerPixel;
+        float maxFade = (endOffsetMs - startOffsetMs) * 0.95f;
+        fadeOutMs = juce::jlimit(0.0f, maxFade, static_cast<float>(dragStartParamMs + deltaMs));
         updateFadeToProcessor();
         repaint();
         break;
     }
     case DragMode::FadeInTension:
     {
+        // 上ドラッグ（dy > 0）で急峻（プラス / 上に凸）、下ドラッグ（dy < 0）でなだらか（マイナス / 下に凹）
         float dy = dragStartPos.y - static_cast<float>(e.y);
-        fadeInTension = juce::jlimit(-1.0f, 1.0f, dy / 40.0f);
+        fadeInTension = juce::jlimit(-1.0f, 1.0f, dragStartTension + dy / 40.0f);
         updateFadeToProcessor();
         repaint();
         break;
     }
     case DragMode::FadeOutTension:
     {
+        // 上ドラッグ（dy > 0）で急峻（プラス / 上に凸）、下ドラッグ（dy < 0）でなだらか（マイナス / 下に凹）
         float dy = dragStartPos.y - static_cast<float>(e.y);
-        fadeOutTension = juce::jlimit(-1.0f, 1.0f, dy / 40.0f);
+        fadeOutTension = juce::jlimit(-1.0f, 1.0f, dragStartTension + dy / 40.0f);
         updateFadeToProcessor();
         repaint();
         break;
     }
     case DragMode::ScrollWaveform:
     {
-        double visibleMs = totalMs / static_cast<double>(zoomLevel);
-        double msPerPixel = visibleMs / static_cast<double>(getWidth());
         float dx = dragStartPos.x - static_cast<float>(e.x);
-        viewOffsetMs = static_cast<float>(juce::jlimit(0.0, totalMs - visibleMs, dragStartViewOffsetMs + dx * msPerPixel));
+        viewOffsetMs = static_cast<float>(juce::jlimit(0.0, std::max(0.0, totalMs - visibleMs), static_cast<double>(dragStartViewOffsetMs) + static_cast<double>(dx) * msPerPixel));
+        repaint();
+        break;
+    }
+    case DragMode::ScrollBarThumb:
+    {
+        float dx = static_cast<float>(e.x) - dragStartPos.x;
+        double msPerPix = totalMs / static_cast<double>(getWidth());
+        viewOffsetMs = static_cast<float>(juce::jlimit(0.0, std::max(0.0, totalMs - visibleMs), static_cast<double>(scrollThumbDragStartOffset) + static_cast<double>(dx) * msPerPix));
         repaint();
         break;
     }
@@ -707,6 +845,12 @@ void WaveformComponent::mouseDrag(const juce::MouseEvent& e)
 
 void WaveformComponent::mouseUp(const juce::MouseEvent&)
 {
+    if (currentDragMode == DragMode::StartMarker || currentDragMode == DragMode::EndMarker)
+    {
+        // マウスを離したタイミングで確定レンダリングをキック
+        synchronizeToTargetSliders(startOffsetMs, endOffsetMs, true);
+    }
+
     currentDragMode = DragMode::None;
     isSnappedToZeroCrossing = false;
     setMouseCursor(juce::MouseCursor::NormalCursor);
@@ -729,17 +873,21 @@ void WaveformComponent::mouseMove(const juce::MouseEvent& e)
     float fInX = getXFromMs(startOffsetMs + fadeInMs);
     float fOutX = getXFromMs(endOffsetMs - fadeOutMs);
 
-    if (my <= 18.0f && ((mx >= startX - 4.0f && mx <= startX + 14.0f) || (mx >= endX - 14.0f && mx <= endX + 4.0f)))
+    if (my <= 18.0f && ((mx >= startX - 6.0f && mx <= startX + 16.0f) || (mx >= endX - 16.0f && mx <= endX + 6.0f)))
     {
         setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
     }
-    else if (std::abs(my - midY) <= 14.0f && (std::abs(mx - fInX) <= 8.0f || std::abs(mx - fOutX) <= 8.0f))
+    else if (std::abs(my - midY) <= 16.0f && (std::abs(mx - fInX) <= 10.0f || std::abs(mx - fOutX) <= 10.0f))
     {
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
     }
-    else if (std::abs(mx - startX) <= 6.0f || std::abs(mx - endX) <= 6.0f)
+    else if (std::abs(mx - startX) <= 8.0f || std::abs(mx - endX) <= 8.0f)
     {
         setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
+    }
+    else if (zoomLevel > 1.05f && my >= getHeight() - 8)
+    {
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
     }
     else
     {
@@ -758,7 +906,7 @@ void WaveformComponent::mouseWheelMove(const juce::MouseEvent& e, const juce::Mo
     if (e.mods.isShiftDown())
     {
         double visibleMs = totalMs / static_cast<double>(zoomLevel);
-        viewOffsetMs = static_cast<float>(juce::jlimit(0.0, totalMs - visibleMs, viewOffsetMs - wheel.deltaY * visibleMs * 0.15));
+        viewOffsetMs = static_cast<float>(juce::jlimit(0.0, totalMs - visibleMs, static_cast<double>(viewOffsetMs) - static_cast<double>(wheel.deltaY) * visibleMs * 0.15));
         repaint();
         return;
     }
@@ -785,12 +933,12 @@ void WaveformComponent::mouseWheelMove(const juce::MouseEvent& e, const juce::Mo
     {
         double visibleMs = totalMs / static_cast<double>(zoomLevel);
         float mouseRatio = static_cast<float>(e.x) / static_cast<float>(getWidth());
-        viewOffsetMs = static_cast<float>(juce::jlimit(0.0, totalMs - visibleMs, mouseMs - mouseRatio * visibleMs));
+        viewOffsetMs = static_cast<float>(juce::jlimit(0.0, totalMs - visibleMs, static_cast<double>(mouseMs) - static_cast<double>(mouseRatio) * visibleMs));
     }
     repaint();
 }
 
-void WaveformComponent::synchronizeToTargetSliders(float startMs, float endMs)
+void WaveformComponent::synchronizeToTargetSliders(float startMs, float endMs, bool notifyProcessor)
 {
     if (processor == nullptr) return;
     processor->setOffsetsFromUI((laneIndex == 1), startMs, endMs);

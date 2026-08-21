@@ -142,15 +142,15 @@ public:
 
     void resized() override
     {
-        // ヘッダーボタン: 右上 (BROWSE 46, RESET 40, EXPORT 46, SOLO 46, SNAP 44)
-        int gap = 3;
-        int bx = getWidth() - 10;
+        // ヘッダーボタン: 右上 (BROWSE 52, RESET 44, EXPORT 50, SOLO 56, SNAP 56)
+        int gap = 4;
+        int bx = getWidth() - 8;
 
-        bx -= 44; snapToggle.setBounds(bx, 5, 44, 21);
-        bx -= (gap + 46); soloToggle.setBounds(bx, 5, 46, 21);
-        bx -= (gap + 46); exportBtn.setBounds(bx, 5, 46, 21);
-        bx -= (gap + 40); resetBtn.setBounds(bx, 5, 40, 21);
-        bx -= (gap + 48); browseBtn.setBounds(bx, 5, 48, 21);
+        bx -= 56; snapToggle.setBounds(bx, 5, 56, 21);
+        bx -= (gap + 56); soloToggle.setBounds(bx, 5, 56, 21);
+        bx -= (gap + 50); exportBtn.setBounds(bx, 5, 50, 21);
+        bx -= (gap + 44); resetBtn.setBounds(bx, 5, 44, 21);
+        bx -= (gap + 52); browseBtn.setBounds(bx, 5, 52, 21);
 
         // 波形エリア
         waveform.setBounds(10, 36, getWidth() - 20, getHeight() - 120);

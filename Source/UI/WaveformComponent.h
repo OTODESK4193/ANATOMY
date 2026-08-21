@@ -1,6 +1,6 @@
 // ==========================================
 // File: WaveformComponent.h
-// 高精度波形描画・極限ズーム・ゼロクロススナップ・インタラクティブFade対応版
+// 高精度波形描画・PicoSampler式スムーズドラッグ・ゼロクロススナップ・選択枠線
 // ==========================================
 #pragma once
 
@@ -29,6 +29,7 @@ public:
     void setRatioData(const std::vector<float>& ratios) noexcept;
     void setLaneProperties(AnatomyAudioProcessor& processor, int laneIndex) noexcept;
     void setSnapEnabled(bool enabled) noexcept { snapEnabled = enabled; repaint(); }
+    void setSelected(bool selected) noexcept { isSelected = selected; repaint(); }
 
     void mouseDown(const juce::MouseEvent& e) override;
     void mouseDrag(const juce::MouseEvent& e) override;
@@ -36,14 +37,16 @@ public:
     void mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override;
     void mouseMove(const juce::MouseEvent& e) override;
 
+    void autoFitToContent();
+
     std::function<void()> onFocusClicked;
     std::function<void(float, float, float, float)> onFadeChanged; // inMs, outMs, inTension, outTension
 
 private:
     float getMsFromX(float x) const noexcept;
     float getXFromMs(float ms) const noexcept;
-    int findNearestZeroCrossing(const float* data, int numSamples, int targetSample, int searchRadius = 384) const noexcept;
-    void synchronizeToTargetSliders(float startMs, float endMs);
+    float findZeroCrossingMs(float targetMs, float magnetPixels = 14.0f) const noexcept;
+    void synchronizeToTargetSliders(float startMs, float endMs, bool notifyProcessor = true);
     void updateFadeToProcessor();
 
     juce::CriticalSection renderLock;
@@ -52,6 +55,7 @@ private:
 
     AnatomyAudioProcessor* processor = nullptr;
     int laneIndex = 0; // 0: FullMix, 1: Transient, 2: Tonal
+    bool isSelected = false;
 
     float startOffsetMs = 0.0f;
     float endOffsetMs = 0.0f;
@@ -60,7 +64,7 @@ private:
     // フェードパラメータ
     float fadeInMs = 0.0f;
     float fadeOutMs = 0.0f;
-    float fadeInTension = 0.0f;  // -1.0 .. +1.0
+    float fadeInTension = 0.0f;  // -1.0 .. +1.0 (上: 急峻, 下: なだらか)
     float fadeOutTension = 0.0f; // -1.0 .. +1.0
 
     // スナップ設定
@@ -72,14 +76,19 @@ private:
     static constexpr float zoomMin = 1.0f;
     static constexpr float zoomMax = 1024.0f;
 
-    // ドラッグ状態
-    enum class DragMode { None, StartMarker, EndMarker, FadeInHandle, FadeOutHandle, FadeInTension, FadeOutTension, ScrollWaveform };
+    // PicoSampler 方式 高精度ドラッグ状態
+    enum class DragMode { None, StartMarker, EndMarker, FadeInHandle, FadeOutHandle, FadeInTension, FadeOutTension, ScrollWaveform, ScrollBarThumb };
     DragMode currentDragMode = DragMode::None;
-    float dragStartMs = 0.0f;
+
+    double dragStartParamMs = 0.0;
+    float dragStartTension = 0.0f;
+    float dragStartMouseXf = 0.0f;
     float dragStartViewOffsetMs = 0.0f;
     juce::Point<float> dragStartPos;
+    float scrollThumbDragStartOffset = 0.0f;
 
     bool isSnappedToZeroCrossing = false;
+    bool hasInitializedZoom = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(WaveformComponent)
 };

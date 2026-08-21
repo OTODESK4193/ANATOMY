@@ -8,17 +8,20 @@
 inline float calculateFadeGain(float normalizedProgress, float tension) noexcept
 {
     float p = juce::jlimit(0.0f, 1.0f, normalizedProgress);
-    if (std::abs(tension) < 0.01f)
+    if (std::abs(tension) < 0.005f)
         return p;
+
+    // tension > 0: 上ドラッグで急峻 (上に凸 / 対数カーブ / 立ち上がり急激)
     if (tension > 0.0f)
     {
-        float expVal = 1.0f + tension * 3.0f;
-        return std::pow(p, expVal);
+        float expVal = 1.0f + tension * 4.0f;
+        return 1.0f - std::pow(1.0f - p, expVal);
     }
+    // tension < 0: 下ドラッグでなだらか (下に凹 / 指数カーブ / 立ち上がり緩やか)
     else
     {
-        float expVal = 1.0f - tension * 3.0f;
-        return 1.0f - std::pow(1.0f - p, expVal);
+        float expVal = 1.0f - tension * 4.0f;
+        return std::pow(p, expVal);
     }
 }
 
@@ -58,6 +61,10 @@ public:
 
     void setStartOffsetMs(float offsetMs) noexcept { startOffsetMs.store(offsetMs, std::memory_order_relaxed); }
     void setEndOffsetMs(float offsetMs) noexcept { endOffsetMs.store(offsetMs, std::memory_order_relaxed); }
+    void setPitchSemitones(float st) noexcept { pitchSemitones.store(st, std::memory_order_relaxed); }
+    void setMixGainDb(float gainDb) noexcept { mixGainDb.store(gainDb, std::memory_order_relaxed); }
+    void setClickHoldMs(float holdMs) noexcept { clickHoldMs.store(holdMs, std::memory_order_relaxed); }
+
     void setFadeInMs(float ms) noexcept { fadeInMs.store(ms, std::memory_order_relaxed); }
     void setFadeOutMs(float ms) noexcept { fadeOutMs.store(ms, std::memory_order_relaxed); }
     void setFadeInTension(float t) noexcept { fadeInTension.store(t, std::memory_order_relaxed); }
@@ -68,90 +75,86 @@ public:
     float getFadeInTension() const noexcept { return fadeInTension.load(std::memory_order_relaxed); }
     float getFadeOutTension() const noexcept { return fadeOutTension.load(std::memory_order_relaxed); }
 
+    void setFade(float inMs, float outMs, float inTension, float outTension) noexcept
+    {
+        fadeInMs.store(inMs, std::memory_order_relaxed);
+        fadeOutMs.store(outMs, std::memory_order_relaxed);
+        fadeInTension.store(inTension, std::memory_order_relaxed);
+        fadeOutTension.store(outTension, std::memory_order_relaxed);
+    }
+
+    void getFade(float& inMs, float& outMs, float& inTension, float& outTension) const noexcept
+    {
+        inMs = fadeInMs.load(std::memory_order_relaxed);
+        outMs = fadeOutMs.load(std::memory_order_relaxed);
+        inTension = fadeInTension.load(std::memory_order_relaxed);
+        outTension = fadeOutTension.load(std::memory_order_relaxed);
+    }
+
+    float getStartOffsetMs() const noexcept { return startOffsetMs.load(std::memory_order_relaxed); }
+    float getEndOffsetMs() const noexcept { return endOffsetMs.load(std::memory_order_relaxed); }
+
     void reset() noexcept {}
 
-    float processSample(double clickReadIndex, double originalPitchRatio, float transScale,
-        float clickHoldMs, float clickCurveMs, double hostSampleRate, int soloMode) noexcept
+    float processSample(double clickReadIndex, double /*pitchRatio*/, float transScale,
+                        float clickHold, float /*clickCurve*/, double /*hostSampleRate*/, int soloMode) noexcept
     {
         if (soloMode == 2 || !hasSample.load(std::memory_order_relaxed))
             return 0.0f;
 
         const int maxSamples = replacedBuffer.getNumSamples();
-        if (maxSamples <= 0) return 0.0f;
+        if (maxSamples == 0) return 0.0f;
 
-        double n = (originalPitchRatio > 0.0) ? (clickReadIndex / originalPitchRatio) : clickReadIndex;
+        double startSmpl = (static_cast<double>(startOffsetMs.load(std::memory_order_relaxed)) / 1000.0) * sourceSampleRate;
+        double endSmpl = (static_cast<double>(endOffsetMs.load(std::memory_order_relaxed)) / 1000.0) * sourceSampleRate;
+        double holdSmpl = (static_cast<double>(clickHold) / 1000.0) * sourceSampleRate;
 
-        float wClick = 0.0f;
-        double elapsedMs = (n / hostSampleRate) * 1000.0;
+        double effectiveEnd = (holdSmpl > 0.0) ? std::min(endSmpl, startSmpl + holdSmpl) : endSmpl;
+        double readPos = startSmpl + clickReadIndex;
 
-        if (elapsedMs < clickHoldMs)
-        {
-            wClick = 1.0f;
-        }
-        else if (elapsedMs < (clickHoldMs + clickCurveMs))
-        {
-            if (clickCurveMs > 0.0f)
-            {
-                double fadePhase = ((elapsedMs - clickHoldMs) / clickCurveMs) * (juce::MathConstants<double>::pi * 0.5);
-                double cosVal = std::cos(fadePhase);
-                wClick = static_cast<float>(cosVal * cosVal);
-            }
-        }
-        else
-        {
-            return 0.0f;
-        }
-
-        double startMs = startOffsetMs.load(std::memory_order_relaxed);
-        double endMs = endOffsetMs.load(std::memory_order_relaxed);
-        double offsetSamples = (startMs / 1000.0) * sourceSampleRate;
-        double speedRatio = sourceSampleRate / hostSampleRate;
-        double replacedSrcPos = offsetSamples + (n * speedRatio * transScale);
-
-        double endSamples = (endMs / 1000.0) * sourceSampleRate;
-        if (replacedSrcPos >= endSamples || replacedSrcPos >= static_cast<double>(maxSamples - 1))
+        if (readPos >= effectiveEnd || readPos >= maxSamples - 1)
             return 0.0f;
 
-        if (replacedSrcPos < 0.0) replacedSrcPos = 0.0;
+        int index0 = static_cast<int>(readPos);
+        int index1 = std::min(index0 + 1, maxSamples - 1);
+        float frac = static_cast<float>(readPos - index0);
 
-        // --- Start/End フェードイン・フェードアウト計算 ---
+        // フェードゲイン計算
+        double fInSmpl = (static_cast<double>(fadeInMs.load(std::memory_order_relaxed)) / 1000.0) * sourceSampleRate;
+        double fOutSmpl = (static_cast<double>(fadeOutMs.load(std::memory_order_relaxed)) / 1000.0) * sourceSampleRate;
+
         float fadeGain = 1.0f;
-        double currentTimelineMs = (replacedSrcPos / sourceSampleRate) * 1000.0;
-        double fromStartMs = currentTimelineMs - startMs;
-        double toEndMs = endMs - currentTimelineMs;
-
-        float fInMs = fadeInMs.load(std::memory_order_relaxed);
-        float fOutMs = fadeOutMs.load(std::memory_order_relaxed);
-
-        if (fInMs > 0.001f && fromStartMs < fInMs)
+        if (fInSmpl > 1.0 && clickReadIndex < fInSmpl)
         {
-            float prog = static_cast<float>(fromStartMs / fInMs);
+            float prog = static_cast<float>(clickReadIndex / fInSmpl);
             fadeGain *= calculateFadeGain(prog, fadeInTension.load(std::memory_order_relaxed));
         }
-
-        if (fOutMs > 0.001f && toEndMs < fOutMs)
+        double remSmpl = effectiveEnd - readPos;
+        if (fOutSmpl > 1.0 && remSmpl < fOutSmpl)
         {
-            float prog = static_cast<float>(toEndMs / fOutMs);
+            float prog = static_cast<float>(remSmpl / fOutSmpl);
             fadeGain *= calculateFadeGain(prog, fadeOutTension.load(std::memory_order_relaxed));
         }
 
-        int idx0 = static_cast<int>(replacedSrcPos);
-        int idx1 = std::min(idx0 + 1, maxSamples - 1);
-        float frac = static_cast<float>(replacedSrcPos - idx0);
-
         const float* src = replacedBuffer.getReadPointer(0);
-        return (src[idx0] + frac * (src[idx1] - src[idx0])) * wClick * fadeGain;
+        float raw = (src[index0] * (1.0f - frac) + src[index1] * frac) * transScale * fadeGain;
+        return raw;
     }
 
 private:
     juce::CriticalSection lock;
     juce::AudioBuffer<float> replacedBuffer;
     double sourceSampleRate = 44100.0;
-    std::atomic<float> startOffsetMs{ 0.0f };
-    std::atomic<float> endOffsetMs{ 0.0f };
-    std::atomic<float> fadeInMs{ 0.0f };
-    std::atomic<float> fadeOutMs{ 0.0f };
-    std::atomic<float> fadeInTension{ 0.0f };
-    std::atomic<float> fadeOutTension{ 0.0f };
-    std::atomic<bool> hasSample{ false };
+
+    std::atomic<bool> hasSample { false };
+    std::atomic<float> startOffsetMs { 0.0f };
+    std::atomic<float> endOffsetMs { 0.0f };
+    std::atomic<float> pitchSemitones { 0.0f };
+    std::atomic<float> mixGainDb { 0.0f };
+    std::atomic<float> clickHoldMs { 10.0f };
+
+    std::atomic<float> fadeInMs { 0.0f };
+    std::atomic<float> fadeOutMs { 0.0f };
+    std::atomic<float> fadeInTension { 0.0f };
+    std::atomic<float> fadeOutTension { 0.0f };
 };

@@ -92,8 +92,10 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
 
     // --- 2段目: FullMixPreview ---
     waveFullMix.setLaneProperties(audioProcessor, 0);
+    waveFullMix.setSelected(true); // 初期選択
     waveFullMix.onFocusClicked = [this] {
         fxRackView.setTargetRoute(TargetRoute::FullMix);
+        waveFullMix.setSelected(true);
         transientLane.setSelected(false);
         tonalLane.setSelected(false);
     };
@@ -124,6 +126,7 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     // --- 3段目: TransientView & TonalView ---
     transientLane.onSelectLane = [this] {
         fxRackView.setTargetRoute(TargetRoute::Transient);
+        waveFullMix.setSelected(false);
         transientLane.setSelected(true);
         tonalLane.setSelected(false);
     };
@@ -137,6 +140,7 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
 
     tonalLane.onSelectLane = [this] {
         fxRackView.setTargetRoute(TargetRoute::Tonal);
+        waveFullMix.setSelected(false);
         transientLane.setSelected(false);
         tonalLane.setSelected(true);
     };
@@ -150,6 +154,7 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
 
     // --- 4段目: Card FX Rack ---
     fxRackView.onRouteTabChanged = [this](TargetRoute route) {
+        waveFullMix.setSelected(route == TargetRoute::FullMix);
         transientLane.setSelected(route == TargetRoute::Transient);
         tonalLane.setSelected(route == TargetRoute::Tonal);
     };
