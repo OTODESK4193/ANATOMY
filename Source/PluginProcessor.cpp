@@ -872,301 +872,298 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     if (currentMs < clickCurve && clickCurve > 0.0f)
     {
         float progress = currentMs / clickCurve;
-        float angle = progress * juce::MathConstants<float>::halfPi;
-        transFade = std::cos(angle);
-        tonalFade = std::sin(angle);
+            float angle = progress * juce::MathConstants<float>::halfPi;
+            transFade = std::cos(angle);
+            tonalFade = std::sin(angle);
+        }
+
+        float finalClick = shiftedClick * voice.triggerVelocity * voice.releaseGain * transFade;
+        float finalSustain = shiftedSustain * voice.triggerVelocity * voice.releaseGain * tonalFade * tonalEndFade;
+
+        outTransL = finalClick; outTransR = finalClick;
+        outTonalL = finalSustain; outTonalR = finalSustain;
     }
 
-    float finalClick = shiftedClick * voice.triggerVelocity * voice.releaseGain * transFade;
-    float finalSustain = shiftedSustain * voice.triggerVelocity * voice.releaseGain * tonalFade * tonalEndFade;
-
-    outTransL = finalClick; outTransR = finalClick;
-    outTonalL = finalSustain; outTonalR = finalSustain;
-}
-
-int AnatomyAudioProcessor::snapToZeroCrossing(const juce::AudioBuffer<float>& buffer, int targetSample) noexcept
-{
-    const int totalSamples = buffer.getNumSamples();
-    if (totalSamples <= 0 || buffer.getNumChannels() <= 0) return targetSample;
-
-    const float* data = buffer.getReadPointer(0);
-    int bestSample = targetSample;
-    float minAbsVal = 1e9f;
-    const int searchRange = 150;
-
-    int startRange = std::max(0, targetSample - searchRange);
-    int endRange = std::min(totalSamples - 1, targetSample + searchRange);
-
-    for (int s = startRange; s <= endRange; ++s)
+    void AnatomyAudioProcessor::setOffsetsFromUI(int laneIndex, float startMs, float endMs) noexcept
     {
-        float absVal = std::abs(data[s]);
-        if (absVal < minAbsVal)
+        const juce::ScopedLock sl(lock);
+
+        if (laneIndex == 0)
         {
-            minAbsVal = absVal;
-            bestSample = s;
+            fullMixStartOffsetMs = startMs;
+            fullMixEndOffsetMs = endMs;
+        }
+        else if (laneIndex == 1)
+        {
+            transStartOffsetMs = startMs;
+            transEndOffsetMs = endMs;
+            customTransientReplacer.setStartOffsetMs(startMs);
+            customTransientReplacer.setEndOffsetMs(endMs);
+        }
+        else if (laneIndex == 2)
+        {
+            tonalStartOffsetMs = startMs;
+            tonalEndOffsetMs = endMs;
+            customTonalReplacer.setStartOffsetMs(startMs);
+            customTonalReplacer.setEndOffsetMs(endMs);
+        }
+        offlineMixRenderer.triggerRender();
+    }
+
+    int AnatomyAudioProcessor::snapToZeroCrossing(const juce::AudioBuffer<float>& buffer, int targetSample) noexcept
+    {
+        const int totalSamples = buffer.getNumSamples();
+        if (totalSamples <= 0 || buffer.getNumChannels() <= 0) return targetSample;
+
+        const float* data = buffer.getReadPointer(0);
+        int bestSample = targetSample;
+        float minAbsVal = 1e9f;
+        const int searchRange = 150;
+
+        int startRange = std::max(0, targetSample - searchRange);
+        int endRange = std::min(totalSamples - 1, targetSample + searchRange);
+
+        for (int s = startRange; s <= endRange; ++s)
+        {
+            float absVal = std::abs(data[s]);
+            if (absVal < minAbsVal)
+            {
+                minAbsVal = absVal;
+                bestSample = s;
+            }
+        }
+        return bestSample;
+    }
+
+    void AnatomyAudioProcessor::parameterChanged(const juce::String&, float)
+    {
+        needsReanalysis.store(true, std::memory_order_release);
+        offlineMixRenderer.triggerRender();
+    }
+
+    void AnatomyAudioProcessor::setFadeFromUI(bool isTransient, float inMs, float outMs, float inTension, float outTension) noexcept
+    {
+        if (isTransient)
+        {
+            customTransientReplacer.setFadeInMs(inMs);
+            customTransientReplacer.setFadeOutMs(outMs);
+            customTransientReplacer.setFadeInTension(inTension);
+            customTransientReplacer.setFadeOutTension(outTension);
+        }
+        else
+        {
+            customTonalReplacer.setFadeInMs(inMs);
+            customTonalReplacer.setFadeOutMs(outMs);
+            customTonalReplacer.setFadeInTension(inTension);
+            customTonalReplacer.setFadeOutTension(outTension);
+        }
+        offlineMixRenderer.triggerRender();
+    }
+
+    void AnatomyAudioProcessor::getFadeForUI(bool isTransient, float& inMs, float& outMs, float& inTension, float& outTension) const noexcept
+    {
+        if (isTransient)
+        {
+            inMs = customTransientReplacer.getFadeInMs();
+            outMs = customTransientReplacer.getFadeOutMs();
+            inTension = customTransientReplacer.getFadeInTension();
+            outTension = customTransientReplacer.getFadeOutTension();
+        }
+        else
+        {
+            inMs = customTonalReplacer.getFadeInMs();
+            outMs = customTonalReplacer.getFadeOutMs();
+            inTension = customTonalReplacer.getFadeInTension();
+            outTension = customTonalReplacer.getFadeOutTension();
         }
     }
-    return bestSample;
-}
 
-void AnatomyAudioProcessor::parameterChanged(const juce::String&, float)
-{
-    needsReanalysis.store(true, std::memory_order_release);
-    offlineMixRenderer.triggerRender();
-}
-
-void AnatomyAudioProcessor::setOffsetsFromUI(bool isTransient, float startMs, float endMs) noexcept
-{
-    const juce::ScopedLock sl(lock);
-
-    if (isTransient)
+    void AnatomyAudioProcessor::setLaneSolo(bool isTransient, bool isSolo)
     {
-        transStartOffsetMs = startMs;
-        transEndOffsetMs = endMs;
-        customTransientReplacer.setStartOffsetMs(startMs);
-        customTransientReplacer.setEndOffsetMs(endMs);
-    }
-    else
-    {
-        tonalStartOffsetMs = startMs;
-        tonalEndOffsetMs = endMs;
-        customTonalReplacer.setStartOffsetMs(startMs);
-        customTonalReplacer.setEndOffsetMs(endMs);
-    }
-    offlineMixRenderer.triggerRender();
-}
-
-void AnatomyAudioProcessor::setFadeFromUI(bool isTransient, float inMs, float outMs, float inTension, float outTension) noexcept
-{
-    if (isTransient)
-    {
-        customTransientReplacer.setFadeInMs(inMs);
-        customTransientReplacer.setFadeOutMs(outMs);
-        customTransientReplacer.setFadeInTension(inTension);
-        customTransientReplacer.setFadeOutTension(outTension);
-    }
-    else
-    {
-        customTonalReplacer.setFadeInMs(inMs);
-        customTonalReplacer.setFadeOutMs(outMs);
-        customTonalReplacer.setFadeInTension(inTension);
-        customTonalReplacer.setFadeOutTension(outTension);
-    }
-    offlineMixRenderer.triggerRender();
-}
-
-void AnatomyAudioProcessor::getFadeForUI(bool isTransient, float& inMs, float& outMs, float& inTension, float& outTension) const noexcept
-{
-    if (isTransient)
-    {
-        inMs = customTransientReplacer.getFadeInMs();
-        outMs = customTransientReplacer.getFadeOutMs();
-        inTension = customTransientReplacer.getFadeInTension();
-        outTension = customTransientReplacer.getFadeOutTension();
-    }
-    else
-    {
-        inMs = customTonalReplacer.getFadeInMs();
-        outMs = customTonalReplacer.getFadeOutMs();
-        inTension = customTonalReplacer.getFadeInTension();
-        outTension = customTonalReplacer.getFadeOutTension();
-    }
-}
-
-void AnatomyAudioProcessor::setLaneSolo(bool isTransient, bool isSolo)
-{
-    int current = getSoloMode();
-    if (isTransient)
-    {
-        if (isSolo) setSoloMode(current == 2 ? 0 : 1);
-        else        setSoloMode(current == 1 ? 0 : current);
-    }
-    else
-    {
-        if (isSolo) setSoloMode(current == 1 ? 0 : 2);
-        else        setSoloMode(current == 2 ? 0 : current);
-    }
-}
-
-bool AnatomyAudioProcessor::isLaneSolo(bool isTransient) const noexcept
-{
-    int m = getSoloMode();
-    return isTransient ? (m == 1) : (m == 2);
-}
-
-void AnatomyAudioProcessor::storeCustomSampleFromUI(bool isTransient, const juce::AudioBuffer<float>& newBuffer, double sr) noexcept
-{
-    const juce::ScopedLock sl(lock);
-    if (isTransient)
-    {
-        customTransBuffer.makeCopyOf(newBuffer);
-        float durationMs = (static_cast<float>(newBuffer.getNumSamples()) / static_cast<float>(sr)) * 1000.0f;
-        transStartOffsetMs = 0.0f;
-        transEndOffsetMs = durationMs;
-        customTransientReplacer.setStartOffsetMs(0.0f);
-        customTransientReplacer.setEndOffsetMs(durationMs);
-    }
-    else
-    {
-        customTonalBuffer.makeCopyOf(newBuffer);
-        float durationMs = (static_cast<float>(newBuffer.getNumSamples()) / static_cast<float>(sr)) * 1000.0f;
-        tonalStartOffsetMs = 0.0f;
-        tonalEndOffsetMs = durationMs;
-        customTonalReplacer.setStartOffsetMs(0.0f);
-        customTonalReplacer.setEndOffsetMs(durationMs);
-    }
-    fileSampleRate = sr;
-    updateActiveSampleData();
-    offlineMixRenderer.triggerRender();
-}
-
-void AnatomyAudioProcessor::clearCustomSampleFromUI(bool isTransient) noexcept
-{
-    const juce::ScopedLock sl(lock);
-    if (isTransient) customTransBuffer.setSize(0, 0);
-    else             customTonalBuffer.setSize(0, 0);
-
-    const juce::AudioBuffer<float>& activeTrans = (customTransBuffer.getNumSamples() > 0) ? customTransBuffer : transBufferThread;
-    const juce::AudioBuffer<float>& activeTonal = (customTonalBuffer.getNumSamples() > 0) ? customTonalBuffer : tonalBufferThread;
-
-    if (isTransient)
-    {
-        transStartOffsetMs = 0.0f;
-        transEndOffsetMs = (static_cast<float>(activeTrans.getNumSamples()) / static_cast<float>(fileSampleRate)) * 1000.0f;
-        customTransientReplacer.setStartOffsetMs(0.0f);
-        customTransientReplacer.setEndOffsetMs(transEndOffsetMs);
-    }
-    else
-    {
-        tonalStartOffsetMs = 0.0f;
-        tonalEndOffsetMs = (static_cast<float>(activeTonal.getNumSamples()) / static_cast<float>(fileSampleRate)) * 1000.0f;
-        customTonalReplacer.setStartOffsetMs(0.0f);
-        customTonalReplacer.setEndOffsetMs(tonalEndOffsetMs);
-    }
-
-    updateActiveSampleData();
-    offlineMixRenderer.triggerRender();
-}
-
-void AnatomyAudioProcessor::startSeparation(const juce::AudioBuffer<float>& inputAudio, double sourceSampleRate)
-{
-    cleanUpGarbageBin();
-    if (isThreadRunning()) stopThread(2000);
-    {
-        const juce::ScopedLock sl(lock);
-        if (&rawInputBuffer != &inputAudio) rawInputBuffer.makeCopyOf(inputAudio);
-        inputBufferThread.makeCopyOf(inputAudio);
-        fileSampleRate = sourceSampleRate;
-        customTransBuffer.setSize(0, 0);
-        customTonalBuffer.setSize(0, 0);
-
-        transStartOffsetMs = 0.0f;
-        transEndOffsetMs = 0.0f;
-        tonalStartOffsetMs = 0.0f;
-        tonalEndOffsetMs = 0.0f;
-    }
-    needsReanalysis.store(true, std::memory_order_release);
-}
-
-void AnatomyAudioProcessor::handleAsyncReanalysis()
-{
-    if (isAnalysisFinished.exchange(false, std::memory_order_acq_rel)) updateActiveSampleData();
-    if (!isThreadRunning()) cleanUpGarbageBin();
-    if (!needsReanalysis.load(std::memory_order_acquire)) return;
-
-    if (isThreadRunning()) signalThreadShouldExit();
-    else
-    {
-        const juce::ScopedLock sl(lock);
-        if (rawInputBuffer.getNumSamples() > 0)
+        int current = getSoloMode();
+        if (isTransient)
         {
-            inputBufferThread.makeCopyOf(rawInputBuffer);
-            needsReanalysis.store(false, std::memory_order_release);
-            startThread();
+            if (isSolo) setSoloMode(current == 2 ? 0 : 1);
+            else        setSoloMode(current == 1 ? 0 : current);
         }
-        else needsReanalysis.store(false, std::memory_order_release);
+        else
+        {
+            if (isSolo) setSoloMode(current == 1 ? 0 : 2);
+            else        setSoloMode(current == 2 ? 0 : current);
+        }
     }
-}
 
-void AnatomyAudioProcessor::run()
-{
-    juce::AudioBuffer<float> localTrans, localTonal;
-    float clickHold = apvts.getRawParameterValue("clickLength")->load();
-    float sustainFade = apvts.getRawParameterValue("clickCurve")->load();
+    bool AnatomyAudioProcessor::isLaneSolo(bool isTransient) const noexcept
+    {
+        int m = getSoloMode();
+        return isTransient ? (m == 1) : (m == 2);
+    }
 
-    // 【核心修正】分離エンジンには fileSampleRate を使用する。
-    // prepare() は prepareToPlay() から hostSampleRate で呼ばれるが、
-    // inputBufferThread のサンプルデータは fileSampleRate で記録されている。
-    // hostSR と fileSR が異なる場合（例: host=48000, file=44100）、
-    // cos² クロスフェード境界が processBlock のゲート位置とずれ、
-    // trans+tonal ≠ input となるエネルギー欠損区間が発生する。
-    separator.prepare(fileSampleRate);
-    separator.performSeparation(inputBufferThread, localTrans, localTonal, clickHold, sustainFade, this);
-    if (threadShouldExit()) return;
-
+    void AnatomyAudioProcessor::storeCustomSampleFromUI(bool isTransient, const juce::AudioBuffer<float>& newBuffer, double sr) noexcept
     {
         const juce::ScopedLock sl(lock);
-        transBufferThread.makeCopyOf(localTrans);
-        tonalBufferThread.makeCopyOf(localTonal);
-        transBufferUI.makeCopyOf(localTrans);
-        tonalBufferUI.makeCopyOf(localTonal);
-
-        double durationMs = (static_cast<double>(transBufferThread.getNumSamples()) / fileSampleRate) * 1000.0;
-
-        if (transEndOffsetMs <= 0.0f)
+        if (isTransient)
         {
+            customTransBuffer.makeCopyOf(newBuffer);
+            float durationMs = (static_cast<float>(newBuffer.getNumSamples()) / static_cast<float>(sr)) * 1000.0f;
             transStartOffsetMs = 0.0f;
-            transEndOffsetMs = static_cast<float>(durationMs);
+            transEndOffsetMs = durationMs;
+            customTransientReplacer.setStartOffsetMs(0.0f);
+            customTransientReplacer.setEndOffsetMs(durationMs);
         }
-        if (tonalEndOffsetMs <= 0.0f)
+        else
         {
+            customTonalBuffer.makeCopyOf(newBuffer);
+            float durationMs = (static_cast<float>(newBuffer.getNumSamples()) / static_cast<float>(sr)) * 1000.0f;
             tonalStartOffsetMs = 0.0f;
-            tonalEndOffsetMs = static_cast<float>(durationMs);
+            tonalEndOffsetMs = durationMs;
+            customTonalReplacer.setStartOffsetMs(0.0f);
+            customTonalReplacer.setEndOffsetMs(durationMs);
         }
-    }
-    isAnalysisFinished.store(true, std::memory_order_release);
-
-    offlineMixRenderer.triggerRender();
-}
-
-void AnatomyAudioProcessor::setSoloMode(int mode)
-{
-    if (currentSoloMode.load(std::memory_order_acquire) != mode)
-    {
-        currentSoloMode.store(mode, std::memory_order_release);
+        fileSampleRate = sr;
         updateActiveSampleData();
         offlineMixRenderer.triggerRender();
     }
-}
 
-void AnatomyAudioProcessor::updateActiveSampleData()
-{
-    const juce::AudioBuffer<float>& transSrc = (customTransBuffer.getNumSamples() > 0) ? customTransBuffer : transBufferThread;
-    const juce::AudioBuffer<float>& tonalSrc = (customTonalBuffer.getNumSamples() > 0) ? customTonalBuffer : tonalBufferThread;
-
-    const int transSamples = transSrc.getNumSamples();
-    const int tonalSamples = tonalSrc.getNumSamples();
-    const int maxSamples = std::max(transSamples, tonalSamples);
-
-    if (maxSamples == 0) return;
-
-    juce::AudioBuffer<float> activeClick(1, maxSamples);
-    juce::AudioBuffer<float> activeSustain(1, maxSamples);
-    activeClick.clear(); activeSustain.clear();
-
-    if (currentSoloMode == 0)
+    void AnatomyAudioProcessor::clearCustomSampleFromUI(bool isTransient) noexcept
     {
-        if (transSamples > 0) activeClick.copyFrom(0, 0, transSrc, 0, 0, transSamples);
-        if (tonalSamples > 0) activeSustain.copyFrom(0, 0, tonalSrc, 0, 0, tonalSamples);
+        const juce::ScopedLock sl(lock);
+        if (isTransient) customTransBuffer.setSize(0, 0);
+        else             customTonalBuffer.setSize(0, 0);
+
+        const juce::AudioBuffer<float>& activeTrans = (customTransBuffer.getNumSamples() > 0) ? customTransBuffer : transBufferThread;
+        const juce::AudioBuffer<float>& activeTonal = (customTonalBuffer.getNumSamples() > 0) ? customTonalBuffer : tonalBufferThread;
+
+        if (isTransient)
+        {
+            transStartOffsetMs = 0.0f;
+            transEndOffsetMs = (static_cast<float>(activeTrans.getNumSamples()) / static_cast<float>(fileSampleRate)) * 1000.0f;
+            customTransientReplacer.setStartOffsetMs(0.0f);
+            customTransientReplacer.setEndOffsetMs(transEndOffsetMs);
+        }
+        else
+        {
+            tonalStartOffsetMs = 0.0f;
+            tonalEndOffsetMs = (static_cast<float>(activeTonal.getNumSamples()) / static_cast<float>(fileSampleRate)) * 1000.0f;
+            customTonalReplacer.setStartOffsetMs(0.0f);
+            customTonalReplacer.setEndOffsetMs(tonalEndOffsetMs);
+        }
+
+        updateActiveSampleData();
+        offlineMixRenderer.triggerRender();
     }
-    else if (currentSoloMode == 1)
+
+    void AnatomyAudioProcessor::startSeparation(const juce::AudioBuffer<float>& inputAudio, double sourceSampleRate)
     {
-        if (transSamples > 0) activeClick.copyFrom(0, 0, transSrc, 0, 0, transSamples);
+        cleanUpGarbageBin();
+        if (isThreadRunning()) stopThread(2000);
+        {
+            const juce::ScopedLock sl(lock);
+            if (&rawInputBuffer != &inputAudio) rawInputBuffer.makeCopyOf(inputAudio);
+            inputBufferThread.makeCopyOf(inputAudio);
+            fileSampleRate = sourceSampleRate;
+            customTransBuffer.setSize(0, 0);
+            customTonalBuffer.setSize(0, 0);
+
+            fullMixStartOffsetMs = 0.0f;
+            fullMixEndOffsetMs = 0.0f;
+            transStartOffsetMs = 0.0f;
+            transEndOffsetMs = 0.0f;
+            tonalStartOffsetMs = 0.0f;
+            tonalEndOffsetMs = 0.0f;
+        }
+        needsReanalysis.store(true, std::memory_order_release);
     }
-    else if (currentSoloMode == 2)
+
+    void AnatomyAudioProcessor::handleAsyncReanalysis()
     {
-        if (tonalSamples > 0) activeSustain.copyFrom(0, 0, tonalSrc, 0, 0, tonalSamples);
+        if (isAnalysisFinished.exchange(false, std::memory_order_acq_rel)) updateActiveSampleData();
+        if (!isThreadRunning()) cleanUpGarbageBin();
+        if (!needsReanalysis.load(std::memory_order_acquire)) return;
+
+        if (isThreadRunning()) signalThreadShouldExit();
+        else
+        {
+            const juce::ScopedLock sl(lock);
+            if (rawInputBuffer.getNumSamples() > 0)
+            {
+                inputBufferThread.makeCopyOf(rawInputBuffer);
+                needsReanalysis.store(false, std::memory_order_release);
+                startThread();
+            }
+            else needsReanalysis.store(false, std::memory_order_release);
+        }
     }
+
+    void AnatomyAudioProcessor::run()
+    {
+        juce::AudioBuffer<float> localTrans, localTonal;
+        float clickHold = apvts.getRawParameterValue("clickLength")->load();
+        float sustainFade = apvts.getRawParameterValue("clickCurve")->load();
+
+        separator.prepare(fileSampleRate);
+        separator.performSeparation(inputBufferThread, localTrans, localTonal, clickHold, sustainFade, this);
+        if (threadShouldExit()) return;
+
+        {
+            const juce::ScopedLock sl(lock);
+            transBufferThread.makeCopyOf(localTrans);
+            tonalBufferThread.makeCopyOf(localTonal);
+            transBufferUI.makeCopyOf(localTrans);
+            tonalBufferUI.makeCopyOf(localTonal);
+
+            double durationMs = (static_cast<double>(transBufferThread.getNumSamples()) / fileSampleRate) * 1000.0;
+
+            fullMixStartOffsetMs = 0.0f;
+            fullMixEndOffsetMs = static_cast<float>(durationMs);
+            transStartOffsetMs = 0.0f;
+            transEndOffsetMs = static_cast<float>(durationMs);
+            tonalStartOffsetMs = 0.0f;
+            tonalEndOffsetMs = static_cast<float>(durationMs);
+        }
+        isAnalysisFinished.store(true, std::memory_order_release);
+
+        offlineMixRenderer.triggerRender();
+    }
+
+    void AnatomyAudioProcessor::setSoloMode(int mode)
+    {
+        if (currentSoloMode.load(std::memory_order_acquire) != mode)
+        {
+            currentSoloMode.store(mode, std::memory_order_release);
+            updateActiveSampleData();
+            offlineMixRenderer.triggerRender();
+        }
+    }
+
+    void AnatomyAudioProcessor::updateActiveSampleData()
+    {
+        const juce::AudioBuffer<float>& transSrc = (customTransBuffer.getNumSamples() > 0) ? customTransBuffer : transBufferThread;
+        const juce::AudioBuffer<float>& tonalSrc = (customTonalBuffer.getNumSamples() > 0) ? customTonalBuffer : tonalBufferThread;
+
+        const int transSamples = transSrc.getNumSamples();
+        const int tonalSamples = tonalSrc.getNumSamples();
+        const int maxSamples = std::max(transSamples, tonalSamples);
+
+        if (maxSamples == 0) return;
+
+        juce::AudioBuffer<float> activeClick(1, maxSamples);
+        juce::AudioBuffer<float> activeSustain(1, maxSamples);
+        activeClick.clear(); activeSustain.clear();
+
+        if (currentSoloMode == 0)
+        {
+            if (transSamples > 0) activeClick.copyFrom(0, 0, transSrc, 0, 0, transSamples);
+            if (tonalSamples > 0) activeSustain.copyFrom(0, 0, tonalSrc, 0, 0, tonalSamples);
+        }
+        else if (currentSoloMode == 1)
+        {
+            if (transSamples > 0) activeClick.copyFrom(0, 0, transSrc, 0, 0, transSamples);
+        }
+        else if (currentSoloMode == 2)
+        {
+            if (tonalSamples > 0) activeSustain.copyFrom(0, 0, tonalSrc, 0, 0, tonalSamples);
+        }
 
     SharedSampleData* newData = new SharedSampleData(std::move(activeClick), std::move(activeSustain), fileSampleRate);
     SharedSampleData* oldData = masterSampleData.exchange(newData, std::memory_order_acq_rel);
@@ -1178,20 +1175,28 @@ void AnatomyAudioProcessor::cleanUpGarbageBin()
     auto it = garbageBin.begin();
     while (it != garbageBin.end())
     {
-        SharedSampleData* oldData = *it; bool isStillReferencedByVoice = false;
+        SharedSampleData* oldData = *it;
+        bool isStillReferencedByVoice = false;
         if (activeVoice.isActive && activeVoice.sampleData == oldData) isStillReferencedByVoice = true;
-        for (int i = 0; i < maxReleasingVoices; ++i) { if (releasingVoices[i].isActive && releasingVoices[i].sampleData == oldData) isStillReferencedByVoice = true; }
+        for (int i = 0; i < maxReleasingVoices; ++i)
+        {
+            if (releasingVoices[i].isActive && releasingVoices[i].sampleData == oldData) isStillReferencedByVoice = true;
+        }
 
-        if (!isStillReferencedByVoice) { if (oldData != nullptr) delete oldData; it = garbageBin.erase(it); }
+        if (!isStillReferencedByVoice)
+        {
+            if (oldData != nullptr) delete oldData;
+            it = garbageBin.erase(it);
+        }
         else ++it;
     }
-    for (auto* oldFxSnapshot : fxGarbageBin) if (oldFxSnapshot != nullptr) delete oldFxSnapshot;
+    for (auto* oldFxSnapshot : fxGarbageBin)
+        if (oldFxSnapshot != nullptr) delete oldFxSnapshot;
     fxGarbageBin.clear();
 }
 
 void AnatomyAudioProcessor::flushPendingExports()
 {
-    // メッセージスレッドから呼ばれる。PendingWrite状態のレーンをWAVに書き出す。
     for (int l = 0; l < 3; ++l)
     {
         if (ExportRecordingCore::lanes[l].state.load() != ExportRecordingCore::State::PendingWrite)
@@ -1226,7 +1231,6 @@ void AnatomyAudioProcessor::flushPendingExports()
 
 juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
 {
-    // laneIndex: 0 = FullMix, 1 = Transient, 2 = Tonal
     juce::AudioBuffer<float> exportBuf;
     double sr = (fileSampleRate > 0.0) ? fileSampleRate : 44100.0;
 
@@ -1310,22 +1314,18 @@ void OfflineMixRenderer::executeRender()
                 if (srcIdx < maxSamples) dest[s] = src[static_cast<int>(srcIdx)];
             }
         }
-        };
+    };
     applyPitch(workTrans, transPitch);
     applyPitch(workTonal, tonalPitch);
-
-    // ⚠️ RACE CONDITION FIX:
-    // OfflineMixRenderer（バックグラウンドスレッド）と processBlock（オーディオスレッド）が
-    // 同一のエフェクトインスタンス（OTT_Multibandの StateVariableTPTFilter 等）を同時に呼ぶと
-    // フィルター内部ステートが競合し、フィルターが発振して爆音を引き起こす。
-    // プレビュー波形はドライ信号（HPSS分離後）を表示する。分離品質の確認として十分な情報を提供。
-    // processor.transientChain.process(workTrans);  // DISABLED: スレッド競合→爆音
-    // processor.tonalChain.process(workTonal);      // DISABLED: スレッド競合→爆音
 
     float transGain = std::pow(10.0f, processor.apvts.getRawParameterValue("transMixGain")->load() / 20.0f);
     float tonalGain = std::pow(10.0f, processor.apvts.getRawParameterValue("tonalMixGain")->load() / 20.0f);
 
     juce::AudioBuffer<float> outputMix(2, maxSamples);
+    juce::AudioBuffer<float> outTransRendered(2, maxSamples);
+    juce::AudioBuffer<float> outTonalRendered(2, maxSamples);
+    outTransRendered.clear();
+    outTonalRendered.clear();
     std::vector<float> ratios(maxSamples, 0.5f);
 
     float transStart = processor.transStartOffsetMs;
@@ -1336,15 +1336,24 @@ void OfflineMixRenderer::executeRender()
 
     int tStartSmp = static_cast<int>((transStart / 1000.0) * sr);
     int tEndSmp = static_cast<int>((transEnd / 1000.0) * sr);
-    // cos²フェード区間を含めた完全なトランジェント持続サンプル数
     float sustainFade = processor.apvts.getRawParameterValue("clickCurve")->load();
     int tHoldSmp = static_cast<int>(((clickHold + sustainFade) / 1000.0) * sr);
     int oStartSmp = static_cast<int>((tonalStart / 1000.0) * sr);
     int oEndSmp = static_cast<int>((tonalEnd / 1000.0) * sr);
 
-    // tonalDelay: 正=後ろにずらす → 読み位置を前にずらす(負のオフセット)
     float tonalDelayMs = processor.apvts.getRawParameterValue("tonalDelay")->load();
     int tonalOffsetSmp = static_cast<int>(-(tonalDelayMs / 1000.0) * sr);
+
+    // フェード設定
+    float tInMs, tOutMs, tInTension, tOutTension;
+    processor.getFadeForUI(true, tInMs, tOutMs, tInTension, tOutTension);
+    int tInSmp = static_cast<int>((tInMs / 1000.0) * sr);
+    int tOutSmp = static_cast<int>((tOutMs / 1000.0) * sr);
+
+    float oInMs, oOutMs, oInTension, oOutTension;
+    processor.getFadeForUI(false, oInMs, oOutMs, oInTension, oOutTension);
+    int oInSmp = static_cast<int>((oInMs / 1000.0) * sr);
+    int oOutSmp = static_cast<int>((oOutMs / 1000.0) * sr);
 
     for (int s = 0; s < maxSamples; ++s)
     {
@@ -1356,26 +1365,34 @@ void OfflineMixRenderer::executeRender()
 
         if (s < tHoldSmp && exactClick < tEndSmp && exactClick < transSamples)
         {
-            tL = workTrans.getSample(0, exactClick) * transGain;
-            tR = workTrans.getSample(1, exactClick) * transGain;
+            float fGain = 1.0f;
+            if (tInSmp > 1 && s < tInSmp)
+                fGain *= calculateFadeGain(static_cast<float>(s) / static_cast<float>(tInSmp), tInTension);
+            int remT = tEndSmp - exactClick;
+            if (tOutSmp > 1 && remT < tOutSmp)
+                fGain *= calculateFadeGain(static_cast<float>(remT) / static_cast<float>(tOutSmp), tOutTension);
+
+            tL = workTrans.getSample(0, exactClick) * transGain * fGain;
+            tR = workTrans.getSample(1, exactClick) * transGain * fGain;
         }
+
         if (exactSustain >= 0 && exactSustain < oEndSmp && exactSustain < tonalSamples)
         {
-            oL = workTonal.getSample(0, exactSustain) * tonalGain;
-            oR = workTonal.getSample(1, exactSustain) * tonalGain;
+            float fGain = 1.0f;
+            if (oInSmp > 1 && s < oInSmp)
+                fGain *= calculateFadeGain(static_cast<float>(s) / static_cast<float>(oInSmp), oInTension);
+            int remO = oEndSmp - exactSustain;
+            if (oOutSmp > 1 && remO < oOutSmp)
+                fGain *= calculateFadeGain(static_cast<float>(remO) / static_cast<float>(oOutSmp), oOutTension);
 
-            // Tonal End フェードアウト（オフラインレンダラー）
-            constexpr float fadeMs = 50.0f;
-            int fadeSmp = static_cast<int>((fadeMs / 1000.0) * sr);
-            int fadeStart = oEndSmp - fadeSmp;
-            if (fadeSmp > 0 && exactSustain >= fadeStart)
-            {
-                float p = static_cast<float>(exactSustain - fadeStart) / static_cast<float>(fadeSmp);
-                float f = std::cos(p * juce::MathConstants<float>::halfPi);
-                f *= f;
-                oL *= f; oR *= f;
-            }
+            oL = workTonal.getSample(0, exactSustain) * tonalGain * fGain;
+            oR = workTonal.getSample(1, exactSustain) * tonalGain * fGain;
         }
+
+        outTransRendered.setSample(0, s, tL);
+        outTransRendered.setSample(1, s, tR);
+        outTonalRendered.setSample(0, s, oL);
+        outTonalRendered.setSample(1, s, oR);
 
         outputMix.setSample(0, s, tL + oL);
         outputMix.setSample(1, s, tR + oR);
@@ -1388,13 +1405,11 @@ void OfflineMixRenderer::executeRender()
         else               ratios[s] = 0.5f;
     }
 
-    // processor.fullMixChain.process(outputMix);  // DISABLED: スレッド競合→爆音（上記参照）
-
     {
         const juce::ScopedLock sl(renderLock);
         renderedFullMix.makeCopyOf(outputMix);
-        renderedTransient.makeCopyOf(workTrans);
-        renderedTonal.makeCopyOf(workTonal);
+        renderedTransient.makeCopyOf(outTransRendered);
+        renderedTonal.makeCopyOf(outTonalRendered);
         componentRatios = std::move(ratios);
     }
 }

@@ -228,7 +228,7 @@ void AnatomyAudioProcessorEditor::timerCallback()
     tonalLane.setWaveBuffer(tempTonal);
 
     double sr = audioProcessor.getFileSampleRate();
-    waveFullMix.setOffsets(0.0f, 0.0f, sr);
+    waveFullMix.setOffsets(audioProcessor.fullMixStartOffsetMs, audioProcessor.fullMixEndOffsetMs, sr);
     transientLane.setWaveOffsets(audioProcessor.transStartOffsetMs, audioProcessor.transEndOffsetMs, sr);
     tonalLane.setWaveOffsets(audioProcessor.tonalStartOffsetMs, audioProcessor.tonalEndOffsetMs, sr);
 

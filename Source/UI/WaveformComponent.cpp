@@ -381,8 +381,8 @@ void WaveformComponent::paint(juce::Graphics& g)
         }
     }
 
-    // 4. Start / End トリミングマスク ＆ フェードイン・フェードアウト描画（Transient / Tonal）
-    if (laneIndex != 0 && endOffsetMs > 0.0f)
+    // 4. Start / End トリミングマスク ＆ フェードイン・フェードアウト描画（全レーン共通）
+    if (endOffsetMs > 0.0f)
     {
         float startX = getXFromMs(startOffsetMs);
         float endX = getXFromMs(endOffsetMs);
@@ -654,7 +654,7 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
         return;
     }
 
-    if (laneIndex != 0 && endOffsetMs > 0.0f)
+    if (endOffsetMs > 0.0f)
     {
         float mx = static_cast<float>(e.x);
         float my = static_cast<float>(e.y);
@@ -885,7 +885,7 @@ void WaveformComponent::mouseUp(const juce::MouseEvent&)
 
 void WaveformComponent::mouseMove(const juce::MouseEvent& e)
 {
-    if (laneIndex == 0 || endOffsetMs <= 0.0f)
+    if (endOffsetMs <= 0.0f)
     {
         setMouseCursor(juce::MouseCursor::NormalCursor);
         return;
@@ -967,7 +967,7 @@ void WaveformComponent::mouseWheelMove(const juce::MouseEvent& e, const juce::Mo
 void WaveformComponent::synchronizeToTargetSliders(float startMs, float endMs, bool notifyProcessor)
 {
     if (processor == nullptr) return;
-    processor->setOffsetsFromUI((laneIndex == 1), startMs, endMs);
+    processor->setOffsetsFromUI(laneIndex, startMs, endMs);
 }
 
 void WaveformComponent::updateFadeToProcessor()

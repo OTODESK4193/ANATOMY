@@ -1,6 +1,6 @@
 // ==========================================
 // File: DragExportButton.h
-// DAW/デスクトップへ直接D&D可能なエクスポートボタン
+// DAW/デスクトップへ安全にD&D可能なエクスポートボタン (SafePointer & OLE 安全対応版)
 // ==========================================
 #pragma once
 
@@ -41,7 +41,7 @@ public:
     {
         juce::TextButton::mouseDrag(e);
 
-        if (!dragStarted && e.getDistanceFromDragStart() > 3)
+        if (!dragStarted && e.getDistanceFromDragStart() > 4)
         {
             dragStarted = true;
             if (getFile)
@@ -51,10 +51,21 @@ public:
                 {
                     juce::StringArray files;
                     files.add(wav.getFullPathName());
-                    if (auto* container = juce::DragAndDropContainer::findParentDragContainerFor(this))
-                    {
-                        container->performExternalDragDropOfFiles(files, false, this);
-                    }
+
+                    // OLE ドロップ完了後に安全に復帰するための SafePointer
+                    juce::Component::SafePointer<DragExportButton> safeThis(this);
+
+                    juce::DragAndDropContainer::performExternalDragDropOfFiles(
+                        files, false, nullptr,
+                        [safeThis]()
+                        {
+                            if (safeThis != nullptr)
+                                safeThis->dragStarted = false;
+                        });
+                }
+                else
+                {
+                    dragStarted = false;
                 }
             }
         }

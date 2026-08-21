@@ -107,6 +107,8 @@ public:
     BeforeAfterBypasser beforeAfterBypasser;
     OfflineMixRenderer offlineMixRenderer;
 
+    float fullMixStartOffsetMs = 0.0f;
+    float fullMixEndOffsetMs = 0.0f;
     float transStartOffsetMs = 0.0f;
     float transEndOffsetMs = 0.0f;
     float tonalStartOffsetMs = 0.0f;
@@ -114,7 +116,7 @@ public:
 
     void flushPendingExports();
     juce::File createTemporaryWavForExport(int laneIndex);
-    void setOffsetsFromUI(bool isTransient, float startMs, float endMs) noexcept;
+    void setOffsetsFromUI(int laneIndex, float startMs, float endMs) noexcept;
     void setFadeFromUI(bool isTransient, float inMs, float outMs, float inTension, float outTension) noexcept;
     void getFadeForUI(bool isTransient, float& inMs, float& outMs, float& inTension, float& outTension) const noexcept;
 
