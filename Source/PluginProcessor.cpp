@@ -882,6 +882,7 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     if (isBefore)
     {
         int soloMode = currentSoloMode.load(std::memory_order_acquire);
+        float voiceGain = voice.triggerVelocity * voice.releaseGain;
 
         // Before (Soloなし = 完全原音再生)
         if (soloMode == 0)
@@ -892,8 +893,8 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
                 float rawL = readInterpolated(rawInputBuffer, 0, rawIdx);
                 float rawR = rawInputBuffer.getNumChannels() > 1
                     ? readInterpolated(rawInputBuffer, 1, rawIdx) : rawL;
-                outTransL = rawL * 0.5f; outTransR = rawR * 0.5f;
-                outTonalL = rawL * 0.5f; outTonalR = rawR * 0.5f;
+                outTransL = rawL * 0.5f * voiceGain; outTransR = rawR * 0.5f * voiceGain;
+                outTonalL = rawL * 0.5f * voiceGain; outTonalR = rawR * 0.5f * voiceGain;
             }
         }
         else
@@ -901,9 +902,10 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
             // Solo+Before = オリジナル分離波形再生 (Customは無視)
             if (soloMode == 1 && transBufferThread.getNumSamples() > 0 && exactClickIdx >= 0.0 && exactClickIdx < static_cast<double>(transBufferThread.getNumSamples() - 1))
             {
-                outTransL = readInterpolated(transBufferThread, 0, exactClickIdx);
-                outTransR = transBufferThread.getNumChannels() > 1
-                    ? readInterpolated(transBufferThread, 1, exactClickIdx) : outTransL;
+                float l = readInterpolated(transBufferThread, 0, exactClickIdx);
+                float r = transBufferThread.getNumChannels() > 1 ? readInterpolated(transBufferThread, 1, exactClickIdx) : l;
+                outTransL = l * voiceGain;
+                outTransR = r * voiceGain;
             }
             if (soloMode == 2 && tonalBufferThread.getNumSamples() > 0 && exactSustainIdx >= 0.0 && exactSustainIdx < static_cast<double>(tonalBufferThread.getNumSamples() - 1))
             {
