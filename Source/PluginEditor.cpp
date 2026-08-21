@@ -72,24 +72,9 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
         repaint();
     };
 
-    soloFullToggle.setRadioGroupId(1001);
-    soloTransToggle.setRadioGroupId(1001);
-    soloTonalToggle.setRadioGroupId(1001);
-
-    soloFullToggle.setClickingTogglesState(true);
-    soloTransToggle.setClickingTogglesState(true);
-    soloTonalToggle.setClickingTogglesState(true);
-
-    soloFullToggle.onClick  = [this] { audioProcessor.setSoloMode(0); updateSoloButtonStates(); };
-    soloTransToggle.onClick = [this] { audioProcessor.setSoloMode(1); updateSoloButtonStates(); };
-    soloTonalToggle.onClick = [this] { audioProcessor.setSoloMode(2); updateSoloButtonStates(); };
-
     addAndMakeVisible(loadButton);
     addAndMakeVisible(resetButton);
     addAndMakeVisible(beforeToggle);
-    addAndMakeVisible(soloFullToggle);
-    addAndMakeVisible(soloTransToggle);
-    addAndMakeVisible(soloTonalToggle);
 
     // テーマ選択
     themeCombo.addItemList(AnatomyColors::getThemeNames(), 1);
@@ -100,9 +85,6 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
         AnatomyColors::setTheme(idx);
         lastThemeIndex = idx;
         beforeToggle.setAccentColour(AnatomyColors::peach);
-        soloFullToggle.setAccentColour(AnatomyColors::accentFull);
-        soloTransToggle.setAccentColour(AnatomyColors::accentTransient);
-        soloTonalToggle.setAccentColour(AnatomyColors::accentTonal);
         repaint();
         for (auto* child : getChildren()) child->repaint();
     };
@@ -148,6 +130,9 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     transientLane.onSampleChanged = [this] {
         audioProcessor.offlineMixRenderer.triggerRender();
     };
+    transientLane.onSoloChanged = [this] {
+        updateSoloButtonStates();
+    };
     addAndMakeVisible(transientLane);
 
     tonalLane.onSelectLane = [this] {
@@ -157,6 +142,9 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     };
     tonalLane.onSampleChanged = [this] {
         audioProcessor.offlineMixRenderer.triggerRender();
+    };
+    tonalLane.onSoloChanged = [this] {
+        updateSoloButtonStates();
     };
     addAndMakeVisible(tonalLane);
 
@@ -180,10 +168,8 @@ AnatomyAudioProcessorEditor::~AnatomyAudioProcessorEditor()
 
 void AnatomyAudioProcessorEditor::updateSoloButtonStates()
 {
-    int mode = audioProcessor.getSoloMode();
-    soloFullToggle.setToggleState(mode == 0, juce::dontSendNotification);
-    soloTransToggle.setToggleState(mode == 1, juce::dontSendNotification);
-    soloTonalToggle.setToggleState(mode == 2, juce::dontSendNotification);
+    transientLane.updateSoloState();
+    tonalLane.updateSoloState();
 }
 
 void AnatomyAudioProcessorEditor::resetAllParameters()
@@ -266,6 +252,15 @@ void AnatomyAudioProcessorEditor::timerCallback()
     waveFullMix.setOffsets(0.0f, 0.0f, sr);
     transientLane.setWaveOffsets(audioProcessor.transStartOffsetMs, audioProcessor.transEndOffsetMs, sr);
     tonalLane.setWaveOffsets(audioProcessor.tonalStartOffsetMs, audioProcessor.tonalEndOffsetMs, sr);
+
+    // フェード設定の反映
+    float tInMs, tOutMs, tInTension, tOutTension;
+    audioProcessor.getFadeForUI(true, tInMs, tOutMs, tInTension, tOutTension);
+    transientLane.setWaveFade(tInMs, tOutMs, tInTension, tOutTension);
+
+    float oInMs, oOutMs, oInTension, oOutTension;
+    audioProcessor.getFadeForUI(false, oInMs, oOutMs, oInTension, oOutTension);
+    tonalLane.setWaveFade(oInMs, oOutMs, oInTension, oOutTension);
 
     // HUD更新
     auto& rawBuf = audioProcessor.getRawInputBufferForUI();
@@ -367,7 +362,7 @@ void AnatomyAudioProcessorEditor::resized()
     hX -= 90;
     themeCombo.setBounds(hX, 16, 90, 24);
 
-    hX -= 10;
+    hX -= 12;
     hX -= 68;
     resetButton.setBounds(hX, 16, 68, 24);
 
@@ -375,21 +370,9 @@ void AnatomyAudioProcessorEditor::resized()
     hX -= 68;
     loadButton.setBounds(hX, 16, 68, 24);
 
-    hX -= 14;
-    hX -= 72;
-    beforeToggle.setBounds(hX, 16, 72, 24);
-
-    hX -= 10;
-    hX -= 64;
-    soloTonalToggle.setBounds(hX, 16, 64, 24);
-
-    hX -= 4;
-    hX -= 64;
-    soloTransToggle.setBounds(hX, 16, 64, 24);
-
-    hX -= 4;
-    hX -= 82;
-    soloFullToggle.setBounds(hX, 16, 82, 24);
+    hX -= 16;
+    hX -= 76;
+    beforeToggle.setBounds(hX, 16, 76, 24);
 
     // --- 2段目: FullMixPreview ---
     int curY = kHeaderH + 4;

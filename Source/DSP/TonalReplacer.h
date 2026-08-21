@@ -1,9 +1,11 @@
 #pragma once
+
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <vector>
 #include <cmath>
 #include <algorithm>
 #include <atomic>
+#include "TransientReplacer.h" // calculateFadeGain ヘルパーを共有
 
 class TonalReplacer
 {
@@ -19,6 +21,8 @@ public:
 
         float durationMs = (static_cast<float>(buffer.getNumSamples()) / static_cast<float>(sampleRate)) * 1000.0f;
         endOffsetMs.store(durationMs, std::memory_order_release);
+        fadeInMs.store(0.0f, std::memory_order_release);
+        fadeOutMs.store(0.0f, std::memory_order_release);
 
         hasSample.store(true, std::memory_order_release);
     }
@@ -35,6 +39,15 @@ public:
 
     void setStartOffsetMs(float offsetMs) noexcept { startOffsetMs.store(offsetMs, std::memory_order_relaxed); }
     void setEndOffsetMs(float offsetMs) noexcept { endOffsetMs.store(offsetMs, std::memory_order_relaxed); }
+    void setFadeInMs(float ms) noexcept { fadeInMs.store(ms, std::memory_order_relaxed); }
+    void setFadeOutMs(float ms) noexcept { fadeOutMs.store(ms, std::memory_order_relaxed); }
+    void setFadeInTension(float t) noexcept { fadeInTension.store(t, std::memory_order_relaxed); }
+    void setFadeOutTension(float t) noexcept { fadeOutTension.store(t, std::memory_order_relaxed); }
+
+    float getFadeInMs() const noexcept { return fadeInMs.load(std::memory_order_relaxed); }
+    float getFadeOutMs() const noexcept { return fadeOutMs.load(std::memory_order_relaxed); }
+    float getFadeInTension() const noexcept { return fadeInTension.load(std::memory_order_relaxed); }
+    float getFadeOutTension() const noexcept { return fadeOutTension.load(std::memory_order_relaxed); }
 
     void reset() noexcept { tapAPhase = 0.5f; }
 
@@ -89,16 +102,18 @@ public:
         float weightB = getHannWeight(tapBPhase);
 
         const float* src = replacedBuffer.getReadPointer(0);
-        double offsetSamples = (startOffsetMs.load(std::memory_order_relaxed) / 1000.0) * sourceSampleRate;
+        double startMs = startOffsetMs.load(std::memory_order_relaxed);
+        double endMs = endOffsetMs.load(std::memory_order_relaxed);
+        double offsetSamples = (startMs / 1000.0) * sourceSampleRate;
         double speedRatio = sourceSampleRate / hostSampleRate;
         double baseTimelinePos = offsetSamples + (n * speedRatio);
 
-        auto readSourceInterpolated = [src, maxSamples, this](double timelinePos, float delay) noexcept -> float
+        auto readSourceInterpolated = [src, maxSamples, this, endMs](double timelinePos, float delay) noexcept -> float
             {
                 double srcPos = timelinePos - delay;
 
                 // --- END位置によるクリップ判定 ---
-                double endSamples = (endOffsetMs.load(std::memory_order_relaxed) / 1000.0) * sourceSampleRate;
+                double endSamples = (endMs / 1000.0) * sourceSampleRate;
                 if (srcPos >= endSamples || srcPos >= static_cast<double>(maxSamples - 1))
                     return 0.0f;
 
@@ -114,7 +129,28 @@ public:
         float sampleA = readSourceInterpolated(baseTimelinePos, delayA);
         float sampleB = readSourceInterpolated(baseTimelinePos, delayB);
 
-        return ((sampleA * weightA) + (sampleB * weightB)) * wSustain;
+        // --- Start/End フェードイン・フェードアウト計算 ---
+        float fadeGain = 1.0f;
+        double currentTimelineMs = (baseTimelinePos / sourceSampleRate) * 1000.0;
+        double fromStartMs = currentTimelineMs - startMs;
+        double toEndMs = endMs - currentTimelineMs;
+
+        float fInMs = fadeInMs.load(std::memory_order_relaxed);
+        float fOutMs = fadeOutMs.load(std::memory_order_relaxed);
+
+        if (fInMs > 0.001f && fromStartMs < fInMs)
+        {
+            float prog = static_cast<float>(fromStartMs / fInMs);
+            fadeGain *= calculateFadeGain(prog, fadeInTension.load(std::memory_order_relaxed));
+        }
+
+        if (fOutMs > 0.001f && toEndMs < fOutMs)
+        {
+            float prog = static_cast<float>(toEndMs / fOutMs);
+            fadeGain *= calculateFadeGain(prog, fadeOutTension.load(std::memory_order_relaxed));
+        }
+
+        return ((sampleA * weightA) + (sampleB * weightB)) * wSustain * fadeGain;
     }
 
 private:
@@ -123,6 +159,10 @@ private:
     double sourceSampleRate = 44100.0;
     std::atomic<float> startOffsetMs{ 0.0f };
     std::atomic<float> endOffsetMs{ 0.0f };
+    std::atomic<float> fadeInMs{ 0.0f };
+    std::atomic<float> fadeOutMs{ 0.0f };
+    std::atomic<float> fadeInTension{ 0.0f };
+    std::atomic<float> fadeOutTension{ 0.0f };
     float tapAPhase = 0.5f;
     std::atomic<bool> hasSample{ false };
 };

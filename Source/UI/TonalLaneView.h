@@ -10,6 +10,7 @@
 #include "../PluginProcessor.h"
 #include "WaveformComponent.h"
 #include "ValueKnob.h"
+#include "GlowToggle.h"
 #include "ColorPalette.h"
 #include <functional>
 #include <memory>
@@ -59,7 +60,14 @@ public:
         exportBtn.onClick = [this] { triggerExport(); };
         addAndMakeVisible(exportBtn);
 
-        // ノブ設定 (4基)
+        // SOLO ボタン
+        soloToggle.onClick = [this] {
+            processor.setLaneSolo(false, soloToggle.getToggleState());
+            if (onSoloChanged) onSoloChanged();
+        };
+        addAndMakeVisible(soloToggle);
+
+        // ノブ設定 (3基: RELEASE, PITCH, GAIN - FadeInはView操作に一本化)
         auto setupKnob = [this](ValueKnob& k, juce::Label& l, const juce::String& text, juce::Colour c) {
             k.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
             k.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 58, 14);
@@ -75,13 +83,10 @@ public:
             addAndMakeVisible(l);
         };
 
-        setupKnob(knobFadeIn,  lblFadeIn,  "FADE-IN",   AnatomyColors::accentTonal);
-        setupKnob(knobRelease, lblRelease, "RELEASE",   AnatomyColors::accentTonal);
-        setupKnob(knobPitch,   lblPitch,   "PITCH (st)",AnatomyColors::accentTonal);
-        setupKnob(knobGain,    lblGain,    "GAIN (dB)",  AnatomyColors::accentTonal);
+        setupKnob(knobRelease, lblRelease, "RELEASE",    AnatomyColors::accentTonal);
+        setupKnob(knobPitch,   lblPitch,   "PITCH (st)", AnatomyColors::accentTonal);
+        setupKnob(knobGain,    lblGain,    "GAIN (dB)",   AnatomyColors::accentTonal);
 
-        attachFadeIn = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-            processor.apvts, "clickCurve", knobFadeIn);
         attachRelease = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             processor.apvts, "sustainRelease", knobRelease);
         attachPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -94,6 +99,17 @@ public:
 
     void setWaveBuffer(const juce::AudioBuffer<float>& buf) { waveform.setBuffer(buf); }
     void setWaveOffsets(float s, float e, double sr) { waveform.setOffsets(s, e, sr); }
+    void setWaveFade(float inMs, float outMs, float inTension, float outTension) { waveform.setFade(inMs, outMs, inTension, outTension); }
+
+    void updateSoloState()
+    {
+        soloToggle.setToggleState(processor.isLaneSolo(false), juce::dontSendNotification);
+    }
+
+    void setSelected(bool selected)
+    {
+        if (isSelected != selected) { isSelected = selected; repaint(); }
+    }
 
     void paint(juce::Graphics& g) override
     {
@@ -110,7 +126,7 @@ public:
         // ヘッダー部
         g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
         g.setColour(AnatomyColors::accentTonal);
-        g.drawText("TONAL  (BODY / HARMONICS)", 12, 6, getWidth() - 170, 20, juce::Justification::centredLeft);
+        g.drawText("TONAL  (BODY / HARMONICS)", 12, 6, getWidth() - 220, 20, juce::Justification::centredLeft);
 
         // ヘッダー下仕切り線
         g.setColour(AnatomyColors::panelLine);
@@ -119,20 +135,21 @@ public:
 
     void resized() override
     {
-        // ヘッダーボタン: 右上
-        int btnW = 54, btnH = 20, gap = 4;
-        int bx = getWidth() - (btnW * 3 + gap * 2) - 10;
+        // ヘッダーボタン: 右上 (BROWSE, RESET, EXPORT, SOLO)
+        int btnW = 50, btnH = 20, gap = 4;
+        int bx = getWidth() - (btnW * 3 + 46 + gap * 3) - 10;
         browseBtn.setBounds(bx, 6, btnW, btnH);
         resetBtn.setBounds(bx + btnW + gap, 6, btnW, btnH);
         exportBtn.setBounds(bx + (btnW + gap) * 2, 6, btnW, btnH);
+        soloToggle.setBounds(bx + (btnW + gap) * 3, 6, 46, btnH);
 
         // 波形エリア
         waveform.setBounds(10, 36, getWidth() - 20, getHeight() - 120);
 
-        // 下部ノブエリア (4基)
+        // 下部ノブエリア (3基均等配置: RELEASE, PITCH, GAIN)
         int knobY = getHeight() - 80;
         int totalW = getWidth() - 20;
-        int kw = totalW / 4;
+        int kw = totalW / 3;
 
         auto placeKnob = [&](ValueKnob& k, juce::Label& l, int index) {
             int x = 10 + index * kw;
@@ -140,55 +157,73 @@ public:
             k.setBounds(x + (kw - 56) / 2, knobY + 16, 56, 56);
         };
 
-        placeKnob(knobFadeIn,  lblFadeIn,  0);
-        placeKnob(knobRelease, lblRelease, 1);
-        placeKnob(knobPitch,   lblPitch,   2);
-        placeKnob(knobGain,    lblGain,    3);
+        placeKnob(knobRelease, lblRelease, 0);
+        placeKnob(knobPitch,   lblPitch,   1);
+        placeKnob(knobGain,    lblGain,    2);
+
+        if (browserComponent != nullptr)
+            browserComponent->setBounds(getLocalBounds().reduced(10));
     }
 
-    void mouseDown(const juce::MouseEvent& e) override
+    void mouseDown(const juce::MouseEvent&) override
     {
         if (onSelectLane) onSelectLane();
     }
 
-    void setSelected(bool sel) { if (isSelected != sel) { isSelected = sel; repaint(); } }
-
-    std::function<void()> onSelectLane;
-    std::function<void()> onSampleChanged;
-
-    // --- D&D Target ---
+    // --- FileDragAndDropTarget ---
     bool isInterestedInFileDrag(const juce::StringArray& files) override
     {
-        if (files.size() == 0) return false;
-        juce::File f(files[0]);
-        auto ext = f.getFileExtension().toLowerCase();
-        return ext == ".wav" || ext == ".aif" || ext == ".aiff" || ext == ".mp3" || ext == ".flac";
+        if (files.size() != 1) return false;
+        auto ext = juce::File(files[0]).getFileExtension().toLowerCase();
+        return ext == ".wav" || ext == ".aif" || ext == ".aiff" || ext == ".flac";
     }
 
     void filesDropped(const juce::StringArray& files, int, int) override
     {
-        if (files.size() > 0)
-            loadFile(juce::File(files[0]));
+        if (files.size() >= 1) loadFile(juce::File(files[0]));
     }
 
+    // --- FileBrowserListener ---
+    void selectionChanged() override {}
     void fileClicked(const juce::File& file, const juce::MouseEvent&) override
     {
-        if (!file.isDirectory())
-            loadFile(file);
+        if (!file.isDirectory()) { loadFile(file); closeBrowser(); }
     }
-    void fileDoubleClicked(const juce::File&) override {}
+    void fileDoubleClicked(const juce::File& file) override
+    {
+        if (!file.isDirectory()) { loadFile(file); closeBrowser(); }
+    }
     void browserRootChanged(const juce::File&) override {}
-    void selectionChanged() override {}
+
+    std::function<void()> onSelectLane;
+    std::function<void()> onSampleChanged;
+    std::function<void()> onSoloChanged;
 
 private:
-    void triggerExport()
+    void openBrowser()
     {
-        juce::File tempWav = processor.createTemporaryWavForExport(2);
-        if (tempWav.existsAsFile())
+        if (browserComponent != nullptr) { closeBrowser(); return; }
+        browserTree = std::make_unique<juce::FileBrowserComponent>(
+            juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+            juce::File::getSpecialLocation(juce::File::userMusicDirectory),
+            nullptr, nullptr);
+        browserTree->addListener(this);
+        browserComponent = std::make_unique<juce::Component>();
+        browserComponent->addAndMakeVisible(*browserTree);
+        browserTree->setBounds(0, 0, getWidth() - 20, getHeight() - 20);
+        addAndMakeVisible(*browserComponent);
+        browserComponent->setBounds(getLocalBounds().reduced(10));
+        browseBtn.setButtonText("CLOSE");
+    }
+
+    void closeBrowser()
+    {
+        if (browserComponent != nullptr)
         {
-            juce::StringArray files;
-            files.add(tempWav.getFullPathName());
-            juce::DragAndDropContainer::performExternalDragDropOfFiles(files, false, this);
+            removeChildComponent(browserComponent.get());
+            browserComponent.reset();
+            browserTree.reset();
+            browseBtn.setButtonText(processor.isCustomSampleLoaded(false) ? "CUSTOM" : "BROWSE");
         }
     }
 
@@ -197,71 +232,53 @@ private:
         std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
         if (reader != nullptr)
         {
-            juce::AudioBuffer<float> buffer(1, static_cast<int>(reader->lengthInSamples));
-            reader->read(&buffer, 0, static_cast<int>(reader->lengthInSamples), 0, true, false);
-
-            processor.customTonalReplacer.loadSample(buffer, reader->sampleRate);
-            processor.storeCustomSampleFromUI(false, buffer, reader->sampleRate);
-
-            double durationMs = (static_cast<double>(reader->lengthInSamples) / reader->sampleRate) * 1000.0;
-            waveform.setBuffer(buffer);
-            waveform.setOffsets(0.0f, static_cast<float>(durationMs), reader->sampleRate);
-
-            browseBtn.setButtonText(file.getFileNameWithoutExtension().substring(0, 6));
+            juce::AudioBuffer<float> tempBuf((int)reader->numChannels, (int)reader->lengthInSamples);
+            reader->read(&tempBuf, 0, (int)reader->lengthInSamples, 0, true, true);
+            processor.storeCustomSampleFromUI(false, tempBuf, reader->sampleRate);
+            browseBtn.setButtonText(file.getFileNameWithoutExtension().substring(0, 8));
+            waveform.setOffsets(0.0f, (float)(tempBuf.getNumSamples() / reader->sampleRate) * 1000.0f, reader->sampleRate);
+            waveform.setBuffer(tempBuf);
             if (onSampleChanged) onSampleChanged();
         }
     }
 
-    void closeBrowser() { browserWindow.reset(); }
-    void openBrowser()
+    void triggerExport()
     {
-        if (browserWindow != nullptr) { browserWindow->toFront(true); return; }
-        auto chooserFlags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
-        auto browser = std::make_unique<juce::FileBrowserComponent>(
-            chooserFlags, juce::File::getSpecialLocation(juce::File::userHomeDirectory), nullptr, nullptr
-        );
-        browser->addListener(this);
-        browser->setSize(420, 500);
-
-        class Dialog final : public juce::DialogWindow {
-        public:
-            Dialog(const juce::String& name, juce::Colour bg, TonalLaneView& o)
-                : DialogWindow(name, bg, true, true), owner(o) { setUsingNativeTitleBar(true); }
-            void closeButtonPressed() override { owner.closeBrowser(); }
-        private:
-            TonalLaneView& owner;
-        };
-
-        browserWindow = std::make_unique<Dialog>("Tonal Sample Browser", AnatomyColors::panel, *this);
-        browserWindow->setContentOwned(browser.release(), true);
-        browserWindow->centreAroundComponent(this, 420, 500);
-        browserWindow->setResizable(true, true);
-        browserWindow->setVisible(true);
+        juce::File wav = processor.createTemporaryWavForExport(2); // 2 = Tonal
+        if (wav.existsAsFile())
+        {
+            juce::StringArray files;
+            files.add(wav.getFullPathName());
+            if (auto* container = juce::DragAndDropContainer::findParentDragContainerFor(this))
+                container->performExternalDragDropOfFiles(files, false, this);
+        }
     }
 
     AnatomyAudioProcessor& processor;
-    WaveformComponent waveform;
     juce::AudioFormatManager formatManager;
+
+    WaveformComponent waveform;
 
     juce::TextButton browseBtn;
     juce::TextButton resetBtn;
     juce::TextButton exportBtn;
+    GlowToggle soloToggle{ "SOLO", AnatomyColors::accentTonal };
 
-    ValueKnob knobFadeIn;
     ValueKnob knobRelease;
     ValueKnob knobPitch;
     ValueKnob knobGain;
-    juce::Label lblFadeIn;
+
     juce::Label lblRelease;
     juce::Label lblPitch;
     juce::Label lblGain;
 
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachFadeIn;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachRelease;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachPitch;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachGain;
 
-    std::unique_ptr<juce::DialogWindow> browserWindow;
+    std::unique_ptr<juce::Component> browserComponent;
+    std::unique_ptr<juce::FileBrowserComponent> browserTree;
+
     bool isSelected = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TonalLaneView)

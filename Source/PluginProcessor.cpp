@@ -943,6 +943,64 @@ void AnatomyAudioProcessor::setOffsetsFromUI(bool isTransient, float startMs, fl
     offlineMixRenderer.triggerRender();
 }
 
+void AnatomyAudioProcessor::setFadeFromUI(bool isTransient, float inMs, float outMs, float inTension, float outTension) noexcept
+{
+    if (isTransient)
+    {
+        customTransientReplacer.setFadeInMs(inMs);
+        customTransientReplacer.setFadeOutMs(outMs);
+        customTransientReplacer.setFadeInTension(inTension);
+        customTransientReplacer.setFadeOutTension(outTension);
+    }
+    else
+    {
+        customTonalReplacer.setFadeInMs(inMs);
+        customTonalReplacer.setFadeOutMs(outMs);
+        customTonalReplacer.setFadeInTension(inTension);
+        customTonalReplacer.setFadeOutTension(outTension);
+    }
+    offlineMixRenderer.triggerRender();
+}
+
+void AnatomyAudioProcessor::getFadeForUI(bool isTransient, float& inMs, float& outMs, float& inTension, float& outTension) const noexcept
+{
+    if (isTransient)
+    {
+        inMs = customTransientReplacer.getFadeInMs();
+        outMs = customTransientReplacer.getFadeOutMs();
+        inTension = customTransientReplacer.getFadeInTension();
+        outTension = customTransientReplacer.getFadeOutTension();
+    }
+    else
+    {
+        inMs = customTonalReplacer.getFadeInMs();
+        outMs = customTonalReplacer.getFadeOutMs();
+        inTension = customTonalReplacer.getFadeInTension();
+        outTension = customTonalReplacer.getFadeOutTension();
+    }
+}
+
+void AnatomyAudioProcessor::setLaneSolo(bool isTransient, bool isSolo)
+{
+    int current = getSoloMode();
+    if (isTransient)
+    {
+        if (isSolo) setSoloMode(current == 2 ? 0 : 1);
+        else        setSoloMode(current == 1 ? 0 : current);
+    }
+    else
+    {
+        if (isSolo) setSoloMode(current == 1 ? 0 : 2);
+        else        setSoloMode(current == 2 ? 0 : current);
+    }
+}
+
+bool AnatomyAudioProcessor::isLaneSolo(bool isTransient) const noexcept
+{
+    int m = getSoloMode();
+    return isTransient ? (m == 1) : (m == 2);
+}
+
 void AnatomyAudioProcessor::storeCustomSampleFromUI(bool isTransient, const juce::AudioBuffer<float>& newBuffer, double sr) noexcept
 {
     const juce::ScopedLock sl(lock);

@@ -48,9 +48,6 @@ private:
     juce::TextButton loadButton   { "LOAD" };
     juce::TextButton resetButton  { "RESET" };
     GlowToggle beforeToggle       { "BEFORE", AnatomyColors::peach };
-    GlowToggle soloFullToggle     { "FULL MIX", AnatomyColors::accentFull };
-    GlowToggle soloTransToggle    { "TRANS", AnatomyColors::accentTransient };
-    GlowToggle soloTonalToggle    { "TONAL", AnatomyColors::accentTonal };
     juce::ComboBox themeCombo;
     std::unique_ptr<juce::FileChooser> fileChooser;
 

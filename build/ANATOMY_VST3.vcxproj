@@ -122,20 +122,11 @@
       <ProxyFileName>%(Filename)_p.c</ProxyFileName>
     </Midl>
     <PostBuildEvent>
-      <Message>	</Message>
+      <Message></Message>
       <Command>setlocal
 "C:\Program Files\CMake\bin\cmake.exe" -E echo "removing moduleinfo.json"
 if %errorlevel% neq 0 goto :cmEnd
 "C:\Program Files\CMake\bin\cmake.exe" -E remove -f D:/VST_Project/ANATOMY/build/ANATOMY_artefacts/Debug/VST3/ANATOMY.vst3/Contents/moduleinfo.json D:/VST_Project/ANATOMY/build/ANATOMY_artefacts/Debug/VST3/ANATOMY.vst3/Contents/Resources/moduleinfo.json
-if %errorlevel% neq 0 goto :cmEnd
-:cmEnd
-endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
-:cmErrorLevel
-exit /b %1
-:cmDone
-if %errorlevel% neq 0 goto :VCEnd
-setlocal
-"C:\Program Files\CMake\bin\cmake.exe" -Dsrc=D:/VST_Project/ANATOMY/build/ANATOMY_artefacts/Debug/VST3/ANATOMY.vst3 "-Ddest=C:\Program Files\Common Files/VST3" -P C:/JUCE/extras/Build/CMake/copyDir.cmake
 if %errorlevel% neq 0 goto :cmEnd
 :cmEnd
 endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
@@ -201,20 +192,11 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <ProxyFileName>%(Filename)_p.c</ProxyFileName>
     </Midl>
     <PostBuildEvent>
-      <Message>	</Message>
+      <Message></Message>
       <Command>setlocal
 "C:\Program Files\CMake\bin\cmake.exe" -E echo "removing moduleinfo.json"
 if %errorlevel% neq 0 goto :cmEnd
 "C:\Program Files\CMake\bin\cmake.exe" -E remove -f D:/VST_Project/ANATOMY/build/ANATOMY_artefacts/Release/VST3/ANATOMY.vst3/Contents/moduleinfo.json D:/VST_Project/ANATOMY/build/ANATOMY_artefacts/Release/VST3/ANATOMY.vst3/Contents/Resources/moduleinfo.json
-if %errorlevel% neq 0 goto :cmEnd
-:cmEnd
-endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
-:cmErrorLevel
-exit /b %1
-:cmDone
-if %errorlevel% neq 0 goto :VCEnd
-setlocal
-"C:\Program Files\CMake\bin\cmake.exe" -Dsrc=D:/VST_Project/ANATOMY/build/ANATOMY_artefacts/Release/VST3/ANATOMY.vst3 "-Ddest=C:\Program Files\Common Files/VST3" -P C:/JUCE/extras/Build/CMake/copyDir.cmake
 if %errorlevel% neq 0 goto :cmEnd
 :cmEnd
 endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
@@ -280,20 +262,11 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <ProxyFileName>%(Filename)_p.c</ProxyFileName>
     </Midl>
     <PostBuildEvent>
-      <Message>	</Message>
+      <Message></Message>
       <Command>setlocal
 "C:\Program Files\CMake\bin\cmake.exe" -E echo "removing moduleinfo.json"
 if %errorlevel% neq 0 goto :cmEnd
 "C:\Program Files\CMake\bin\cmake.exe" -E remove -f D:/VST_Project/ANATOMY/build/ANATOMY_artefacts/MinSizeRel/VST3/ANATOMY.vst3/Contents/moduleinfo.json D:/VST_Project/ANATOMY/build/ANATOMY_artefacts/MinSizeRel/VST3/ANATOMY.vst3/Contents/Resources/moduleinfo.json
-if %errorlevel% neq 0 goto :cmEnd
-:cmEnd
-endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
-:cmErrorLevel
-exit /b %1
-:cmDone
-if %errorlevel% neq 0 goto :VCEnd
-setlocal
-"C:\Program Files\CMake\bin\cmake.exe" -Dsrc=D:/VST_Project/ANATOMY/build/ANATOMY_artefacts/MinSizeRel/VST3/ANATOMY.vst3 "-Ddest=C:\Program Files\Common Files/VST3" -P C:/JUCE/extras/Build/CMake/copyDir.cmake
 if %errorlevel% neq 0 goto :cmEnd
 :cmEnd
 endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
@@ -358,20 +331,11 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <ProxyFileName>%(Filename)_p.c</ProxyFileName>
     </Midl>
     <PostBuildEvent>
-      <Message>	</Message>
+      <Message></Message>
       <Command>setlocal
 "C:\Program Files\CMake\bin\cmake.exe" -E echo "removing moduleinfo.json"
 if %errorlevel% neq 0 goto :cmEnd
 "C:\Program Files\CMake\bin\cmake.exe" -E remove -f D:/VST_Project/ANATOMY/build/ANATOMY_artefacts/RelWithDebInfo/VST3/ANATOMY.vst3/Contents/moduleinfo.json D:/VST_Project/ANATOMY/build/ANATOMY_artefacts/RelWithDebInfo/VST3/ANATOMY.vst3/Contents/Resources/moduleinfo.json
-if %errorlevel% neq 0 goto :cmEnd
-:cmEnd
-endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
-:cmErrorLevel
-exit /b %1
-:cmDone
-if %errorlevel% neq 0 goto :VCEnd
-setlocal
-"C:\Program Files\CMake\bin\cmake.exe" -Dsrc=D:/VST_Project/ANATOMY/build/ANATOMY_artefacts/RelWithDebInfo/VST3/ANATOMY.vst3 "-Ddest=C:\Program Files\Common Files/VST3" -P C:/JUCE/extras/Build/CMake/copyDir.cmake
 if %errorlevel% neq 0 goto :cmEnd
 :cmEnd
 endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
