@@ -74,7 +74,7 @@ public:
         };
         addAndMakeVisible(snapToggle);
 
-        // ノブ設定 (2基: OFFSET, GAIN を右端に配置)
+        // ノブ設定 (3基: OFFSET, PITCH, GAIN を右端に配置)
         auto setupKnob = [this](ValueKnob& k, juce::Label& l, const juce::String& text, juce::Colour c) {
             k.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
             k.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 58, 14);
@@ -84,17 +84,20 @@ public:
             addAndMakeVisible(k);
 
             l.setText(text, juce::dontSendNotification);
-            l.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
+            l.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
             l.setJustificationType(juce::Justification::centred);
             l.setColour(juce::Label::textColourId, c.withAlpha(0.9f));
             addAndMakeVisible(l);
         };
 
         setupKnob(knobOffset, lblOffset, "OFFSET (ms)", AnatomyColors::peach);
+        setupKnob(knobPitch,  lblPitch,  "PITCH (st)",   AnatomyColors::peach);
         setupKnob(knobGain,   lblGain,   "GAIN (dB)",   AnatomyColors::peach);
 
         attachOffset = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             processor.apvts, "layerOffset", knobOffset);
+        attachPitch = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            processor.apvts, "layerPitch", knobPitch);
         attachGain = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             processor.apvts, "layerGain", knobGain);
     }
@@ -159,17 +162,20 @@ public:
         bx -= (gap + 44); resetBtn.setBounds(bx, 5, 44, 21);
         bx -= (gap + 52); browseBtn.setBounds(bx, 5, 52, 21);
 
-        // 右端ノブエリア (2基: OFFSET, GAIN)
-        int knobW = 60;
-        int knobAreaW = knobW * 2 + 10;
+        // 右端ノブエリア (3基: OFFSET, PITCH, GAIN)
+        int knobW = 56;
+        int knobAreaW = knobW * 3 + 12;
         int knobAreaX = getWidth() - knobAreaW - 10;
         int knobY = 36;
 
         lblOffset.setBounds(knobAreaX, knobY, knobW, 14);
-        knobOffset.setBounds(knobAreaX + (knobW - 56) / 2, knobY + 16, 56, 56);
+        knobOffset.setBounds(knobAreaX, knobY + 16, knobW, 56);
 
-        lblGain.setBounds(knobAreaX + knobW + 10, knobY, knobW, 14);
-        knobGain.setBounds(knobAreaX + knobW + 10 + (knobW - 56) / 2, knobY + 16, 56, 56);
+        lblPitch.setBounds(knobAreaX + knobW + 6, knobY, knobW, 14);
+        knobPitch.setBounds(knobAreaX + knobW + 6, knobY + 16, knobW, 56);
+
+        lblGain.setBounds(knobAreaX + (knobW + 6) * 2, knobY, knobW, 14);
+        knobGain.setBounds(knobAreaX + (knobW + 6) * 2, knobY + 16, knobW, 56);
 
         // 波形エリア (左側からノブの手前まで)
         int waveW = knobAreaX - 18;
@@ -247,12 +253,15 @@ private:
     GlowToggle snapToggle{ "SNAP", AnatomyColors::mint };
 
     ValueKnob knobOffset;
+    ValueKnob knobPitch;
     ValueKnob knobGain;
 
     juce::Label lblOffset;
+    juce::Label lblPitch;
     juce::Label lblGain;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachOffset;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachPitch;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachGain;
 
     std::unique_ptr<juce::FileChooser> fileChooser;

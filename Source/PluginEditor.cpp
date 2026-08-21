@@ -19,6 +19,7 @@ namespace
 AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& p)
     : AudioProcessorEditor(&p),
       audioProcessor(p),
+      fullMixLane(p),
       transientLane(p),
       tonalLane(p),
       layerLane(p),
@@ -66,20 +67,6 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
                     [this] { resetAllParameters(); });
     };
 
-    beforeToggle.onClick = [this]
-    {
-        audioProcessor.beforeAfterBypasser.setBeforeStatus(beforeToggle.getToggleState());
-        audioProcessor.offlineMixRenderer.triggerRender();
-        repaint();
-    };
-
-    // FullMix D&D対応 EXPORT ボタン (BEFORE の左隣)
-    btnExportFullMix.setFileGenerator([this] {
-        return audioProcessor.createTemporaryWavForExport(0);
-    });
-
-    addAndMakeVisible(btnExportFullMix);
-    addAndMakeVisible(beforeToggle);
     addAndMakeVisible(loadButton);
     addAndMakeVisible(resetButton);
 
@@ -91,29 +78,39 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
         int idx = themeCombo.getSelectedId() - 1;
         AnatomyColors::setTheme(idx);
         lastThemeIndex = idx;
-        beforeToggle.setAccentColour(AnatomyColors::peach);
-        btnExportFullMix.setAccentColour(AnatomyColors::accentFull);
         repaint();
         for (auto* child : getChildren()) child->repaint();
     };
     addAndMakeVisible(themeCombo);
 
-    // --- 2段目: FullMixPreview (左半分表示に変更) ---
-    waveFullMix.setLaneProperties(audioProcessor, 0);
-    waveFullMix.setSelected(true); // 初期選択
-    waveFullMix.onFocusClicked = [this] {
+    // --- 2段目: FullMix & Layer (50% スプリット) ---
+    fullMixLane.setSelected(true); // 初期選択
+    fullMixLane.onSelectLane = [this] {
         fxRackView.setTargetRoute(TargetRoute::FullMix);
-        waveFullMix.setSelected(true);
+        fullMixLane.setSelected(true);
         transientLane.setSelected(false);
         tonalLane.setSelected(false);
         layerLane.setSelected(false);
     };
-    addAndMakeVisible(waveFullMix);
+    fullMixLane.onBeforeChanged = [this] {
+        repaint();
+    };
+    fullMixLane.onFileDropped = [this](const juce::File& file) {
+        std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
+        if (reader != nullptr)
+        {
+            juce::AudioBuffer<float> buffer((int)reader->numChannels, (int)reader->lengthInSamples);
+            reader->read(&buffer, 0, (int)reader->lengthInSamples, 0, true, true);
+            audioProcessor.startSeparation(buffer, reader->sampleRate);
+            wasProcessing = true;
+        }
+    };
+    addAndMakeVisible(fullMixLane);
 
     // LayerLaneView (右半分表示)
     layerLane.onSelectLane = [this] {
         fxRackView.setTargetRoute(TargetRoute::Layer);
-        waveFullMix.setSelected(false);
+        fullMixLane.setSelected(false);
         transientLane.setSelected(false);
         tonalLane.setSelected(false);
         layerLane.setSelected(true);
@@ -129,7 +126,7 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     // --- 3段目: TransientView & TonalView ---
     transientLane.onSelectLane = [this] {
         fxRackView.setTargetRoute(TargetRoute::Transient);
-        waveFullMix.setSelected(false);
+        fullMixLane.setSelected(false);
         transientLane.setSelected(true);
         tonalLane.setSelected(false);
         layerLane.setSelected(false);
@@ -144,7 +141,7 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
 
     tonalLane.onSelectLane = [this] {
         fxRackView.setTargetRoute(TargetRoute::Tonal);
-        waveFullMix.setSelected(false);
+        fullMixLane.setSelected(false);
         transientLane.setSelected(false);
         tonalLane.setSelected(true);
         layerLane.setSelected(false);
@@ -159,9 +156,10 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
 
     // --- 4段目: Card FX Rack ---
     fxRackView.onRouteTabChanged = [this](TargetRoute route) {
-        waveFullMix.setSelected(route == TargetRoute::FullMix);
+        fullMixLane.setSelected(route == TargetRoute::FullMix);
         transientLane.setSelected(route == TargetRoute::Transient);
         tonalLane.setSelected(route == TargetRoute::Tonal);
+        layerLane.setSelected(route == TargetRoute::Layer);
     };
     addAndMakeVisible(fxRackView);
 
@@ -172,12 +170,12 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     std::vector<float> initRatios;
     if (audioProcessor.offlineMixRenderer.getRenderedResults(initFull, initTrans, initTonal, initLayer, initRatios, true))
     {
-        if (beforeToggle.getToggleState())
-            waveFullMix.setBuffer(audioProcessor.getRawInputBufferForUI());
+        if (fullMixLane.isBeforeActive())
+            fullMixLane.setWaveBuffer(audioProcessor.getRawInputBufferForUI());
         else
         {
-            waveFullMix.setBuffer(initFull);
-            waveFullMix.setRatioData(initRatios);
+            fullMixLane.setWaveBuffer(initFull);
+            fullMixLane.setWaveRatioData(initRatios);
         }
         transientLane.setWaveBuffer(initTrans);
         tonalLane.setWaveBuffer(initTonal);
@@ -271,7 +269,7 @@ void AnatomyAudioProcessorEditor::filesDropped(const juce::StringArray& files, i
 
     juce::Point<int> dropPoint(x, y);
 
-    if (waveFullMix.getBounds().contains(dropPoint))
+    if (fullMixLane.getBounds().contains(dropPoint))
     {
         std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
         if (reader != nullptr)
@@ -294,12 +292,12 @@ void AnatomyAudioProcessorEditor::timerCallback()
     std::vector<float> mixRatios;
     if (audioProcessor.offlineMixRenderer.getRenderedResults(tempFullMix, tempTrans, tempTonal, tempLayer, mixRatios))
     {
-        if (beforeToggle.getToggleState())
-            waveFullMix.setBuffer(audioProcessor.getRawInputBufferForUI());
+        if (fullMixLane.isBeforeActive())
+            fullMixLane.setWaveBuffer(audioProcessor.getRawInputBufferForUI());
         else
         {
-            waveFullMix.setBuffer(tempFullMix);
-            waveFullMix.setRatioData(mixRatios);
+            fullMixLane.setWaveBuffer(tempFullMix);
+            fullMixLane.setWaveRatioData(mixRatios);
         }
 
         transientLane.setWaveBuffer(tempTrans);
@@ -308,7 +306,7 @@ void AnatomyAudioProcessorEditor::timerCallback()
     }
 
     double sr = audioProcessor.getFileSampleRate();
-    waveFullMix.setOffsets(audioProcessor.fullMixStartOffsetMs, audioProcessor.fullMixEndOffsetMs, sr);
+    fullMixLane.setWaveOffsets(audioProcessor.fullMixStartOffsetMs, audioProcessor.fullMixEndOffsetMs, sr);
     transientLane.setWaveOffsets(audioProcessor.transStartOffsetMs, audioProcessor.transEndOffsetMs, sr);
     tonalLane.setWaveOffsets(audioProcessor.tonalStartOffsetMs, audioProcessor.tonalEndOffsetMs, sr);
     layerLane.setWaveOffsets(audioProcessor.layerStartOffsetMs, audioProcessor.layerEndOffsetMs, sr);
@@ -386,12 +384,6 @@ void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
     g.setColour(audioProcessor.isCurrentlyProcessing() ? AnatomyColors::accentTransient : AnatomyColors::textDim);
     g.drawText(hudStatus, 320, 30, 300, 14, juce::Justification::centredLeft);
 
-    // --- 2段目: FullMixPreview ヘッダー ---
-    int fY = kHeaderH + 6;
-    g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
-    g.setColour(AnatomyColors::accentFull);
-    g.drawText("FULL MIX PREVIEW  (TRANSIENT / TONAL RATIO)", kMargin + 10, fY + 4, 350, 16, juce::Justification::centredLeft);
-
     // 解析中オーバーレイ表示
     if (audioProcessor.isCurrentlyProcessing())
     {
@@ -421,7 +413,7 @@ void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
 void AnatomyAudioProcessorEditor::resized()
 {
     // --- 1段目: ヘッダーボタン (右側) ---
-    // [EXPORT] -> [BEFORE] -> [LOAD] -> [RESET] -> [THEME]
+    // [LOAD] -> [RESET] -> [THEME]
     int hX = getWidth() - kMargin;
 
     hX -= 90;
@@ -435,21 +427,13 @@ void AnatomyAudioProcessorEditor::resized()
     hX -= 64;
     loadButton.setBounds(hX, 16, 64, 24);
 
-    hX -= 12;
-    hX -= 72;
-    beforeToggle.setBounds(hX, 16, 72, 24);
-
-    hX -= 8;
-    hX -= 68;
-    btnExportFullMix.setBounds(hX, 16, 68, 24);
-
     // --- 2段目: FullMixPreview & LayerView (50% スプリット) ---
     int curY = kHeaderH + 4;
     int fullW = getWidth() - kMargin * 2;
     int halfW = (fullW - 10) / 2;
 
-    waveFullMix.setBounds(kMargin, curY + 20, halfW, kFullMixH - 24);
-    layerLane.setBounds(kMargin + halfW + 10, curY, halfW, kFullMixH + 4); // 少し高さを確保
+    fullMixLane.setBounds(kMargin, curY, halfW, kFullMixH + 4);
+    layerLane.setBounds(kMargin + halfW + 10, curY, halfW, kFullMixH + 4);
 
     curY += kFullMixH + 6;
 

@@ -84,6 +84,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     "Source/UI/WaveformComponent.cpp"
     "Source/UI/TransientLaneView.h"
     "Source/UI/TonalLaneView.h"
+    "Source/UI/LayerLaneView.h"
+    "Source/UI/FullMixLaneView.h"
     "Source/UI/FxSlotCard.h"
     "Source/UI/FxSlotCard.cpp"
     "Source/UI/FxRackView.h"

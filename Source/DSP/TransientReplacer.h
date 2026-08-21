@@ -129,11 +129,20 @@ public:
             float prog = static_cast<float>(clickReadIndex / fInSmpl);
             fadeGain *= calculateFadeGain(prog, fadeInTension.load(std::memory_order_relaxed));
         }
+        else if (clickReadIndex < 64.0)
+        {
+            fadeGain *= static_cast<float>(clickReadIndex / 64.0);
+        }
+
         double remSmpl = effectiveEnd - readPos;
         if (fOutSmpl > 1.0 && remSmpl < fOutSmpl)
         {
             float prog = static_cast<float>(remSmpl / fOutSmpl);
             fadeGain *= calculateFadeGain(prog, fadeOutTension.load(std::memory_order_relaxed));
+        }
+        else if (remSmpl < 64.0)
+        {
+            fadeGain *= static_cast<float>(std::max(0.0, remSmpl / 64.0));
         }
 
         const float* src = replacedBuffer.getReadPointer(0);

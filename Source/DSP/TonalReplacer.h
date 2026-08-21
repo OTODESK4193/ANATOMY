@@ -127,11 +127,19 @@ public:
             float prog = static_cast<float>(fromStartMs / fInMs);
             fadeGain *= calculateFadeGain(prog, fadeInTension.load(std::memory_order_relaxed));
         }
+        else if (fromStartMs < 1.5)
+        {
+            fadeGain *= static_cast<float>(std::max(0.0, fromStartMs / 1.5));
+        }
 
         if (fOutMs > 0.001f && toEndMs < fOutMs)
         {
             float prog = static_cast<float>(toEndMs / fOutMs);
             fadeGain *= calculateFadeGain(prog, fadeOutTension.load(std::memory_order_relaxed));
+        }
+        else if (toEndMs < 1.5)
+        {
+            fadeGain *= static_cast<float>(std::max(0.0, toEndMs / 1.5));
         }
 
         return ((sampleA * weightA) + (sampleB * weightB)) * fadeGain;

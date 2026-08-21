@@ -59,7 +59,7 @@ AnatomyAudioProcessor::AnatomyAudioProcessor()
                                  "tonalOttDepth", "tonalOttTime", "tonalOttLowMidXOver", "tonalOttMidHighXOver",
                                  "fullOttDepth", "fullOttTime", "fullOttLowMidXOver", "fullOttMidHighXOver",
                                  "layerOttDepth", "layerOttTime", "layerOttLowMidXOver", "layerOttMidHighXOver",
-                                 "transPitch", "tonalPitch", "transMixGain", "tonalMixGain",
+                                 "transPitch", "tonalPitch", "layerPitch", "transMixGain", "tonalMixGain",
                                  "layerGain", "layerOffset", "tonalDelay" };
     for (const auto& pid : ottParams) apvts.addParameterListener(pid, this);
 
@@ -92,7 +92,7 @@ AnatomyAudioProcessor::~AnatomyAudioProcessor()
                                  "tonalOttDepth", "tonalOttTime", "tonalOttLowMidXOver", "tonalOttMidHighXOver",
                                  "fullOttDepth", "fullOttTime", "fullOttLowMidXOver", "fullOttMidHighXOver",
                                  "layerOttDepth", "layerOttTime", "layerOttLowMidXOver", "layerOttMidHighXOver",
-                                 "transPitch", "tonalPitch", "transMixGain", "tonalMixGain",
+                                 "transPitch", "tonalPitch", "layerPitch", "transMixGain", "tonalMixGain",
                                  "layerGain", "layerOffset", "tonalDelay" };
     for (const auto& pid : ottParams) apvts.removeParameterListener(pid, this);
 
@@ -115,6 +115,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "clickCurve", 1 }, "Sustain Fade-In (ms)", 1.0f, 100.0f, 5.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transPitch", 1 }, "Transient Pitch (st)", -12.0f, 12.0f, 0.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "tonalPitch", 1 }, "Sustain Pitch (st)", -12.0f, 12.0f, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "layerPitch", 1 }, "Layer Pitch (st)", -12.0f, 12.0f, 0.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "sustainRelease", 1 }, "Sustain Release (ms)", 10.0f, 5000.0f, 500.0f));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ "transMixGain", 1 }, "Transient Mix Gain (dB)", -60.0f, 6.0f, 0.0f));
@@ -928,14 +929,25 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
         float gain = 1.0f;
         float passed = static_cast<float>(exactIdx - startSmp);
         float remain = static_cast<float>(endSmp - exactIdx);
-        if (inSmp > 0.0f && passed < inSmp) gain *= calculateFadeGain(passed / inSmp, inTen);
-        if (outSmp > 0.0f && remain < outSmp) gain *= calculateFadeGain(remain / outSmp, outTen);
+        if (inSmp > 0.0f && passed < inSmp)
+            gain *= calculateFadeGain(passed / inSmp, inTen);
+        else if (passed < 64.0f)
+            gain *= juce::jlimit(0.0f, 1.0f, passed / 64.0f);
+
+        if (outSmp > 0.0f && remain < outSmp)
+            gain *= calculateFadeGain(remain / outSmp, outTen);
+        else if (remain < 64.0f)
+            gain *= juce::jlimit(0.0f, 1.0f, remain / 64.0f);
+
         return gain;
     };
 
     float transGain = getFadeGain(exactClickIdx, transStartSamples, transEndSamples, tInSmp, tOutSmp, tInTension, tOutTension);
     float tonalGain = getFadeGain(exactSustainIdx, tonalStartSamples, tonalEndSamples, oInSmp, oOutSmp, oInTension, oOutTension);
     float layerGain = getFadeGain(exactLayerIdx, layerStartSamples, layerEndSamples, lInSmp, lOutSmp, lInTension, lOutTension);
+
+    float layerPitchVal = apvts.getRawParameterValue("layerPitch")->load();
+    float layerScale = std::pow(2.0f, layerPitchVal / 12.0f);
 
     // Layer 音声の生成
     if (hasCustomLayer && exactLayerIdx >= 0.0 && exactLayerIdx < static_cast<double>(customLayerBuffer.getNumSamples() - 1))
@@ -948,7 +960,7 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
             outLayerR = r * layerGain * voice.triggerVelocity * voice.releaseGain;
         }
     }
-    voice.layerReadIndex += voice.pitchRatio;
+    voice.layerReadIndex += voice.pitchRatio * layerScale;
 
     // Fast Path (Pitch Shift == 1.0, Custom Sample なし)
     if (!hasCustomTrans && !hasCustomTonal && std::abs(transScale - 1.0f) < 0.01f && std::abs(tonalScale - 1.0f) < 0.01f)
@@ -976,6 +988,17 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
                 outTransL = 0.0f; outTransR = 0.0f;
                 outTonalL = 0.0f; outTonalR = 0.0f;
                 outLayerL = 0.0f; outLayerR = 0.0f;
+            }
+            else
+            {
+                double remMs = fullMixEndOffsetMs - curMs;
+                if (remMs < 1.5)
+                {
+                    float declick = static_cast<float>(remMs / 1.5);
+                    outTransL *= declick; outTransR *= declick;
+                    outTonalL *= declick; outTonalR *= declick;
+                    outLayerL *= declick; outLayerR *= declick;
+                }
             }
         }
         voice.clickReadIndex += voice.pitchRatio;
@@ -1034,6 +1057,18 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
             finalSustain = 0.0f;
             outLayerL = 0.0f;
             outLayerR = 0.0f;
+        }
+        else
+        {
+            double remMs = fullMixEndOffsetMs - curMs;
+            if (remMs < 1.5)
+            {
+                float declick = static_cast<float>(remMs / 1.5);
+                finalClick *= declick;
+                finalSustain *= declick;
+                outLayerL *= declick;
+                outLayerR *= declick;
+            }
         }
     }
 
@@ -1737,6 +1772,7 @@ void OfflineMixRenderer::executeRender()
 
     float transPitch = processor.apvts.getRawParameterValue("transPitch")->load();
     float tonalPitch = processor.apvts.getRawParameterValue("tonalPitch")->load();
+    float layerPitch = processor.apvts.getRawParameterValue("layerPitch")->load();
 
     auto applyPitch = [](juce::AudioBuffer<float>& buf, float semitones) {
         if (std::abs(semitones) < 0.01f) return;
@@ -1757,6 +1793,7 @@ void OfflineMixRenderer::executeRender()
     };
     applyPitch(workTrans, transPitch);
     applyPitch(workTonal, tonalPitch);
+    applyPitch(workLayer, layerPitch);
 
     float transGain = std::pow(10.0f, processor.apvts.getRawParameterValue("transMixGain")->load() / 20.0f);
     float tonalGain = std::pow(10.0f, processor.apvts.getRawParameterValue("tonalMixGain")->load() / 20.0f);

@@ -13,7 +13,7 @@
 #include "UI/ValueKnob.h"
 #include "UI/GlowToggle.h"
 #include "UI/DragExportButton.h"
-#include "UI/WaveformComponent.h"
+#include "UI/FullMixLaneView.h"
 #include "UI/TransientLaneView.h"
 #include "UI/TonalLaneView.h"
 #include "UI/LayerLaneView.h"
@@ -46,8 +46,6 @@ private:
     ArcDialLookAndFeel arcLookAndFeel;
 
     // --- 1段目: ヘッダー ---
-    DragExportButton btnExportFullMix { "EXPORT", AnatomyColors::accentFull };
-    GlowToggle beforeToggle           { "BEFORE", AnatomyColors::peach };
     juce::TextButton loadButton       { "LOAD" };
     juce::TextButton resetButton      { "RESET" };
     juce::ComboBox themeCombo;
@@ -57,13 +55,13 @@ private:
     int lastThemeIndex = 0;
     bool wasProcessing = false;
 
-    // --- 2段目: FullMixPreview (全幅100%表示) ---
-    WaveformComponent waveFullMix;
+    // --- 2段目: FullMix & Layer (50% スプリット) ---
+    FullMixLaneView fullMixLane;
+    LayerLaneView layerLane;
 
-    // --- 3段目: TransientView & TonalView ---
+    // --- 3段目: TransientView & TonalView (50% スプリット) ---
     TransientLaneView transientLane;
     TonalLaneView tonalLane;
-    LayerLaneView layerLane;
 
     // --- 4段目: Card FX Rack ---
     FxRackView fxRackView;
