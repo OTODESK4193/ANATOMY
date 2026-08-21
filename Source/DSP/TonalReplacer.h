@@ -61,23 +61,7 @@ public:
         if (maxSamples <= 0) return 0.0f;
 
         double n = (originalPitchRatio > 0.0) ? (sustainReadIndex / originalPitchRatio) : sustainReadIndex;
-
-        float wSustain = 1.0f;
-        double elapsedMs = (n / hostSampleRate) * 1000.0;
-
-        if (elapsedMs < clickHoldMs)
-        {
-            wSustain = 0.0f;
-        }
-        else if (elapsedMs < (clickHoldMs + clickCurveMs))
-        {
-            if (clickCurveMs > 0.0f)
-            {
-                double fadePhase = ((elapsedMs - clickHoldMs) / clickCurveMs) * (juce::MathConstants<double>::pi * 0.5);
-                double cosVal = std::cos(fadePhase);
-                wSustain = 1.0f - static_cast<float>(cosVal * cosVal);
-            }
-        }
+        if (n < 0.0) return 0.0f;
 
         float maxDelaySamples = static_cast<float>((40.0f / 1000.0f) * hostSampleRate);
         if (maxDelaySamples < 64.0f) maxDelaySamples = 64.0f;
@@ -150,7 +134,7 @@ public:
             fadeGain *= calculateFadeGain(prog, fadeOutTension.load(std::memory_order_relaxed));
         }
 
-        return ((sampleA * weightA) + (sampleB * weightB)) * wSustain * fadeGain;
+        return ((sampleA * weightA) + (sampleB * weightB)) * fadeGain;
     }
 
 private:

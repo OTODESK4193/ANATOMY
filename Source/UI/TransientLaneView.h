@@ -47,11 +47,10 @@ public:
         resetBtn.onClick = [this] {
             processor.clearCustomSampleFromUI(true);
             browseBtn.setButtonText("BROWSE");
+            processor.setFadeFromUI(true, 0.0f, 0.0f, 0.0f, 0.0f);
             float durationMs = processor.transEndOffsetMs;
             waveform.setOffsets(0.0f, durationMs, processor.getFileSampleRate());
-            juce::AudioBuffer<float> tempTrans, tempTonal;
-            processor.getCallbackBuffersSecure(tempTrans, tempTonal);
-            waveform.setBuffer(tempTrans);
+            waveform.setFade(0.0f, 0.0f, 0.0f, 0.0f);
             if (onSampleChanged) onSampleChanged();
         };
         addAndMakeVisible(resetBtn);
@@ -111,6 +110,11 @@ public:
     void updateSoloState()
     {
         soloToggle.setToggleState(processor.isLaneSolo(true), juce::dontSendNotification);
+    }
+
+    void resetCustomSampleState()
+    {
+        browseBtn.setButtonText("BROWSE");
     }
 
     void setSelected(bool selected)

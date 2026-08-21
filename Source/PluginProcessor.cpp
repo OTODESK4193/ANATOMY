@@ -1002,10 +1002,12 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     void AnatomyAudioProcessor::storeCustomSampleFromUI(bool isTransient, const juce::AudioBuffer<float>& newBuffer, double sr) noexcept
     {
         const juce::ScopedLock sl(lock);
+        float durationMs = (sr > 0.0) ? (static_cast<float>(newBuffer.getNumSamples()) / static_cast<float>(sr)) * 1000.0f : 0.0f;
+
         if (isTransient)
         {
             customTransBuffer.makeCopyOf(newBuffer);
-            float durationMs = (static_cast<float>(newBuffer.getNumSamples()) / static_cast<float>(sr)) * 1000.0f;
+            customTransientReplacer.loadSample(newBuffer, sr);
             transStartOffsetMs = 0.0f;
             transEndOffsetMs = durationMs;
             customTransientReplacer.setStartOffsetMs(0.0f);
@@ -1014,13 +1016,12 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
         else
         {
             customTonalBuffer.makeCopyOf(newBuffer);
-            float durationMs = (static_cast<float>(newBuffer.getNumSamples()) / static_cast<float>(sr)) * 1000.0f;
+            customTonalReplacer.loadSample(newBuffer, sr);
             tonalStartOffsetMs = 0.0f;
             tonalEndOffsetMs = durationMs;
             customTonalReplacer.setStartOffsetMs(0.0f);
             customTonalReplacer.setEndOffsetMs(durationMs);
         }
-        fileSampleRate = sr;
         updateActiveSampleData();
         offlineMixRenderer.triggerRender();
     }
@@ -1028,25 +1029,25 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     void AnatomyAudioProcessor::clearCustomSampleFromUI(bool isTransient) noexcept
     {
         const juce::ScopedLock sl(lock);
-        if (isTransient) customTransBuffer.setSize(0, 0);
-        else             customTonalBuffer.setSize(0, 0);
-
-        const juce::AudioBuffer<float>& activeTrans = (customTransBuffer.getNumSamples() > 0) ? customTransBuffer : transBufferThread;
-        const juce::AudioBuffer<float>& activeTonal = (customTonalBuffer.getNumSamples() > 0) ? customTonalBuffer : tonalBufferThread;
-
         if (isTransient)
         {
+            customTransBuffer.setSize(0, 0);
+            customTransientReplacer.clearSample();
+            float origDurationMs = (fileSampleRate > 0.0) ? (static_cast<float>(transBufferThread.getNumSamples()) / static_cast<float>(fileSampleRate)) * 1000.0f : 0.0f;
             transStartOffsetMs = 0.0f;
-            transEndOffsetMs = (static_cast<float>(activeTrans.getNumSamples()) / static_cast<float>(fileSampleRate)) * 1000.0f;
+            transEndOffsetMs = origDurationMs;
             customTransientReplacer.setStartOffsetMs(0.0f);
-            customTransientReplacer.setEndOffsetMs(transEndOffsetMs);
+            customTransientReplacer.setEndOffsetMs(origDurationMs);
         }
         else
         {
+            customTonalBuffer.setSize(0, 0);
+            customTonalReplacer.clearSample();
+            float origDurationMs = (fileSampleRate > 0.0) ? (static_cast<float>(tonalBufferThread.getNumSamples()) / static_cast<float>(fileSampleRate)) * 1000.0f : 0.0f;
             tonalStartOffsetMs = 0.0f;
-            tonalEndOffsetMs = (static_cast<float>(activeTonal.getNumSamples()) / static_cast<float>(fileSampleRate)) * 1000.0f;
+            tonalEndOffsetMs = origDurationMs;
             customTonalReplacer.setStartOffsetMs(0.0f);
-            customTonalReplacer.setEndOffsetMs(tonalEndOffsetMs);
+            customTonalReplacer.setEndOffsetMs(origDurationMs);
         }
 
         updateActiveSampleData();
@@ -1355,6 +1356,12 @@ void OfflineMixRenderer::executeRender()
     int oInSmp = static_cast<int>((oInMs / 1000.0) * sr);
     int oOutSmp = static_cast<int>((oOutMs / 1000.0) * sr);
 
+    int soloMode = processor.getSoloMode();
+    float fStart = processor.fullMixStartOffsetMs;
+    float fEnd = processor.fullMixEndOffsetMs;
+    int fStartSmp = static_cast<int>((fStart / 1000.0) * sr);
+    int fEndSmp = (fEnd > 0.0f) ? static_cast<int>((fEnd / 1000.0) * sr) : maxSamples;
+
     for (int s = 0; s < maxSamples; ++s)
     {
         float tL = 0.0f, tR = 0.0f;
@@ -1394,8 +1401,22 @@ void OfflineMixRenderer::executeRender()
         outTonalRendered.setSample(0, s, oL);
         outTonalRendered.setSample(1, s, oR);
 
-        outputMix.setSample(0, s, tL + oL);
-        outputMix.setSample(1, s, tR + oR);
+        float mixL = (soloMode == 2) ? 0.0f : tL;
+        float mixR = (soloMode == 2) ? 0.0f : tR;
+        if (soloMode != 1)
+        {
+            mixL += oL;
+            mixR += oR;
+        }
+
+        if (s < fStartSmp || s >= fEndSmp)
+        {
+            mixL = 0.0f;
+            mixR = 0.0f;
+        }
+
+        outputMix.setSample(0, s, mixL);
+        outputMix.setSample(1, s, mixR);
 
         float tEnergy = (tL * tL) + (tR * tR);
         float oEnergy = (oL * oL) + (oR * oR);

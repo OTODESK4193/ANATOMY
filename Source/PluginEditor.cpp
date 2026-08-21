@@ -164,8 +164,29 @@ void AnatomyAudioProcessorEditor::updateSoloButtonStates()
 
 void AnatomyAudioProcessorEditor::resetAllParameters()
 {
+    // 1. カスタムサンプルをクリアして最初のHPSS分離音源に戻す
+    audioProcessor.clearCustomSampleFromUI(true);
+    audioProcessor.clearCustomSampleFromUI(false);
+
+    // 2. APVTS パラメータをデフォルト値に戻す
     for (auto* param : audioProcessor.getParameters())
         param->setValueNotifyingHost(param->getDefaultValue());
+
+    // 3. UIのBROWSEボタン表示をリセット
+    transientLane.resetCustomSampleState();
+    tonalLane.resetCustomSampleState();
+
+    // 4. Start / End オフセットとフェードを初期化
+    double sr = audioProcessor.getFileSampleRate();
+    float durMs = (sr > 0.0) ? (static_cast<float>(audioProcessor.getRawInputBufferForUI().getNumSamples()) / static_cast<float>(sr)) * 1000.0f : 0.0f;
+    audioProcessor.setOffsetsFromUI(0, 0.0f, durMs);
+    audioProcessor.setOffsetsFromUI(1, 0.0f, durMs);
+    audioProcessor.setOffsetsFromUI(2, 0.0f, durMs);
+    audioProcessor.setFadeFromUI(true, 0.0f, 0.0f, 0.0f, 0.0f);
+    audioProcessor.setFadeFromUI(false, 0.0f, 0.0f, 0.0f, 0.0f);
+
+    audioProcessor.offlineMixRenderer.triggerRender();
+    repaint();
 }
 
 void AnatomyAudioProcessorEditor::confirmThen(const juce::String& title, const juce::String& message, std::function<void()> action)
