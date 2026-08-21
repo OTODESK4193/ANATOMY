@@ -57,6 +57,7 @@ private:
     juce::ComboBox typeBox;
     ValueKnob amountKnob;
     juce::Label amountLabel;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> amountAttachment;
 
     bool dragOver = false;
     bool selected = false;

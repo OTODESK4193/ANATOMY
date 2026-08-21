@@ -33,31 +33,9 @@ FxSlotCard::FxSlotCard(AnatomyAudioProcessor& processor, int slotIndex,
     amountKnob.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     amountKnob.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
     amountKnob.setColour(juce::Slider::rotarySliderFillColourId, AnatomyColors::accentFull);
-    amountKnob.setRange(0.0, 1.0, 0.01);
-    amountKnob.setValue(1.0, juce::dontSendNotification);
     amountKnob.setPopupDisplayEnabled(true, true, this);
+    amountKnob.setEnabled(false);
     addAndMakeVisible(amountKnob);
-
-    amountKnob.onValueChange = [this]
-    {
-        int fxType = getEffectType(); // 0..5
-        if (fxType >= 0 && fxType < 6)
-        {
-            juce::String pre = getPrefix();
-            juce::String mixParamId;
-            switch (fxType)
-            {
-                case 0: mixParamId = pre + "SatMix"; break;
-                case 1: mixParamId = pre + "BcMix"; break;
-                case 2: mixParamId = pre + "NsMix"; break;
-                case 3: mixParamId = pre + "OttDepth"; break;
-                case 4: mixParamId = pre + "GlueDepth"; break;
-                case 5: mixParamId = pre + "LimMix"; break;
-            }
-            if (auto* p = proc.apvts.getParameter(mixParamId))
-                p->setValueNotifyingHost(p->convertTo0to1((float)amountKnob.getValue()));
-        }
-    };
 
     amountLabel.setText("AMOUNT", juce::dontSendNotification);
     amountLabel.setJustificationType(juce::Justification::centred);
@@ -85,35 +63,21 @@ void FxSlotCard::updateFromRoute()
     {
         int fxType = order[(size_t)slot];
         typeBox.setSelectedId(fxType + 2, juce::dontSendNotification); // +2 maps 0(Sat)->2
-
-        // Amount ノブに現在の Mix パラメータ値を反映
-        juce::String pre = getPrefix();
-        juce::String mixParamId;
-        switch (fxType)
-        {
-            case 0: mixParamId = pre + "SatMix"; break;
-            case 1: mixParamId = pre + "BcMix"; break;
-            case 2: mixParamId = pre + "NsMix"; break;
-            case 3: mixParamId = pre + "OttDepth"; break;
-            case 4: mixParamId = pre + "GlueDepth"; break;
-            case 5: mixParamId = pre + "LimMix"; break;
-        }
-        if (auto* val = proc.apvts.getRawParameterValue(mixParamId))
-            amountKnob.setValue(val->load(), juce::dontSendNotification);
-
-        amountKnob.setEnabled(true);
+        setEffectType(fxType);
     }
     else
     {
         typeBox.setSelectedId(1, juce::dontSendNotification); // 1 = None
-        amountKnob.setEnabled(false);
+        setEffectType(-1);
     }
-    repaint();
 }
 
 void FxSlotCard::setEffectType(int fxType)
 {
+    amountAttachment.reset(); // 既存のアタッチメントを解除
+
     typeBox.setSelectedId(fxType >= 0 ? fxType + 2 : 1, juce::dontSendNotification);
+
     if (fxType >= 0 && fxType < 6)
     {
         juce::String pre = getPrefix();
@@ -127,9 +91,13 @@ void FxSlotCard::setEffectType(int fxType)
             case 4: mixParamId = pre + "GlueDepth"; break;
             case 5: mixParamId = pre + "LimMix"; break;
         }
-        if (auto* val = proc.apvts.getRawParameterValue(mixParamId))
-            amountKnob.setValue(val->load(), juce::dontSendNotification);
+
         amountKnob.setEnabled(true);
+        if (proc.apvts.getParameter(mixParamId) != nullptr)
+        {
+            amountAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+                proc.apvts, mixParamId, amountKnob);
+        }
     }
     else
     {
