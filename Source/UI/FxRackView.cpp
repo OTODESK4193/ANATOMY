@@ -61,8 +61,10 @@ FxRackView::FxRackView(AnatomyAudioProcessor& p) : proc(p)
     ottBandsBtn.setColour(juce::TextButton::textColourOffId, AnatomyColors::textDim);
     ottBandsBtn.setColour(juce::TextButton::textColourOnId, AnatomyColors::text);
     ottBandsBtn.onClick = [this] {
-        showOttBands = ottBandsBtn.getToggleState();
-        rebuildDetails();
+        juce::MessageManager::callAsync([this] {
+            showOttBands = ottBandsBtn.getToggleState();
+            rebuildDetails();
+        });
     };
 
     // OTT LOW/MID/HIGH ボタン
@@ -77,8 +79,10 @@ FxRackView::FxRackView(AnatomyAudioProcessor& p) : proc(p)
         ottBandSelectBtns[i].setColour(juce::TextButton::textColourOffId, AnatomyColors::textDim);
         ottBandSelectBtns[i].setColour(juce::TextButton::textColourOnId, juce::Colours::black);
         ottBandSelectBtns[i].onClick = [this, i] {
-            selectedOttBand = i;
-            rebuildDetails();
+            juce::MessageManager::callAsync([this, i] {
+                selectedOttBand = i;
+                rebuildDetails();
+            });
         };
     }
     ottBandSelectBtns[0].setToggleState(true, juce::dontSendNotification);
@@ -380,13 +384,16 @@ void FxRackView::layoutDetails()
     // OTT BANDS / Band Selectors
     if (fxType == 3)
     {
+        ottBandsBtn.setBounds(getWidth() - 90, kDetailY + 2, 70, 20);
         if (showOttBands)
         {
             for (int i = 0; i < 3; ++i)
-                ottBandSelectBtns[i].setBounds(x, y + 10 + i * 24, 64, 20);
-            x += 74;
+            {
+                // 横並びに配置（詳細エリアの右上側、ノブの右側に余裕を持たせる）
+                // x=360付近から3つのボタンを並べる
+                ottBandSelectBtns[i].setBounds(340 + i * 55, kDetailY + 2, 50, 20);
+            }
         }
-        ottBandsBtn.setBounds(getWidth() - 90, kDetailY + 2, 70, 20);
     }
 
     // ノブ配置

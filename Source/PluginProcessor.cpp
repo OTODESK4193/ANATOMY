@@ -149,8 +149,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
             float defUp = (b == "Low") ? 0.60f : ((b == "Mid") ? 0.40f : 0.15f);
             float defDown = (b == "Low") ? 0.75f : ((b == "Mid") ? 0.70f : 0.60f);
 
-            params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "Ott" + b + "Up", 1 }, pre + " OTT " + b + " Upward Comp", 0.0f, 1.0f, defUp));
-            params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "Ott" + b + "Down", 1 }, pre + " OTT " + b + " Downward Comp", 0.0f, 1.0f, defDown));
+            params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "Ott" + b + "Up", 1 }, pre + " OTT " + b + " Upward Comp", 0.0f, 100.0f, defUp * 100.0f));
+            params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "Ott" + b + "Down", 1 }, pre + " OTT " + b + " Downward Comp", 0.0f, 100.0f, defDown * 100.0f));
             params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "Ott" + b + "Gain", 1 }, pre + " OTT " + b + " Band Gain", -24.0f, 24.0f, 0.0f));
         }
 
@@ -755,25 +755,22 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     {
         int soloMode = currentSoloMode.load(std::memory_order_acquire);
 
+        // Before (Soloなし = 完全原音再生)
         if (soloMode == 0)
         {
-            // BUG3修正: Before(ソロなし) = D&DしたWAVの完全原音を再生
-            // trans/tonal分離なし、エフェクトなし、オフセットなし
             double rawIdx = voice.clickReadIndex;
             if (rawInputBuffer.getNumSamples() > 0 && rawIdx >= 0.0 && rawIdx < static_cast<double>(rawInputBuffer.getNumSamples() - 1))
             {
                 float rawL = readInterpolated(rawInputBuffer, 0, rawIdx);
                 float rawR = rawInputBuffer.getNumChannels() > 1
                     ? readInterpolated(rawInputBuffer, 1, rawIdx) : rawL;
-                // trans+tonalの合計として出力（processBlockで transL+tonalL するため半分ずつ）
                 outTransL = rawL * 0.5f; outTransR = rawR * 0.5f;
                 outTonalL = rawL * 0.5f; outTonalR = rawR * 0.5f;
             }
         }
         else
         {
-            // BUG4修正: Solo+Before = サンプルAのオリジナル分離Trans/Tonalを再生
-            // customバッファは無視、常にtransBufferThread/tonalBufferThreadから読む
+            // Solo+Before = オリジナル分離波形再生 (Customは無視)
             if (soloMode == 1 && transBufferThread.getNumSamples() > 0 && exactClickIdx >= 0.0 && exactClickIdx < static_cast<double>(transBufferThread.getNumSamples() - 1))
             {
                 outTransL = readInterpolated(transBufferThread, 0, exactClickIdx);
@@ -793,36 +790,47 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
         return;
     }
 
+    float tInMs = 0.0f, tOutMs = 0.0f, tInTension = 0.0f, tOutTension = 0.0f;
+    getFadeForUI(true, tInMs, tOutMs, tInTension, tOutTension);
+    float oInMs = 0.0f, oOutMs = 0.0f, oInTension = 0.0f, oOutTension = 0.0f;
+    getFadeForUI(false, oInMs, oOutMs, oInTension, oOutTension);
+
+    float tInSmp = (tInMs / 1000.0f) * static_cast<float>(fileSampleRate);
+    float tOutSmp = (tOutMs / 1000.0f) * static_cast<float>(fileSampleRate);
+    float oInSmp = (oInMs / 1000.0f) * static_cast<float>(fileSampleRate);
+    float oOutSmp = (oOutMs / 1000.0f) * static_cast<float>(fileSampleRate);
+
+    auto getFadeGain = [&](double exactIdx, float startSmp, float endSmp, float inSmp, float outSmp, float inTen, float outTen) -> float {
+        if (exactIdx < startSmp || exactIdx >= endSmp) return 0.0f;
+        float gain = 1.0f;
+        float passed = static_cast<float>(exactIdx - startSmp);
+        float remain = static_cast<float>(endSmp - exactIdx);
+        if (inSmp > 0.0f && passed < inSmp) gain *= calculateFadeGain(passed / inSmp, inTen);
+        if (outSmp > 0.0f && remain < outSmp) gain *= calculateFadeGain(remain / outSmp, outTen);
+        return gain;
+    };
+
+    float transGain = getFadeGain(exactClickIdx, transStartSamples, transEndSamples, tInSmp, tOutSmp, tInTension, tOutTension);
+    float tonalGain = getFadeGain(exactSustainIdx, tonalStartSamples, tonalEndSamples, oInSmp, oOutSmp, oInTension, oOutTension);
+
+    // Fast Path (Pitch Shift == 1.0, Custom Sample なし)
     if (!hasCustomTrans && !hasCustomTonal && std::abs(transScale - 1.0f) < 0.01f && std::abs(tonalScale - 1.0f) < 0.01f)
     {
-        if (currentSoloMode != 2 && transBufferThread.getNumSamples() > 0 && exactClickIdx < static_cast<double>(transBufferThread.getNumSamples() - 1))
+        if (currentSoloMode != 2 && transGain > 0.0f && transBufferThread.getNumSamples() > 0 && exactClickIdx < static_cast<double>(transBufferThread.getNumSamples() - 1))
         {
-            outTransL = readInterpolated(transBufferThread, 0, exactClickIdx);
-            outTransR = transBufferThread.getNumChannels() > 1
-                ? readInterpolated(transBufferThread, 1, exactClickIdx)
-                : outTransL;
+            float l = readInterpolated(transBufferThread, 0, exactClickIdx);
+            float r = transBufferThread.getNumChannels() > 1 ? readInterpolated(transBufferThread, 1, exactClickIdx) : l;
+            outTransL = l * transGain * voice.triggerVelocity * voice.releaseGain;
+            outTransR = r * transGain * voice.triggerVelocity * voice.releaseGain;
         }
-        if (currentSoloMode != 1 && tonalBufferThread.getNumSamples() > 0 && exactSustainIdx >= 0.0 && exactSustainIdx < static_cast<double>(tonalBufferThread.getNumSamples() - 1))
+        if (currentSoloMode != 1 && tonalGain > 0.0f && tonalBufferThread.getNumSamples() > 0 && exactSustainIdx >= 0.0 && exactSustainIdx < static_cast<double>(tonalBufferThread.getNumSamples() - 1))
         {
-            outTonalL = readInterpolated(tonalBufferThread, 0, exactSustainIdx);
-            outTonalR = tonalBufferThread.getNumChannels() > 1
-                ? readInterpolated(tonalBufferThread, 1, exactSustainIdx)
-                : outTonalL;
-
-            // Tonal End フェードアウト（fast path）
-            constexpr float fadeMs = 50.0f;
-            float fadeSmp = (fadeMs / 1000.0f) * static_cast<float>(fileSampleRate);
-            float fadeStart = tonalEndSamples - fadeSmp;
-            if (fadeSmp > 0.0f && exactSustainIdx >= fadeStart)
-            {
-                float p = static_cast<float>((exactSustainIdx - fadeStart) / fadeSmp);
-                float f = std::cos(p * juce::MathConstants<float>::halfPi);
-                f *= f;
-                outTonalL *= f; outTonalR *= f;
-            }
+            float l = readInterpolated(tonalBufferThread, 0, exactSustainIdx);
+            float r = tonalBufferThread.getNumChannels() > 1 ? readInterpolated(tonalBufferThread, 1, exactSustainIdx) : l;
+            outTonalL = l * tonalGain * voice.triggerVelocity * voice.releaseGain;
+            outTonalR = r * tonalGain * voice.triggerVelocity * voice.releaseGain;
         }
-
-        // FullMix Start/End トリミングゲート (fast path)
+        
         if (fullMixEndOffsetMs > 0.0f)
         {
             double curMs = (voice.clickReadIndex / fileSampleRate) * 1000.0;
@@ -832,7 +840,6 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
                 outTonalL = 0.0f; outTonalR = 0.0f;
             }
         }
-
         voice.clickReadIndex += voice.pitchRatio;
         voice.sustainReadIndex += voice.pitchRatio;
         return;
@@ -841,20 +848,8 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     const auto& click = (!hasCustomTrans) ? transBufferThread : customTransBuffer;
     const auto& sustain = (!hasCustomTonal) ? tonalBufferThread : customTonalBuffer;
 
-    bool transGateOpen = (voice.clickReadIndex < transHoldSamples) && (exactClickIdx < transEndSamples);
-    bool tonalGateOpen = (exactSustainIdx < tonalEndSamples);
-
-    // Tonal End フェードアウト: 終端5ms手前からcos²フェードで自然に消音
-    constexpr float tonalFadeOutMs = 50.0f;
-    float tonalFadeOutSamples = (tonalFadeOutMs / 1000.0f) * static_cast<float>(fileSampleRate);
-    float tonalFadeOutStart = tonalEndSamples - tonalFadeOutSamples;
-    float tonalEndFade = 1.0f;
-    if (tonalFadeOutSamples > 0.0f && exactSustainIdx >= tonalFadeOutStart && exactSustainIdx < tonalEndSamples)
-    {
-        float progress = static_cast<float>((exactSustainIdx - tonalFadeOutStart) / tonalFadeOutSamples);
-        tonalEndFade = std::cos(progress * juce::MathConstants<float>::halfPi);
-        tonalEndFade *= tonalEndFade; // cos²
-    }
+    bool transGateOpen = (transGain > 0.0f) && (voice.clickReadIndex < transHoldSamples);
+    bool tonalGateOpen = (tonalGain > 0.0f);
 
     float shiftedClick = 0.0f;
     float shiftedSustain = 0.0f;
@@ -863,7 +858,7 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     {
         if (hasCustomTrans)
             shiftedClick = customTransientReplacer.processSample(voice.clickReadIndex, voice.pitchRatio, transScale, clickHold, clickCurve, hostSampleRate, currentSoloMode);
-        else if (voice.transShifter && cIdx < click.getNumSamples())
+        else if (voice.transShifter && cIdx >= 0 && cIdx < click.getNumSamples())
             shiftedClick = voice.transShifter->processSample(click, cIdx, transScale);
     }
     voice.clickReadIndex += voice.pitchRatio;
@@ -877,22 +872,21 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     }
     voice.sustainReadIndex += voice.pitchRatio;
 
-    float transFade = 1.0f;
-    float tonalFade = 1.0f;
+    float sustainClickFade = 1.0f;
+    float sustainTonalFade = 1.0f;
     float currentMs = (voice.sustainReadIndex / fileSampleRate) * 1000.0f;
 
     if (currentMs < clickCurve && clickCurve > 0.0f)
     {
         float progress = currentMs / clickCurve;
         float angle = progress * juce::MathConstants<float>::halfPi;
-        transFade = std::cos(angle);
-        tonalFade = std::sin(angle);
+        sustainClickFade = std::cos(angle);
+        sustainTonalFade = std::sin(angle);
     }
 
-    float finalClick = shiftedClick * voice.triggerVelocity * voice.releaseGain * transFade;
-    float finalSustain = shiftedSustain * voice.triggerVelocity * voice.releaseGain * tonalFade * tonalEndFade;
+    float finalClick = shiftedClick * voice.triggerVelocity * voice.releaseGain * sustainClickFade * transGain;
+    float finalSustain = shiftedSustain * voice.triggerVelocity * voice.releaseGain * sustainTonalFade * tonalGain;
 
-    // FullMix Start/End トリミングゲート (normal path)
     if (fullMixEndOffsetMs > 0.0f)
     {
         double curMs = (voice.clickReadIndex / fileSampleRate) * 1000.0;
