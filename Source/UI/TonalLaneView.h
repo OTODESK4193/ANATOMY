@@ -67,7 +67,14 @@ public:
         };
         addAndMakeVisible(soloToggle);
 
-        // ノブ設定 (3基: RELEASE, PITCH, GAIN - FadeInはView操作に一本化)
+        // SNAP ボタン (ゼロクロス吸着 ON/OFF)
+        snapToggle.setToggleState(true, juce::dontSendNotification);
+        snapToggle.onClick = [this] {
+            waveform.setSnapEnabled(snapToggle.getToggleState());
+        };
+        addAndMakeVisible(snapToggle);
+
+        // ノブ設定 (3基: RELEASE, PITCH, GAIN)
         auto setupKnob = [this](ValueKnob& k, juce::Label& l, const juce::String& text, juce::Colour c) {
             k.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
             k.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 58, 14);
@@ -124,9 +131,9 @@ public:
         g.drawRoundedRectangle(bounds.reduced(0.5f), 8.0f, isSelected ? 1.5f : 1.0f);
 
         // ヘッダー部
-        g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
         g.setColour(AnatomyColors::accentTonal);
-        g.drawText("TONAL  (BODY / HARMONICS)", 12, 6, getWidth() - 220, 20, juce::Justification::centredLeft);
+        g.drawText("TONAL (BODY / HARMONICS)", 12, 6, getWidth() - 250, 20, juce::Justification::centredLeft);
 
         // ヘッダー下仕切り線
         g.setColour(AnatomyColors::panelLine);
@@ -135,18 +142,20 @@ public:
 
     void resized() override
     {
-        // ヘッダーボタン: 右上 (BROWSE, RESET, EXPORT, SOLO)
-        int btnW = 50, btnH = 20, gap = 4;
-        int bx = getWidth() - (btnW * 3 + 46 + gap * 3) - 10;
-        browseBtn.setBounds(bx, 6, btnW, btnH);
-        resetBtn.setBounds(bx + btnW + gap, 6, btnW, btnH);
-        exportBtn.setBounds(bx + (btnW + gap) * 2, 6, btnW, btnH);
-        soloToggle.setBounds(bx + (btnW + gap) * 3, 6, 46, btnH);
+        // ヘッダーボタン: 右上 (BROWSE 46, RESET 40, EXPORT 46, SOLO 46, SNAP 44)
+        int gap = 3;
+        int bx = getWidth() - 10;
+
+        bx -= 44; snapToggle.setBounds(bx, 5, 44, 21);
+        bx -= (gap + 46); soloToggle.setBounds(bx, 5, 46, 21);
+        bx -= (gap + 46); exportBtn.setBounds(bx, 5, 46, 21);
+        bx -= (gap + 40); resetBtn.setBounds(bx, 5, 40, 21);
+        bx -= (gap + 48); browseBtn.setBounds(bx, 5, 48, 21);
 
         // 波形エリア
         waveform.setBounds(10, 36, getWidth() - 20, getHeight() - 120);
 
-        // 下部ノブエリア (3基均等配置: RELEASE, PITCH, GAIN)
+        // 下部ノブエリア (3基均等配置)
         int knobY = getHeight() - 80;
         int totalW = getWidth() - 20;
         int kw = totalW / 3;
@@ -263,6 +272,7 @@ private:
     juce::TextButton resetBtn;
     juce::TextButton exportBtn;
     GlowToggle soloToggle{ "SOLO", AnatomyColors::accentTonal };
+    GlowToggle snapToggle{ "SNAP", AnatomyColors::mint };
 
     ValueKnob knobRelease;
     ValueKnob knobPitch;

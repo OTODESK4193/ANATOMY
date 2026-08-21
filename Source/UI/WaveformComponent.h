@@ -28,6 +28,7 @@ public:
     void setFade(float inMs, float outMs, float inTension, float outTension) noexcept;
     void setRatioData(const std::vector<float>& ratios) noexcept;
     void setLaneProperties(AnatomyAudioProcessor& processor, int laneIndex) noexcept;
+    void setSnapEnabled(bool enabled) noexcept { snapEnabled = enabled; repaint(); }
 
     void mouseDown(const juce::MouseEvent& e) override;
     void mouseDrag(const juce::MouseEvent& e) override;
@@ -62,6 +63,9 @@ private:
     float fadeInTension = 0.0f;  // -1.0 .. +1.0
     float fadeOutTension = 0.0f; // -1.0 .. +1.0
 
+    // スナップ設定
+    bool snapEnabled = true;
+
     // 極限ズーム ＆ スクロール
     float zoomLevel = 1.0f;
     float viewOffsetMs = 0.0f; // 画面左端のミリ秒
@@ -76,10 +80,6 @@ private:
     juce::Point<float> dragStartPos;
 
     bool isSnappedToZeroCrossing = false;
-
-    // ズームボタン領域
-    juce::Rectangle<int> zoomInArea;
-    juce::Rectangle<int> zoomOutArea;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(WaveformComponent)
 };
