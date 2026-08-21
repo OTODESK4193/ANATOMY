@@ -1346,126 +1346,67 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
 
     int transSamples = localTrans.getNumSamples();
     int tonalSamples = localTonal.getNumSamples();
-    int maxSamples = std::max(transSamples, tonalSamples);
-    if (maxSamples == 0) return {};
+    int rawMaxSamples = std::max(transSamples, tonalSamples);
+    if (rawMaxSamples == 0) return {};
 
-    // 1. Transient ドライ音声レンダリング（Start/End/Fade/Hold/Gain/Pitch）
-    juce::AudioBuffer<float> workTrans(2, maxSamples);
-    workTrans.clear();
-    for (int ch = 0; ch < 2; ++ch)
-        if (transSamples > 0) workTrans.copyFrom(ch, 0, localTrans, std::min(ch, localTrans.getNumChannels() - 1), 0, transSamples);
+    // エフェクトの余韻（Decay等）を含めるためにテイルを追加
+    int tailSamples = static_cast<int>(1.5 * sr);
+    int maxSamples = rawMaxSamples + tailSamples;
 
-    float transPitch = apvts.getRawParameterValue("transPitch")->load();
-    if (std::abs(transPitch) >= 0.01f)
-    {
-        float ratio = std::pow(2.0f, transPitch / 12.0f);
-        juce::AudioBuffer<float> copy(workTrans);
-        workTrans.clear();
-        for (int ch = 0; ch < 2; ++ch)
-        {
-            float* d = workTrans.getWritePointer(ch);
-            const float* s = copy.getReadPointer(ch);
-            for (int i = 0; i < maxSamples; ++i)
-            {
-                double srcIdx = i * ratio;
-                if (srcIdx < maxSamples) d[i] = s[static_cast<int>(srcIdx)];
-            }
-        }
-    }
-
-    float transGain = std::pow(10.0f, apvts.getRawParameterValue("transMixGain")->load() / 20.0f);
-    float transStart = transStartOffsetMs;
-    float transEnd = transEndOffsetMs;
-    float clickHold = apvts.getRawParameterValue("clickLength")->load();
-    float sustainFade = apvts.getRawParameterValue("clickCurve")->load();
-    int tStartSmp = static_cast<int>((transStart / 1000.0) * sr);
-    int tEndSmp = static_cast<int>((transEnd / 1000.0) * sr);
-    int tHoldSmp = static_cast<int>(((clickHold + sustainFade) / 1000.0) * sr);
-
-    float tInMs, tOutMs, tInTension, tOutTension;
-    getFadeForUI(true, tInMs, tOutMs, tInTension, tOutTension);
-    int tInSmp = static_cast<int>((tInMs / 1000.0) * sr);
-    int tOutSmp = static_cast<int>((tOutMs / 1000.0) * sr);
-
+    // 1. レンダリング用のバッファと VoiceState の準備
     juce::AudioBuffer<float> renderedTrans(2, maxSamples);
-    renderedTrans.clear();
-    for (int s = 0; s < maxSamples; ++s)
-    {
-        int exactClick = tStartSmp + s;
-        if (s < tHoldSmp && exactClick < tEndSmp && exactClick < transSamples)
-        {
-            float fGain = 1.0f;
-            if (tInSmp > 1 && s < tInSmp)
-                fGain *= calculateFadeGain(static_cast<float>(s) / static_cast<float>(tInSmp), tInTension);
-            int remT = tEndSmp - exactClick;
-            if (tOutSmp > 1 && remT < tOutSmp)
-                fGain *= calculateFadeGain(static_cast<float>(remT) / static_cast<float>(tOutSmp), tOutTension);
-
-            renderedTrans.setSample(0, s, workTrans.getSample(0, exactClick) * transGain * fGain);
-            renderedTrans.setSample(1, s, workTrans.getSample(1, exactClick) * transGain * fGain);
-        }
-    }
-
-    // Transient 専用 FX 適用！
-    applyEffectsOffline(renderedTrans, TargetRoute::Transient, sr);
-
-    // 2. Tonal ドライ音声レンダリング（Start/End/Fade/Delay/Gain/Pitch）
-    juce::AudioBuffer<float> workTonal(2, maxSamples);
-    workTonal.clear();
-    for (int ch = 0; ch < 2; ++ch)
-        if (tonalSamples > 0) workTonal.copyFrom(ch, 0, localTonal, std::min(ch, localTonal.getNumChannels() - 1), 0, tonalSamples);
-
-    float tonalPitch = apvts.getRawParameterValue("tonalPitch")->load();
-    if (std::abs(tonalPitch) >= 0.01f)
-    {
-        float ratio = std::pow(2.0f, tonalPitch / 12.0f);
-        juce::AudioBuffer<float> copy(workTonal);
-        workTonal.clear();
-        for (int ch = 0; ch < 2; ++ch)
-        {
-            float* d = workTonal.getWritePointer(ch);
-            const float* s = copy.getReadPointer(ch);
-            for (int i = 0; i < maxSamples; ++i)
-            {
-                double srcIdx = i * ratio;
-                if (srcIdx < maxSamples) d[i] = s[static_cast<int>(srcIdx)];
-            }
-        }
-    }
-
-    float tonalGain = std::pow(10.0f, apvts.getRawParameterValue("tonalMixGain")->load() / 20.0f);
-    float tonalStart = tonalStartOffsetMs;
-    float tonalEnd = tonalEndOffsetMs;
-    float tonalDelayMs = apvts.getRawParameterValue("tonalDelay")->load();
-    int oStartSmp = static_cast<int>((tonalStart / 1000.0) * sr);
-    int oEndSmp = static_cast<int>((tonalEnd / 1000.0) * sr);
-    int tonalOffsetSmp = static_cast<int>(-(tonalDelayMs / 1000.0) * sr);
-
-    float oInMs, oOutMs, oInTension, oOutTension;
-    getFadeForUI(false, oInMs, oOutMs, oInTension, oOutTension);
-    int oInSmp = static_cast<int>((oInMs / 1000.0) * sr);
-    int oOutSmp = static_cast<int>((oOutMs / 1000.0) * sr);
-
     juce::AudioBuffer<float> renderedTonal(2, maxSamples);
+    renderedTrans.clear();
     renderedTonal.clear();
+
+    VoiceState exportVoice;
+    exportVoice.sampleData = masterSampleData.load(std::memory_order_relaxed); // atomic load
+    exportVoice.clickReadIndex = 0.0;
+    exportVoice.sustainReadIndex = 0.0;
+    
+    // ピッチレシオ（generateVoiceSample は内部でこれを使う）
+    exportVoice.pitchRatio = 1.0; 
+    exportVoice.triggerVelocity = 1.0f;
+    exportVoice.releaseGain = 1.0f;
+    
+    exportVoice.reallocateShifters(sr);
+
+    float clickHold = apvts.getRawParameterValue("clickLength")->load();
+    float clickCurve = apvts.getRawParameterValue("clickCurve")->load();
+    
+    float transPitch = apvts.getRawParameterValue("transPitch")->load();
+    float tonalPitch = apvts.getRawParameterValue("tonalPitch")->load();
+    float transScale = (std::abs(transPitch) >= 0.01f) ? std::pow(2.0f, transPitch / 12.0f) : 1.0f;
+    float tonalScale = (std::abs(tonalPitch) >= 0.01f) ? std::pow(2.0f, tonalPitch / 12.0f) : 1.0f;
+    
+    // Tonal Offset の適用
+    float tonalDelayMs = apvts.getRawParameterValue("tonalDelay")->load();
+    exportVoice.sustainReadIndex = -(tonalDelayMs / 1000.0) * sr;
+
+    // Mix Gain の適用は generateVoiceSample 内には無いので後でかける
+    float transMixGain = std::pow(10.0f, apvts.getRawParameterValue("transMixGain")->load() / 20.0f);
+    float tonalMixGain = std::pow(10.0f, apvts.getRawParameterValue("tonalMixGain")->load() / 20.0f);
+
+    // 一時的にSoloモードを解除して、全パートが鳴る状態(0)でレンダリングする
+    int savedSolo = currentSoloMode.load();
+    currentSoloMode.store(0);
+
     for (int s = 0; s < maxSamples; ++s)
     {
-        int exactSustain = oStartSmp + s + tonalOffsetSmp;
-        if (exactSustain >= 0 && exactSustain < oEndSmp && exactSustain < tonalSamples)
-        {
-            float fGain = 1.0f;
-            if (oInSmp > 1 && s < oInSmp)
-                fGain *= calculateFadeGain(static_cast<float>(s) / static_cast<float>(oInSmp), oInTension);
-            int remO = oEndSmp - exactSustain;
-            if (oOutSmp > 1 && remO < oOutSmp)
-                fGain *= calculateFadeGain(static_cast<float>(remO) / static_cast<float>(oOutSmp), oOutTension);
-
-            renderedTonal.setSample(0, s, workTonal.getSample(0, exactSustain) * tonalGain * fGain);
-            renderedTonal.setSample(1, s, workTonal.getSample(1, exactSustain) * tonalGain * fGain);
-        }
+        float outTransL = 0.0f, outTransR = 0.0f, outTonalL = 0.0f, outTonalR = 0.0f;
+        generateVoiceSample(exportVoice, outTransL, outTransR, outTonalL, outTonalR, clickHold, clickCurve, transScale, tonalScale, sr);
+        
+        renderedTrans.setSample(0, s, outTransL * transMixGain);
+        renderedTrans.setSample(1, s, outTransR * transMixGain);
+        renderedTonal.setSample(0, s, outTonalL * tonalMixGain);
+        renderedTonal.setSample(1, s, outTonalR * tonalMixGain);
     }
+    
+    // Soloモード復元
+    currentSoloMode.store(savedSolo);
 
-    // Tonal 専用 FX 適用！
+    // 2. 専用 FX 適用！
+    applyEffectsOffline(renderedTrans, TargetRoute::Transient, sr);
     applyEffectsOffline(renderedTonal, TargetRoute::Tonal, sr);
 
     // 3. 出力バッファ決定
@@ -1501,7 +1442,7 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
 
         // FullMix の Start/End オフセットでトリミング
         int fStartSmp = static_cast<int>((fullMixStartOffsetMs / 1000.0) * sr);
-        int fEndSmp = (fullMixEndOffsetMs > 0.0f) ? static_cast<int>((fullMixEndOffsetMs / 1000.0) * sr) : maxSamples;
+        int fEndSmp = (fullMixEndOffsetMs > 0.0f) ? (static_cast<int>((fullMixEndOffsetMs / 1000.0) * sr) + static_cast<int>(1.5 * sr)) : maxSamples;
 
         fStartSmp = juce::jlimit(0, maxSamples, fStartSmp);
         fEndSmp = juce::jlimit(fStartSmp, maxSamples, fEndSmp);

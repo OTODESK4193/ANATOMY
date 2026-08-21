@@ -384,14 +384,14 @@ void FxRackView::layoutDetails()
     // OTT BANDS / Band Selectors
     if (fxType == 3)
     {
-        ottBandsBtn.setBounds(getWidth() - 90, kDetailY + 2, 70, 20);
+        int btnX = getWidth() - 90;
+        ottBandsBtn.setBounds(btnX, kDetailY + 2, 70, 20);
         if (showOttBands)
         {
-            for (int i = 0; i < 3; ++i)
+            for (int i = 2; i >= 0; --i) // HIGH(2), MID(1), LOW(0) の順に左へ
             {
-                // 横並びに配置（詳細エリアの右上側、ノブの右側に余裕を持たせる）
-                // x=360付近から3つのボタンを並べる
-                ottBandSelectBtns[i].setBounds(340 + i * 55, kDetailY + 2, 50, 20);
+                btnX -= 55;
+                ottBandSelectBtns[i].setBounds(btnX, kDetailY + 2, 50, 20);
             }
         }
     }
