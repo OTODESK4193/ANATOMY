@@ -166,11 +166,11 @@ public:
         bx -= (gap + 44); resetBtn.setBounds(bx, 5, 44, 21);
         bx -= (gap + 52); browseBtn.setBounds(bx, 5, 52, 21);
 
-        // 波形エリア (下部ノブエリアの上まで)
-        waveform.setBounds(10, 36, getWidth() - 20, getHeight() - 100);
+        // 波形エリア (TransientLaneView と完全同一の高さ)
+        waveform.setBounds(10, 36, getWidth() - 20, getHeight() - 120);
 
-        // 下部ノブエリア (4基等分割配置)
-        int knobY = getHeight() - 68;
+        // 下部ノブエリア (4基等分割配置, TransientLaneView と完全同一のY座標)
+        int knobY = getHeight() - 80;
         int totalW = getWidth() - 20;
         int kw = totalW / 4;
 

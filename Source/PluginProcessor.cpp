@@ -72,10 +72,17 @@ AnatomyAudioProcessor::~AnatomyAudioProcessor()
     // 1. バックグラウンドスレッドを最優先で安全停止
     offlineMixRenderer.signalThreadShouldExit();
     offlineMixRenderer.notify();
-    offlineMixRenderer.stopThread(2000);
+    offlineMixRenderer.stopThread(3000);
 
     signalThreadShouldExit();
-    stopThread(2000);
+    stopThread(3000);
+
+    for (int l = 0; l < 4; ++l)
+        ExportRecordingCore::lanes[l].state.store(ExportRecordingCore::State::Idle);
+
+    activeVoice.reset();
+    for (int i = 0; i < maxReleasingVoices; ++i)
+        releasingVoices[i].reset();
 
     // 2. パラメータリスナーの解除
     apvts.removeParameterListener("clickLength", this);
@@ -218,7 +225,19 @@ void AnatomyAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     smoothedLayerGain.reset(sampleRate, 0.005);
 }
 
-void AnatomyAudioProcessor::releaseResources() {}
+void AnatomyAudioProcessor::releaseResources()
+{
+    activeVoice.reset();
+    for (int i = 0; i < maxReleasingVoices; ++i)
+        releasingVoices[i].reset();
+
+    for (int l = 0; l < 4; ++l)
+        ExportRecordingCore::lanes[l].state.store(ExportRecordingCore::State::Idle);
+
+    offlineMixRenderer.signalThreadShouldExit();
+    offlineMixRenderer.notify();
+    signalThreadShouldExit();
+}
 
 bool AnatomyAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 {
@@ -1684,6 +1703,8 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
 
 void OfflineMixRenderer::executeRender()
 {
+    if (threadShouldExit()) return;
+
     juce::AudioBuffer<float> localTrans, localTonal, localLayer;
     double sr = 44100.0;
 
@@ -1856,8 +1877,11 @@ void OfflineMixRenderer::executeRender()
     }
 
     // 各パートに専用 FX をオフライン適用
+    if (threadShouldExit()) return;
     processor.applyEffectsOffline(outTransRendered, TargetRoute::Transient, sr);
+    if (threadShouldExit()) return;
     processor.applyEffectsOffline(outTonalRendered, TargetRoute::Tonal, sr);
+    if (threadShouldExit()) return;
     processor.applyEffectsOffline(outLayerRendered, TargetRoute::Layer, sr);
 
     for (int s = 0; s < maxSamples; ++s)

@@ -474,7 +474,7 @@ void WaveformComponent::paint(juce::Graphics& g)
                 fadeArea.startNewSubPath(fOutStartX, 0.0f);
                 for (float fx = fOutStartX; fx <= fOutEndX; fx += 2.0f)
                 {
-                    float prog = (endX - fx) / (endX - (endX - fadeOutMs));
+                    float prog = (endX - fx) / (endX - fOutStartX);
                     float gain = calculateFadeGain(prog, fadeOutTension);
                     float curH = h * (1.0f - gain);
                     fadeArea.lineTo(fx, curH);
@@ -489,7 +489,7 @@ void WaveformComponent::paint(juce::Graphics& g)
                 fadeLine.startNewSubPath(fOutStartX, 4.0f);
                 for (float fx = fOutStartX; fx <= fOutEndX; fx += 2.0f)
                 {
-                    float prog = (endX - fx) / (endX - (endX - fadeOutMs));
+                    float prog = (endX - fx) / (endX - fOutStartX);
                     float gain = calculateFadeGain(prog, fadeOutTension);
                     fadeLine.lineTo(fx, h - gain * (h - 4.0f));
                 }

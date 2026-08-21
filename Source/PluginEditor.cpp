@@ -173,7 +173,12 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
 AnatomyAudioProcessorEditor::~AnatomyAudioProcessorEditor()
 {
     stopTimer();
+    themeCombo.getRootMenu()->setLookAndFeel(nullptr);
     setLookAndFeel(nullptr);
+    for (auto* child : getChildren())
+    {
+        child->setLookAndFeel(nullptr);
+    }
 }
 
 void AnatomyAudioProcessorEditor::updateSoloButtonStates()
