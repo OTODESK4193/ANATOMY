@@ -23,7 +23,18 @@ void WaveformComponent::setLaneProperties(AnatomyAudioProcessor& p, int laneIdx)
 void WaveformComponent::setBuffer(const juce::AudioBuffer<float>& buffer)
 {
     const juce::ScopedLock sl(renderLock);
-    bool isDifferentLength = (internalBuffer.getNumSamples() != buffer.getNumSamples());
+    int numS = buffer.getNumSamples();
+    int numCh = buffer.getNumChannels();
+
+    if (numS == 0 || numCh == 0)
+    {
+        if (internalBuffer.getNumSamples() != 0 || internalBuffer.getNumChannels() != 0)
+            internalBuffer.setSize(0, 0);
+        repaint();
+        return;
+    }
+
+    bool isDifferentLength = (internalBuffer.getNumSamples() != numS || internalBuffer.getNumChannels() != numCh);
     internalBuffer.makeCopyOf(buffer);
     if (isDifferentLength || !hasInitializedZoom)
     {
@@ -36,7 +47,8 @@ void WaveformComponent::setBuffer(const juce::AudioBuffer<float>& buffer)
 void WaveformComponent::autoFitToContent()
 {
     const int numSamples = internalBuffer.getNumSamples();
-    if (numSamples == 0 || sampleRate <= 0.0)
+    const int numChannels = internalBuffer.getNumChannels();
+    if (numSamples == 0 || numChannels == 0 || sampleRate <= 0.0)
     {
         zoomLevel = 1.0f;
         viewOffsetMs = 0.0f;
@@ -132,7 +144,8 @@ void WaveformComponent::setRatioData(const std::vector<float>& ratios) noexcept
 float WaveformComponent::getMsFromX(float x) const noexcept
 {
     const int numSamples = internalBuffer.getNumSamples();
-    if (numSamples == 0 || sampleRate <= 0.0 || getWidth() <= 0) return 0.0f;
+    const int numChannels = internalBuffer.getNumChannels();
+    if (numSamples == 0 || numChannels == 0 || sampleRate <= 0.0 || getWidth() <= 0) return 0.0f;
 
     double totalMs = (static_cast<double>(numSamples) / sampleRate) * 1000.0;
     double visibleMs = totalMs / static_cast<double>(zoomLevel);
@@ -142,7 +155,8 @@ float WaveformComponent::getMsFromX(float x) const noexcept
 float WaveformComponent::getXFromMs(float ms) const noexcept
 {
     const int numSamples = internalBuffer.getNumSamples();
-    if (numSamples == 0 || sampleRate <= 0.0 || getWidth() <= 0) return 0.0f;
+    const int numChannels = internalBuffer.getNumChannels();
+    if (numSamples == 0 || numChannels == 0 || sampleRate <= 0.0 || getWidth() <= 0) return 0.0f;
 
     double totalMs = (static_cast<double>(numSamples) / sampleRate) * 1000.0;
     double visibleMs = totalMs / static_cast<double>(zoomLevel);
@@ -154,7 +168,8 @@ float WaveformComponent::getXFromMs(float ms) const noexcept
 float WaveformComponent::findZeroCrossingMs(float targetMs, float magnetPixels) const noexcept
 {
     const int numSamples = internalBuffer.getNumSamples();
-    if (numSamples <= 1 || sampleRate <= 0.0) return targetMs;
+    const int numChannels = internalBuffer.getNumChannels();
+    if (numSamples <= 1 || numChannels == 0 || sampleRate <= 0.0) return targetMs;
 
     const float* data = internalBuffer.getReadPointer(0);
     int targetSample = static_cast<int>((targetMs / 1000.0f) * sampleRate);
@@ -221,7 +236,8 @@ void WaveformComponent::paint(juce::Graphics& g)
         g.drawVerticalLine(static_cast<int>(gx), 0.0f, h);
 
     const int numSamples = internalBuffer.getNumSamples();
-    if (numSamples == 0 || w <= 0.0f || h <= 0.0f || sampleRate <= 0.0)
+    const int numChannels = internalBuffer.getNumChannels();
+    if (numSamples == 0 || numChannels == 0 || w <= 0.0f || h <= 0.0f || sampleRate <= 0.0)
     {
         g.setColour(AnatomyColors::textDim.withAlpha(0.4f));
         g.setFont(juce::Font(juce::FontOptions(12.0f)));

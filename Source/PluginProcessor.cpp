@@ -1397,11 +1397,6 @@ void OfflineMixRenderer::executeRender()
         renderedTonal.makeCopyOf(workTonal);
         componentRatios = std::move(ratios);
     }
-
-    juce::MessageManager::callAsync([&processor = this->processor]() {
-        if (auto* editor = processor.getActiveEditor())
-            editor->repaint();
-        });
 }
 
 juce::AudioProcessorEditor* AnatomyAudioProcessor::createEditor() { return new AnatomyAudioProcessorEditor(*this); }
