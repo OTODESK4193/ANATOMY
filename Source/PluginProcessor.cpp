@@ -1986,8 +1986,10 @@ void OfflineMixRenderer::executeRender()
         }
     }
 
+    if (threadShouldExit()) return;
     processor.applyEffectsOffline(outputMix, TargetRoute::FullMix, sr);
 
+    if (threadShouldExit()) return;
     {
         const juce::ScopedLock sl(renderLock);
         renderedFullMix.makeCopyOf(outputMix);
