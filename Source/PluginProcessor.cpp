@@ -919,25 +919,18 @@ void AnatomyAudioProcessor::setOffsetsFromUI(bool isTransient, float startMs, fl
 {
     const juce::ScopedLock sl(lock);
 
-    const juce::AudioBuffer<float>& activeTrans = (customTransBuffer.getNumSamples() > 0) ? customTransBuffer : transBufferThread;
-    const juce::AudioBuffer<float>& activeTonal = (customTonalBuffer.getNumSamples() > 0) ? customTonalBuffer : tonalBufferThread;
-
-    int startSmp = static_cast<int>((startMs / 1000.0f) * fileSampleRate);
-
     if (isTransient)
     {
-        startSmp = snapToZeroCrossing(activeTrans, startSmp);
-        transStartOffsetMs = (static_cast<float>(startSmp) / fileSampleRate) * 1000.0f;
+        transStartOffsetMs = startMs;
         transEndOffsetMs = endMs;
-        customTransientReplacer.setStartOffsetMs(transStartOffsetMs);
+        customTransientReplacer.setStartOffsetMs(startMs);
         customTransientReplacer.setEndOffsetMs(endMs);
     }
     else
     {
-        startSmp = snapToZeroCrossing(activeTonal, startSmp);
-        tonalStartOffsetMs = (static_cast<float>(startSmp) / fileSampleRate) * 1000.0f;
+        tonalStartOffsetMs = startMs;
         tonalEndOffsetMs = endMs;
-        customTonalReplacer.setStartOffsetMs(tonalStartOffsetMs);
+        customTonalReplacer.setStartOffsetMs(startMs);
         customTonalReplacer.setEndOffsetMs(endMs);
     }
     offlineMixRenderer.triggerRender();
@@ -1233,12 +1226,38 @@ void AnatomyAudioProcessor::flushPendingExports()
 
 juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
 {
-    if (laneIndex >= 0 && laneIndex < 3)
+    // laneIndex: 0 = FullMix, 1 = Transient, 2 = Tonal
+    juce::AudioBuffer<float> exportBuf;
+    double sr = (fileSampleRate > 0.0) ? fileSampleRate : 44100.0;
+
+    juce::AudioBuffer<float> tempFull, tempTrans, tempTonal;
+    std::vector<float> mixRatios;
+    offlineMixRenderer.getRenderedResults(tempFull, tempTrans, tempTonal, mixRatios);
+
+    if (laneIndex == 0)
+        exportBuf.makeCopyOf(tempFull.getNumSamples() > 0 ? tempFull : rawInputBuffer);
+    else if (laneIndex == 1)
+        exportBuf.makeCopyOf(tempTrans.getNumSamples() > 0 ? tempTrans : transBufferThread);
+    else if (laneIndex == 2)
+        exportBuf.makeCopyOf(tempTonal.getNumSamples() > 0 ? tempTonal : tonalBufferThread);
+
+    if (exportBuf.getNumSamples() == 0 || exportBuf.getNumChannels() == 0)
+        return {};
+
+    juce::File tempDir = juce::File::getSpecialLocation(juce::File::SpecialLocationType::tempDirectory);
+    juce::String laneName = (laneIndex == 0 ? "FullMix" : (laneIndex == 1 ? "Transient" : "Tonal"));
+    juce::File exportFile = tempDir.getChildFile("ANATOMY_" + laneName + "_" + juce::String(juce::Random::getSystemRandom().nextInt64()) + ".wav");
+
+    juce::WavAudioFormat wavFormat;
+    std::unique_ptr<juce::AudioFormatWriter> writer(wavFormat.createWriterFor(
+        new juce::FileOutputStream(exportFile),
+        sr, exportBuf.getNumChannels(), 24, {}, 0));
+
+    if (writer != nullptr)
     {
-        if (ExportRecordingCore::lanes[laneIndex].state.load() == ExportRecordingCore::State::Ready)
-        {
-            return ExportRecordingCore::lanes[laneIndex].file;
-        }
+        writer->writeFromAudioSampleBuffer(exportBuf, 0, exportBuf.getNumSamples());
+        writer.reset();
+        return exportFile;
     }
     return {};
 }

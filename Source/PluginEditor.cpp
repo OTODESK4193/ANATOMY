@@ -196,12 +196,21 @@ void AnatomyAudioProcessorEditor::confirmThen(const juce::String& title, const j
 void AnatomyAudioProcessorEditor::triggerFullMixExport()
 {
     juce::File tempWav = audioProcessor.createTemporaryWavForExport(0);
-    if (tempWav.existsAsFile())
-    {
-        juce::StringArray files;
-        files.add(tempWav.getFullPathName());
-        juce::DragAndDropContainer::performExternalDragDropOfFiles(files, false, this);
-    }
+    if (!tempWav.existsAsFile()) return;
+
+    fileChooser = std::make_unique<juce::FileChooser>(
+        "Save Full Mix Audio",
+        juce::File::getSpecialLocation(juce::File::userDesktopDirectory).getChildFile("ANATOMY_FullMix.wav"),
+        "*.wav");
+
+    fileChooser->launchAsync(
+        juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
+        [tempWav](const juce::FileChooser& fc)
+        {
+            auto dest = fc.getResult();
+            if (dest != juce::File())
+                tempWav.copyFileTo(dest);
+        });
 }
 
 bool AnatomyAudioProcessorEditor::isInterestedInFileDrag(const juce::StringArray&)

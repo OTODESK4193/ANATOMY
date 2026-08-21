@@ -170,24 +170,32 @@ float WaveformComponent::findZeroCrossingMs(float targetMs, float magnetPixels) 
     int startRange = std::max(0, targetSample - magnetSamples);
     int endRange = std::min(numSamples - 2, targetSample + magnetSamples);
 
-    int bestZeroCrossing = -1;
+    int bestZeroCrossingS = -1;
+    float bestFrac = 0.0f;
     int bestDist = 1000000;
 
     for (int s = startRange; s <= endRange; ++s)
     {
-        if ((data[s] <= 0.0f && data[s + 1] >= 0.0f) || (data[s] >= 0.0f && data[s + 1] <= 0.0f))
+        float v0 = data[s];
+        float v1 = data[s + 1];
+        if ((v0 <= 0.0f && v1 >= 0.0f) || (v0 >= 0.0f && v1 <= 0.0f))
         {
             int dist = std::abs(s - targetSample);
             if (dist < bestDist)
             {
                 bestDist = dist;
-                bestZeroCrossing = (std::abs(data[s]) < std::abs(data[s + 1])) ? s : (s + 1);
+                bestZeroCrossingS = s;
+                float diff = v1 - v0;
+                bestFrac = (std::abs(diff) > 1.0e-7f) ? juce::jlimit(0.0f, 1.0f, -v0 / diff) : 0.0f;
             }
         }
     }
 
-    if (bestZeroCrossing >= 0)
-        return (static_cast<float>(bestZeroCrossing) / static_cast<float>(sampleRate)) * 1000.0f;
+    if (bestZeroCrossingS >= 0)
+    {
+        double exactSample = static_cast<double>(bestZeroCrossingS) + static_cast<double>(bestFrac);
+        return static_cast<float>((exactSample / sampleRate) * 1000.0);
+    }
 
     return targetMs;
 }
@@ -750,7 +758,8 @@ void WaveformComponent::mouseDrag(const juce::MouseEvent& e)
     {
         // PicoSampler 方式: サブピクセル変位を加算
         double deltaMs = static_cast<double>(e.position.x - dragStartMouseXf) * msPerPixel;
-        double targetMs = juce::jlimit(0.0, static_cast<double>(endOffsetMs) - 0.5, dragStartParamMs + deltaMs);
+        double minMarginMs = (1.0 / sampleRate) * 1000.0;
+        double targetMs = juce::jlimit(0.0, static_cast<double>(endOffsetMs) - minMarginMs, dragStartParamMs + deltaMs);
 
         if (shouldSnap)
         {
@@ -770,7 +779,8 @@ void WaveformComponent::mouseDrag(const juce::MouseEvent& e)
     case DragMode::EndMarker:
     {
         double deltaMs = static_cast<double>(e.position.x - dragStartMouseXf) * msPerPixel;
-        double targetMs = juce::jlimit(static_cast<double>(startOffsetMs) + 0.5, totalMs, dragStartParamMs + deltaMs);
+        double minMarginMs = (1.0 / sampleRate) * 1000.0;
+        double targetMs = juce::jlimit(static_cast<double>(startOffsetMs) + minMarginMs, totalMs, dragStartParamMs + deltaMs);
 
         if (shouldSnap)
         {

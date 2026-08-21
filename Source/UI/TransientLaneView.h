@@ -254,13 +254,21 @@ private:
     void triggerExport()
     {
         juce::File wav = processor.createTemporaryWavForExport(1); // 1 = Transient
-        if (wav.existsAsFile())
-        {
-            juce::StringArray files;
-            files.add(wav.getFullPathName());
-            if (auto* container = juce::DragAndDropContainer::findParentDragContainerFor(this))
-                container->performExternalDragDropOfFiles(files, false, this);
-        }
+        if (!wav.existsAsFile()) return;
+
+        fileChooser = std::make_unique<juce::FileChooser>(
+            "Save Transient Audio",
+            juce::File::getSpecialLocation(juce::File::userDesktopDirectory).getChildFile("ANATOMY_Transient.wav"),
+            "*.wav");
+
+        fileChooser->launchAsync(
+            juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
+            [wav](const juce::FileChooser& fc)
+            {
+                auto dest = fc.getResult();
+                if (dest != juce::File())
+                    wav.copyFileTo(dest);
+            });
     }
 
     AnatomyAudioProcessor& processor;
@@ -288,6 +296,7 @@ private:
 
     std::unique_ptr<juce::Component> browserComponent;
     std::unique_ptr<juce::FileBrowserComponent> browserTree;
+    std::unique_ptr<juce::FileChooser> fileChooser;
 
     bool isSelected = false;
 
