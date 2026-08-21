@@ -1,9 +1,24 @@
 # ANATOMY
-![Release](https://img.shields.io/badge/release-v1.0.0-blue)
+![Release](https://img.shields.io/badge/release-v1.1.0-blue)
 ![License](https://img.shields.io/badge/license-AGPLv3-green)
 ![JUCE](https://img.shields.io/badge/JUCE-8.0.x-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%2064bit-lightgrey)
 ![Downloads](https://img.shields.io/github/downloads/OTODESK4193/ANATOMY/total.svg)
+
+---
+
+### **[V1.1.0] - 2026-08-22 (Granular Style Modern Edition)**
+- **4 Lane Architecture**: Introduced a new `Layer` lane with Pitch/Gain control, expanding sound design capabilities alongside FullMix, Transient, and Tonal lanes.
+- **High-Precision Pitch & Transient Engine**:
+  - Upgraded pitch shifting to 4-point Hermite cubic interpolation and 4-tap Hann phase-distributed granular rotation, eliminating aliasing and comb-filtering distortions.
+  - Upgraded Transient Shaper to stereo-linked dual-branch tracker with soft-knee saturation protection.
+- **Advanced Dynamics**:
+  - `Limiter`: Added an `IN GAIN` knob (0.0dB to +24.0dB) to drive signals into the ceiling threshold.
+  - `Limiter`: Added a `MODE` switch (Limit / Clip). Limit provides transparent peak reduction; Clip provides instantaneous soft-knee waveshaping and aggressive punch.
+- **GUI & Stability**:
+  - Solved critical multi-instance crash (ExportRecordingCore state synchronization).
+  - Fixed DAW shutdown crash caused by illegal LookAndFeel pointer destruction.
+  - Improved UI colors and lane rendering behavior.
 
 ---
 

@@ -78,7 +78,7 @@ AnatomyAudioProcessor::~AnatomyAudioProcessor()
     stopThread(3000);
 
     for (int l = 0; l < 4; ++l)
-        ExportRecordingCore::lanes[l].state.store(ExportRecordingCore::State::Idle);
+        exportLanes[l].state.store(ExportRecordingCore::State::Idle);
 
     activeVoice.reset();
     for (int i = 0; i < maxReleasingVoices; ++i)
@@ -238,7 +238,7 @@ void AnatomyAudioProcessor::releaseResources()
         releasingVoices[i].reset();
 
     for (int l = 0; l < 4; ++l)
-        ExportRecordingCore::lanes[l].state.store(ExportRecordingCore::State::Idle);
+        exportLanes[l].state.store(ExportRecordingCore::State::Idle);
 }
 
 bool AnatomyAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
@@ -434,15 +434,15 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
     for (int l = 0; l < 3; ++l)
     {
-        if (ExportRecordingCore::lanes[l].state.load() == ExportRecordingCore::State::Request)
+        if (exportLanes[l].state.load() == ExportRecordingCore::State::Request)
         {
-            ExportRecordingCore::lanes[l].buffer.setSize(2, static_cast<int>(6.0 * currentSampleRate), false, false, true);
-            ExportRecordingCore::lanes[l].buffer.clear();
-            ExportRecordingCore::lanes[l].writePos = 0;
-            ExportRecordingCore::lanes[l].sampleCounter = 0;
-            ExportRecordingCore::lanes[l].noteOffSample = static_cast<int>(0.4 * currentSampleRate);
-            ExportRecordingCore::lanes[l].isNoteOffTriggered = false;
-            ExportRecordingCore::lanes[l].state.store(ExportRecordingCore::State::Recording);
+            exportLanes[l].buffer.setSize(2, static_cast<int>(6.0 * currentSampleRate), false, false, true);
+            exportLanes[l].buffer.clear();
+            exportLanes[l].writePos = 0;
+            exportLanes[l].sampleCounter = 0;
+            exportLanes[l].noteOffSample = static_cast<int>(0.4 * currentSampleRate);
+            exportLanes[l].isNoteOffTriggered = false;
+            exportLanes[l].state.store(ExportRecordingCore::State::Recording);
 
             for (int i = 0; i < 4; ++i)
                 if (cachedLanes[i].ns != nullptr) cachedLanes[i].ns->trigger();
@@ -575,18 +575,18 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     {
         for (int l = 0; l < 4; ++l)
         {
-            if (ExportRecordingCore::lanes[l].state.load() == ExportRecordingCore::State::Recording)
+            if (exportLanes[l].state.load() == ExportRecordingCore::State::Recording)
             {
-                if (!ExportRecordingCore::lanes[l].isNoteOffTriggered &&
-                    ExportRecordingCore::lanes[l].sampleCounter == ExportRecordingCore::lanes[l].noteOffSample)
+                if (!exportLanes[l].isNoteOffTriggered &&
+                    exportLanes[l].sampleCounter == exportLanes[l].noteOffSample)
                 {
                     if (activeVoice.isActive && activeVoice.currentMidiNote == 60)
                     {
                         activeVoice.isReleasing = true;
                     }
-                    ExportRecordingCore::lanes[l].isNoteOffTriggered = true;
+                    exportLanes[l].isNoteOffTriggered = true;
                 }
-                ExportRecordingCore::lanes[l].sampleCounter++;
+                exportLanes[l].sampleCounter++;
             }
         }
 
@@ -772,10 +772,10 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
     for (int l = 0; l < 4; ++l)
     {
-        if (ExportRecordingCore::lanes[l].state.load() == ExportRecordingCore::State::Recording)
+        if (exportLanes[l].state.load() == ExportRecordingCore::State::Recording)
         {
-            int wPos = ExportRecordingCore::lanes[l].writePos;
-            int space = ExportRecordingCore::lanes[l].buffer.getNumSamples() - wPos;
+            int wPos = exportLanes[l].writePos;
+            int space = exportLanes[l].buffer.getNumSamples() - wPos;
             int toWrite = std::min(numSamples, space);
 
             if (toWrite > 0)
@@ -789,9 +789,9 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
                 for (int ch = 0; ch < 2; ++ch)
                 {
                     int srcCh = std::min(ch, srcBuf->getNumChannels() - 1);
-                    ExportRecordingCore::lanes[l].buffer.copyFrom(ch, wPos, *srcBuf, srcCh, 0, toWrite);
+                    exportLanes[l].buffer.copyFrom(ch, wPos, *srcBuf, srcCh, 0, toWrite);
                 }
-                ExportRecordingCore::lanes[l].writePos += toWrite;
+                exportLanes[l].writePos += toWrite;
             }
 
             bool isSilent = true;
@@ -816,17 +816,17 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
             }
             else
             {
-                if (ExportRecordingCore::lanes[l].isNoteOffTriggered && isSilent && !activeVoice.isActive) shouldStop = true;
+                if (exportLanes[l].isNoteOffTriggered && isSilent && !activeVoice.isActive) shouldStop = true;
                 if (!activeVoice.isActive && isSilent) shouldStop = true;
             }
 
-            if (ExportRecordingCore::lanes[l].writePos >= static_cast<int>(5.5 * currentSampleRate)) shouldStop = true;
+            if (exportLanes[l].writePos >= static_cast<int>(5.5 * currentSampleRate)) shouldStop = true;
 
             if (shouldStop)
             {
                 // RT安全: ファイルI/Oをオーディオスレッドから排除。
                 // PendingWrite に遷移し、メッセージスレッド（timerCallback）で書き出す。
-                ExportRecordingCore::lanes[l].state.store(ExportRecordingCore::State::PendingWrite);
+                exportLanes[l].state.store(ExportRecordingCore::State::PendingWrite);
             }
         }
     }
@@ -942,15 +942,12 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
         float gain = 1.0f;
         float passed = static_cast<float>(exactIdx - startSmp);
         float remain = static_cast<float>(endSmp - exactIdx);
+        
         if (inSmp > 0.0f && passed < inSmp)
             gain *= calculateFadeGain(passed / inSmp, inTen);
-        else if (passed < 64.0f)
-            gain *= juce::jlimit(0.0f, 1.0f, passed / 64.0f);
 
         if (outSmp > 0.0f && remain < outSmp)
             gain *= calculateFadeGain(remain / outSmp, outTen);
-        else if (remain < 64.0f)
-            gain *= juce::jlimit(0.0f, 1.0f, remain / 64.0f);
 
         return gain;
     };
@@ -1046,20 +1043,8 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     }
     voice.sustainReadIndex += voice.pitchRatio;
 
-    float sustainClickFade = 1.0f;
-    float sustainTonalFade = 1.0f;
-    float currentMs = (voice.sustainReadIndex / fileSampleRate) * 1000.0f;
-
-    if (currentMs < clickCurve && clickCurve > 0.0f)
-    {
-        float progress = currentMs / clickCurve;
-        float angle = progress * juce::MathConstants<float>::halfPi;
-        sustainClickFade = std::cos(angle);
-        sustainTonalFade = std::sin(angle);
-    }
-
-    float finalClick = shiftedClick * voice.triggerVelocity * voice.releaseGain * sustainClickFade * transGain;
-    float finalSustain = shiftedSustain * voice.triggerVelocity * voice.releaseGain * sustainTonalFade * tonalGain;
+    float finalClick = shiftedClick * voice.triggerVelocity * voice.releaseGain * transGain;
+    float finalSustain = shiftedSustain * voice.triggerVelocity * voice.releaseGain * tonalGain;
 
     if (fullMixEndOffsetMs > 0.0f)
     {
@@ -1456,32 +1441,32 @@ void AnatomyAudioProcessor::flushPendingExports()
 {
     for (int l = 0; l < 4; ++l)
     {
-        if (ExportRecordingCore::lanes[l].state.load() != ExportRecordingCore::State::PendingWrite)
+        if (exportLanes[l].state.load() != ExportRecordingCore::State::PendingWrite)
             continue;
 
         juce::File tempDir = juce::File::getSpecialLocation(juce::File::SpecialLocationType::tempDirectory);
-        ExportRecordingCore::lanes[l].file = tempDir.getChildFile(
+        exportLanes[l].file = tempDir.getChildFile(
             "ANATOMY_Export_" + juce::String(juce::Random::getSystemRandom().nextInt64()) + ".wav");
 
-        int finalLength = ExportRecordingCore::lanes[l].writePos;
+        int finalLength = exportLanes[l].writePos;
         juce::AudioBuffer<float> trimmed(2, finalLength);
         for (int ch = 0; ch < 2; ++ch)
-            trimmed.copyFrom(ch, 0, ExportRecordingCore::lanes[l].buffer, ch, 0, finalLength);
+            trimmed.copyFrom(ch, 0, exportLanes[l].buffer, ch, 0, finalLength);
 
         juce::WavAudioFormat wavFormat;
         std::unique_ptr<juce::AudioFormatWriter> writer(wavFormat.createWriterFor(
-            new juce::FileOutputStream(ExportRecordingCore::lanes[l].file),
+            new juce::FileOutputStream(exportLanes[l].file),
             currentSampleRate, 2, 24, {}, 0));
 
         if (writer != nullptr)
         {
             writer->writeFromAudioSampleBuffer(trimmed, 0, finalLength);
             writer.reset();
-            ExportRecordingCore::lanes[l].state.store(ExportRecordingCore::State::Ready);
+            exportLanes[l].state.store(ExportRecordingCore::State::Ready);
         }
         else
         {
-            ExportRecordingCore::lanes[l].state.store(ExportRecordingCore::State::Idle);
+            exportLanes[l].state.store(ExportRecordingCore::State::Idle);
         }
     }
 }

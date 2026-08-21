@@ -36,13 +36,14 @@ namespace ExportRecordingCore
         bool isNoteOffTriggered = false;
         juce::File file;
     };
-    extern Lane lanes[4];
 }
 
 class AnatomyAudioProcessor final : public juce::AudioProcessor,
     public juce::Thread,
     public juce::AudioProcessorValueTreeState::Listener
 {
+public:
+    ExportRecordingCore::Lane exportLanes[4];
 public:
     AnatomyAudioProcessor();
     ~AnatomyAudioProcessor() override;
