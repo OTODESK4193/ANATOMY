@@ -438,9 +438,8 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
             ExportRecordingCore::lanes[l].isNoteOffTriggered = false;
             ExportRecordingCore::lanes[l].state.store(ExportRecordingCore::State::Recording);
 
-            if (auto* nsTrans = dynamic_cast<NoiseGenerator*>(transientPool[2].get())) nsTrans->trigger();
-            if (auto* nsTonal = dynamic_cast<NoiseGenerator*>(tonalPool[2].get())) nsTonal->trigger();
-            if (auto* nsFull = dynamic_cast<NoiseGenerator*>(fullMixPool[2].get()))  nsFull->trigger();
+            for (int i = 0; i < 4; ++i)
+                if (cachedLanes[i].ns != nullptr) cachedLanes[i].ns->trigger();
 
             if (activeVoice.isActive) activeVoice.resetProcessing();
             SharedSampleData* currentDataSnapshot = masterSampleData.load(std::memory_order_acquire);
@@ -486,9 +485,8 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
         const auto msg = metadata.getMessage();
         if (msg.isNoteOn())
         {
-            if (auto* nsTrans = dynamic_cast<NoiseGenerator*>(transientPool[2].get())) nsTrans->trigger();
-            if (auto* nsTonal = dynamic_cast<NoiseGenerator*>(tonalPool[2].get())) nsTonal->trigger();
-            if (auto* nsFull = dynamic_cast<NoiseGenerator*>(fullMixPool[2].get()))  nsFull->trigger();
+            for (int i = 0; i < 4; ++i)
+                if (cachedLanes[i].ns != nullptr) cachedLanes[i].ns->trigger();
 
             if (activeVoice.isActive)
             {
