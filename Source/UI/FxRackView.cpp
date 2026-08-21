@@ -188,13 +188,14 @@ void FxRackView::handleSlotTypeChanged(int slot)
     }
 
     // エフェクトのactive状態更新
-    for (int i = 0; i < 6; ++i)
+    for (int i = 0; i < 7; ++i)
     {
         bool inChain = std::find(newOrder.begin(), newOrder.end(), i) != newOrder.end();
         AudioEffect* fx = nullptr;
-        if (activeRoute == TargetRoute::Transient) fx = proc.getTransientPoolInstance(i);
-        else if (activeRoute == TargetRoute::Tonal) fx = proc.getTonalPoolInstance(i);
-        else fx = proc.getFullMixPoolInstance(i);
+        if (activeRoute == TargetRoute::Transient)      fx = proc.getTransientPoolInstance(i);
+        else if (activeRoute == TargetRoute::Tonal)     fx = proc.getTonalPoolInstance(i);
+        else if (activeRoute == TargetRoute::FullMix)   fx = proc.getFullMixPoolInstance(i);
+        else if (activeRoute == TargetRoute::Layer)     fx = proc.getLayerPoolInstance(i);
         if (fx != nullptr) fx->setActive(inChain);
     }
 
@@ -205,7 +206,8 @@ void FxRackView::handleSlotTypeChanged(int slot)
 void FxRackView::updateAllCardStates()
 {
     int routeIdx = (activeRoute == TargetRoute::Transient) ? 0 :
-                   (activeRoute == TargetRoute::Tonal)     ? 1 : 2;
+                   (activeRoute == TargetRoute::Tonal)     ? 1 :
+                   (activeRoute == TargetRoute::Layer)     ? 3 : 2;
 
     for (int i = 0; i < kNumSlots; ++i)
     {
@@ -225,7 +227,9 @@ void FxRackView::rebuildDetails()
     detailAttachments.clear();
     detailKnobs.clear();
     detailKnobLabels.clear();
-    satTypeButtons.clear();
+    satTypeAttachment.reset();
+    removeChildComponent(&satTypeCombo);
+    removeChildComponent(&satTypeLabel);
     noiseTypeButtons.clear();
     removeChildComponent(&ottBandsBtn);
     for (auto& b : ottBandSelectBtns) removeChildComponent(&b);
@@ -248,31 +252,27 @@ void FxRackView::rebuildDetails()
 
     switch (fxType)
     {
-    case 0: // Saturation (NextGenKick2準拠: TYPE 4種 + Drive, Trim, PreHPF, Dry/Wet)
+    case 0: // Saturation (NextGenKick2完全移植: 10種Typeコンボ + Drive, OutTrim, PreHPF, Dry/Wet)
         {
-            juce::StringArray typeNames{ "TUBE", "TAPE", "DIODE", "FUZZ" };
-            for (int i = 0; i < 4; ++i)
-            {
-                auto btn = std::make_unique<juce::TextButton>(typeNames[i]);
-                btn->setClickingTogglesState(true);
-                btn->setRadioGroupId(500);
-                btn->setColour(juce::TextButton::buttonColourId, AnatomyColors::knobTrack);
-                btn->setColour(juce::TextButton::buttonOnColourId, accent);
-                btn->setColour(juce::TextButton::textColourOffId, AnatomyColors::textDim);
-                btn->setColour(juce::TextButton::textColourOnId, juce::Colours::black);
-                btn->onClick = [this, i, pre] {
-                    if (auto* p = proc.apvts.getParameter(pre + "SatType"))
-                        p->setValueNotifyingHost(p->convertTo0to1((float)i));
-                };
-                addAndMakeVisible(*btn);
-                satTypeButtons.push_back(std::move(btn));
-            }
+            satTypeLabel.setText("TYPE", juce::dontSendNotification);
+            satTypeLabel.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
+            satTypeLabel.setColour(juce::Label::textColourId, accent.withAlpha(0.9f));
+            satTypeLabel.setJustificationType(juce::Justification::centred);
+            addAndMakeVisible(satTypeLabel);
 
-            if (auto* pVal = proc.apvts.getRawParameterValue(pre + "SatType"))
+            satTypeCombo.clear();
+            juce::StringArray types{ "Soft Tanh", "Hard Clip", "Triode", "Tape", "Transformer",
+                                     "JFET", "BJT", "Wavefold", "Exciter", "Cubic" };
+            satTypeCombo.addItemList(types, 1);
+            satTypeCombo.setColour(juce::ComboBox::backgroundColourId, AnatomyColors::knobTrack);
+            satTypeCombo.setColour(juce::ComboBox::textColourId, AnatomyColors::text);
+            satTypeCombo.setColour(juce::ComboBox::outlineColourId, accent.withAlpha(0.6f));
+            addAndMakeVisible(satTypeCombo);
+
+            if (proc.apvts.getParameter(pre + "SatType") != nullptr)
             {
-                int curType = (int)pVal->load();
-                if (curType >= 0 && curType < 4)
-                    satTypeButtons[(size_t)curType]->setToggleState(true, juce::dontSendNotification);
+                satTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+                    proc.apvts, pre + "SatType", satTypeCombo);
             }
 
             knobDefs = {
@@ -415,14 +415,12 @@ void FxRackView::layoutDetails()
     int x = 20;
     int y = kDetailY + 22;
 
-    // Saturation Type ボタン
-    if (fxType == 0 && satTypeButtons.size() >= 4)
+    // Saturation Type コンボボックス
+    if (fxType == 0)
     {
-        for (size_t i = 0; i < satTypeButtons.size(); ++i)
-        {
-            satTypeButtons[i]->setBounds(x, y + 10 + (int)i * 20, 68, 18);
-        }
-        x += 78;
+        satTypeLabel.setBounds(x, y, 108, 14);
+        satTypeCombo.setBounds(x, y + 26, 108, 24);
+        x += 120;
     }
 
     // Noise Type ボタン

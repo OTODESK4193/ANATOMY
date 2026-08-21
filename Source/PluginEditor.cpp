@@ -262,22 +262,23 @@ void AnatomyAudioProcessorEditor::timerCallback()
     audioProcessor.handleAsyncReanalysis();
     audioProcessor.flushPendingExports();
 
-    // 波形バッファの取得と更新
+    // 波形バッファの取得と更新（新規レンダ完了時のみバッファと波形を再生成）
     juce::AudioBuffer<float> tempTrans, tempTonal, tempFullMix, tempLayer;
     std::vector<float> mixRatios;
-    audioProcessor.offlineMixRenderer.getRenderedResults(tempFullMix, tempTrans, tempTonal, tempLayer, mixRatios);
-
-    if (beforeToggle.getToggleState())
-        waveFullMix.setBuffer(audioProcessor.getRawInputBufferForUI());
-    else
+    if (audioProcessor.offlineMixRenderer.getRenderedResults(tempFullMix, tempTrans, tempTonal, tempLayer, mixRatios))
     {
-        waveFullMix.setBuffer(tempFullMix);
-        waveFullMix.setRatioData(mixRatios);
-    }
+        if (beforeToggle.getToggleState())
+            waveFullMix.setBuffer(audioProcessor.getRawInputBufferForUI());
+        else
+        {
+            waveFullMix.setBuffer(tempFullMix);
+            waveFullMix.setRatioData(mixRatios);
+        }
 
-    transientLane.setWaveBuffer(tempTrans);
-    tonalLane.setWaveBuffer(tempTonal);
-    layerLane.setWaveBuffer(tempLayer);
+        transientLane.setWaveBuffer(tempTrans);
+        tonalLane.setWaveBuffer(tempTonal);
+        layerLane.setWaveBuffer(tempLayer);
+    }
 
     double sr = audioProcessor.getFileSampleRate();
     waveFullMix.setOffsets(audioProcessor.fullMixStartOffsetMs, audioProcessor.fullMixEndOffsetMs, sr);

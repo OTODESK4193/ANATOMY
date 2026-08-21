@@ -50,19 +50,23 @@ public:
         }
     }
 
-    // 💥【仕様拡張】3レーンすべての加工済み（FX適用後）バッファを一括して安全に非同期取得
-    void getRenderedResults(juce::AudioBuffer<float>& destFull,
+    // 💥【仕様拡張】4レーンすべての加工済み（FX適用後）バッファを一括して安全に非同期取得（新レンダ時のみtrueを返す）
+    bool getRenderedResults(juce::AudioBuffer<float>& destFull,
         juce::AudioBuffer<float>& destTrans,
         juce::AudioBuffer<float>& destTonal,
         juce::AudioBuffer<float>& destLayer,
         std::vector<float>& destRatios)
     {
+        if (!hasNewRender.exchange(false, std::memory_order_acq_rel))
+            return false;
+
         const juce::ScopedLock sl(renderLock);
         destFull.makeCopyOf(renderedFullMix);
         destTrans.makeCopyOf(renderedTransient);
         destTonal.makeCopyOf(renderedTonal);
         destLayer.makeCopyOf(renderedLayer);
         destRatios = componentRatios;
+        return true;
     }
 
 private:
@@ -70,7 +74,8 @@ private:
 
     AnatomyAudioProcessor& processor;
     juce::CriticalSection renderLock;
-    std::atomic<bool> triggerFlag;
+    std::atomic<bool> triggerFlag{ false };
+    std::atomic<bool> hasNewRender{ false };
 
     juce::AudioBuffer<float> renderedFullMix;
     juce::AudioBuffer<float> renderedTransient; 

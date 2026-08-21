@@ -114,6 +114,9 @@ void WaveformComponent::setOffsets(float startMs, float endMs, double sr) noexce
     if (currentDragMode == DragMode::StartMarker || currentDragMode == DragMode::EndMarker)
         return;
 
+    if (startOffsetMs == startMs && endOffsetMs == endMs && sampleRate == sr)
+        return;
+
     startOffsetMs = startMs;
     endOffsetMs = endMs;
     sampleRate = sr;
@@ -125,6 +128,9 @@ void WaveformComponent::setFade(float inMs, float outMs, float inTension, float 
     const juce::ScopedLock sl(renderLock);
     if (currentDragMode == DragMode::FadeInHandle || currentDragMode == DragMode::FadeOutHandle ||
         currentDragMode == DragMode::FadeInTension || currentDragMode == DragMode::FadeOutTension)
+        return;
+
+    if (fadeInMs == inMs && fadeOutMs == outMs && fadeInTension == inTension && fadeOutTension == outTension)
         return;
 
     fadeInMs = inMs;

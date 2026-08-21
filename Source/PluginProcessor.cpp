@@ -131,7 +131,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
     {
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "SatDrive", 1 }, pre + " Saturation Drive", 1.0f, 16.0f, 2.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "SatMix", 1 }, pre + " Saturation Mix", 0.0f, 1.0f, 0.0f));
-        params.push_back(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{ pre + "SatType", 1 }, pre + " Saturation Type", juce::StringArray{ "Tube", "Tape", "Diode", "Fuzz" }, 0));
+        params.push_back(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{ pre + "SatType", 1 }, pre + " Saturation Type",
+            juce::StringArray{ "Soft Tanh", "Hard Clip", "Triode", "Tape", "Transformer", "JFET", "BJT", "Wavefold", "Exciter", "Cubic" }, 0));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "SatTrim", 1 }, pre + " Saturation Output Trim (dB)", -12.0f, 12.0f, 0.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "SatPre", 1 }, pre + " Saturation Pre HPF (Hz)", 20.0f, 2000.0f, 20.0f));
 
@@ -373,19 +374,22 @@ void AnatomyAudioProcessor::updateRouteOrder(TargetRoute route, const std::vecto
     if (route == TargetRoute::Transient)     transEffectOrder = activeEffectIndices;
     else if (route == TargetRoute::Tonal)    tonalEffectOrder = activeEffectIndices;
     else if (route == TargetRoute::FullMix)  fullMixEffectOrder = activeEffectIndices;
+    else if (route == TargetRoute::Layer)    layerEffectOrder = activeEffectIndices;
 
     std::vector<AudioEffect*> sortedFX;
     sortedFX.reserve(activeEffectIndices.size());
     for (const int idx : activeEffectIndices)
     {
-        if (idx < 0 || idx >= 6) continue;
+        if (idx < 0 || idx >= 7) continue;
         if (route == TargetRoute::Transient)     sortedFX.push_back(transientPool[idx].get());
         else if (route == TargetRoute::Tonal)    sortedFX.push_back(tonalPool[idx].get());
         else if (route == TargetRoute::FullMix)  sortedFX.push_back(fullMixPool[idx].get());
+        else if (route == TargetRoute::Layer)    sortedFX.push_back(layerPool[idx].get());
     }
     if (route == TargetRoute::Transient)     transientChain.updateChain(sortedFX, fxGarbageBin);
     else if (route == TargetRoute::Tonal)    tonalChain.updateChain(sortedFX, fxGarbageBin);
     else if (route == TargetRoute::FullMix)  fullMixChain.updateChain(sortedFX, fxGarbageBin);
+    else if (route == TargetRoute::Layer)    layerChain.updateChain(sortedFX, fxGarbageBin);
 
     offlineMixRenderer.triggerRender();
 }
@@ -1077,9 +1081,12 @@ void AnatomyAudioProcessor::setOffsetsFromUI(int laneIndex, float startMs, float
         return bestSample;
     }
 
-    void AnatomyAudioProcessor::parameterChanged(const juce::String&, float)
+    void AnatomyAudioProcessor::parameterChanged(const juce::String& paramID, float)
     {
-        needsReanalysis.store(true, std::memory_order_release);
+        if (paramID == "clickLength" || paramID == "clickCurve")
+        {
+            needsReanalysis.store(true, std::memory_order_release);
+        }
         offlineMixRenderer.triggerRender();
     }
 
@@ -1892,6 +1899,7 @@ void OfflineMixRenderer::executeRender()
         renderedLayer.makeCopyOf(outLayerRendered);
         componentRatios = std::move(ratios);
     }
+    hasNewRender.store(true, std::memory_order_release);
 }
 
 juce::AudioProcessorEditor* AnatomyAudioProcessor::createEditor() { return new AnatomyAudioProcessorEditor(*this); }
