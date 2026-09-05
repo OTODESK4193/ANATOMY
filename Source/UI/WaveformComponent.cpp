@@ -625,7 +625,81 @@ void WaveformComponent::paint(juce::Graphics& g)
         g.drawText(zoomText, getWidth() - 50, getHeight() - 22, 44, 14, juce::Justification::centredRight, false);
     }
 
-    // 6. 外枠境界線 (選択時は各アクセント色で光る)
+    // 6. 読み込み中サンプル名称表示 (右上にカラーテーマ連動色で表示)
+    if (processor != nullptr)
+    {
+        juce::String sampleName;
+        if (laneIndex == 0) // FullMix
+        {
+            auto f = processor->getLastLoadedFile(0);
+            if (f.existsAsFile())
+                sampleName = f.getFileName();
+        }
+        else if (laneIndex == 1) // Transient
+        {
+            if (processor->isCustomSampleLoaded(1))
+            {
+                auto f = processor->getLastLoadedFile(1);
+                sampleName = f.existsAsFile() ? f.getFileName() : processor->getCustomSampleName(1);
+            }
+            else
+            {
+                auto f = processor->getLastLoadedFile(0);
+                if (f.existsAsFile())
+                    sampleName = f.getFileName();
+            }
+        }
+        else if (laneIndex == 2) // Tonal
+        {
+            if (processor->isCustomSampleLoaded(2))
+            {
+                auto f = processor->getLastLoadedFile(2);
+                sampleName = f.existsAsFile() ? f.getFileName() : processor->getCustomSampleName(2);
+            }
+            else
+            {
+                auto f = processor->getLastLoadedFile(0);
+                if (f.existsAsFile())
+                    sampleName = f.getFileName();
+            }
+        }
+        else if (laneIndex == 3) // Layer
+        {
+            if (processor->isCustomSampleLoaded(3))
+            {
+                auto f = processor->getLastLoadedFile(3);
+                sampleName = f.existsAsFile() ? f.getFileName() : processor->getCustomSampleName(3);
+            }
+        }
+
+        if (sampleName.isNotEmpty())
+        {
+            juce::Colour nameColour = (laneIndex == 0) ? AnatomyColors::accentFull :
+                                      (laneIndex == 1) ? AnatomyColors::accentTransient :
+                                      (laneIndex == 2) ? AnatomyColors::accentTonal :
+                                                         AnatomyColors::peach;
+
+            auto font = juce::Font(juce::FontOptions(10.0f, juce::Font::bold));
+            g.setFont(font);
+            float textW = font.getStringWidthFloat(sampleName);
+            float boxW = std::min(textW + 12.0f, w - 24.0f);
+            float boxH = 15.0f;
+            float boxX = w - boxW - 8.0f;
+            float boxY = 6.0f;
+
+            g.setColour(juce::Colours::black.withAlpha(0.45f));
+            g.fillRoundedRectangle(boxX, boxY, boxW, boxH, 3.0f);
+
+            g.setColour(nameColour.withAlpha(0.35f));
+            g.drawRoundedRectangle(boxX, boxY, boxW, boxH, 3.0f, 1.0f);
+
+            g.setColour(nameColour.withAlpha(0.9f));
+            g.drawText(sampleName, juce::Rectangle<float>(boxX + 5.0f, boxY, boxW - 10.0f, boxH),
+                       juce::Justification::centredRight, true);
+        }
+    }
+
+    // 7. 外枠境界線 (選択時は各アクセント色で光る)
     juce::Colour borderCol = isSelected ? (laneIndex == 0 ? AnatomyColors::accentFull :
                                            (laneIndex == 1 ? AnatomyColors::accentTransient :
                                                              AnatomyColors::accentTonal)) : AnatomyColors::panelLine;

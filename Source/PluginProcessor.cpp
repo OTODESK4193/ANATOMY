@@ -2108,6 +2108,10 @@ void AnatomyAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
     writeOrder(tonalEffectOrder);
     writeOrder(layerEffectOrder);
     writeOrder(fullMixEffectOrder);
+
+    // 10. 直近ロードファイルパス (4レーン)
+    for (int i = 0; i < 4; ++i)
+        out.writeString(lastLoadedFiles[i].getFullPathName());
 }
 
 void AnatomyAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
@@ -2246,6 +2250,14 @@ void AnatomyAudioProcessor::setStateInformation(const void* data, int sizeInByte
         restoreChain(TargetRoute::Tonal,     tonalEffectOrder);
         restoreChain(TargetRoute::Layer,     layerEffectOrder);
         restoreChain(TargetRoute::FullMix,   fullMixEffectOrder);
+
+        // 10. 直近ロードファイルパス復元
+        for (int i = 0; i < 4 && !in.isExhausted(); ++i)
+        {
+            auto path = in.readString();
+            if (path.isNotEmpty())
+                lastLoadedFiles[i] = juce::File(path);
+        }
     }
 
     // 10. バッファを設定し、分離・合成を再実行
@@ -2295,6 +2307,56 @@ void AnatomyAudioProcessor::setStateInformation(const void* data, int sizeInByte
         updateActiveSampleData();
         offlineMixRenderer.triggerRender();
     }
+}
+
+juce::File AnatomyAudioProcessor::getNeighborAudioFile(int laneIndex, bool isNext)
+{
+    if (laneIndex < 0 || laneIndex >= 4)
+        return {};
+
+    juce::File currentFile = lastLoadedFiles[laneIndex];
+    if (!currentFile.existsAsFile() && laneIndex > 0)
+    {
+        currentFile = lastLoadedFiles[0];
+    }
+    if (!currentFile.existsAsFile())
+        return {};
+
+    auto parentDir = currentFile.getParentDirectory();
+    if (!parentDir.isDirectory())
+        return {};
+
+    auto files = parentDir.findChildFiles(juce::File::findFiles, false, "*.wav;*.aif;*.aiff;*.flac;*.mp3");
+    if (files.isEmpty())
+        return {};
+
+    std::sort(files.begin(), files.end(), [](const juce::File& a, const juce::File& b) {
+        return a.getFileName().compareNatural(b.getFileName()) < 0;
+    });
+
+    int currentIndex = -1;
+    for (int i = 0; i < files.size(); ++i)
+    {
+        if (files[i] == currentFile)
+        {
+            currentIndex = i;
+            break;
+        }
+    }
+
+    if (currentIndex == -1)
+        return files.getFirst();
+
+    if (files.size() == 1)
+        return files.getFirst();
+
+    int targetIndex = isNext ? (currentIndex + 1) : (currentIndex - 1);
+    if (targetIndex >= files.size())
+        targetIndex = 0;
+    else if (targetIndex < 0)
+        targetIndex = files.size() - 1;
+
+    return files[targetIndex];
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new AnatomyAudioProcessor(); }

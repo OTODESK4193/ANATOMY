@@ -37,12 +37,19 @@ public:
         };
 
         styleBtn(browseBtn, AnatomyColors::accentTonal);
-        styleBtn(resetBtn, AnatomyColors::textDim);
+        styleBtn(prevBtn,   AnatomyColors::accentTonal);
+        styleBtn(nextBtn,   AnatomyColors::accentTonal);
+        styleBtn(resetBtn,  AnatomyColors::textDim);
 
         auto sName = processor.getCustomSampleName(2);
         browseBtn.setButtonText(sName.isNotEmpty() ? sName : "BROWSE");
         browseBtn.onClick = [this] { openBrowser(); };
         addAndMakeVisible(browseBtn);
+
+        prevBtn.onClick = [this] { navigateSample(false); };
+        nextBtn.onClick = [this] { navigateSample(true); };
+        addAndMakeVisible(prevBtn);
+        addAndMakeVisible(nextBtn);
 
         resetBtn.setButtonText("RESET");
         resetBtn.onClick = [this] {
@@ -149,7 +156,7 @@ public:
         // ヘッダー部
         g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
         g.setColour(AnatomyColors::accentTonal);
-        g.drawText("TONAL (BODY / HARMONICS)", 12, 6, getWidth() - 250, 20, juce::Justification::centredLeft);
+        g.drawText("TONAL", 12, 6, getWidth() - 320, 20, juce::Justification::centredLeft);
 
         // ヘッダー下仕切り線
         g.setColour(AnatomyColors::panelLine);
@@ -158,7 +165,7 @@ public:
 
     void resized() override
     {
-        // ヘッダーボタン: 右上 (BROWSE 52, RESET 44, EXPORT 50, SOLO 56, SNAP 56)
+        // ヘッダーボタン: 右上 (BROWSE 52, PREV 22, NEXT 22, RESET 44, EXPORT 50, SOLO 56, SNAP 56)
         int gap = 4;
         int bx = getWidth() - 8;
 
@@ -166,6 +173,8 @@ public:
         bx -= (gap + 56); soloToggle.setBounds(bx, 5, 56, 21);
         bx -= (gap + 50); exportBtn.setBounds(bx, 5, 50, 21);
         bx -= (gap + 44); resetBtn.setBounds(bx, 5, 44, 21);
+        bx -= (gap + 22); nextBtn.setBounds(bx, 5, 22, 21);
+        bx -= (gap + 22); prevBtn.setBounds(bx, 5, 22, 21);
         bx -= (gap + 52); browseBtn.setBounds(bx, 5, 52, 21);
 
         // 波形エリア (TransientLaneView と完全同一の高さ)
@@ -213,9 +222,18 @@ public:
 private:
     void openBrowser()
     {
+        juce::File startDir;
+        auto lastFile = processor.getLastLoadedFile(2);
+        if (lastFile.existsAsFile())
+            startDir = lastFile.getParentDirectory();
+        else if (auto fullMixFile = processor.getLastLoadedFile(0); fullMixFile.existsAsFile())
+            startDir = fullMixFile.getParentDirectory();
+        else
+            startDir = juce::File::getSpecialLocation(juce::File::userMusicDirectory);
+
         fileChooser = std::make_unique<juce::FileChooser>(
             "Select Audio Sample for Tonal",
-            juce::File::getSpecialLocation(juce::File::userMusicDirectory),
+            startDir,
             "*.wav;*.aif;*.aiff;*.flac;*.mp3");
 
         fileChooser->launchAsync(
@@ -238,6 +256,7 @@ private:
             juce::AudioBuffer<float> tempBuf((int)reader->numChannels, (int)reader->lengthInSamples);
             reader->read(&tempBuf, 0, (int)reader->lengthInSamples, 0, true, true);
             processor.storeCustomSampleFromUI(2, tempBuf, reader->sampleRate);
+            processor.setLastLoadedFile(2, file);
             auto name = file.getFileNameWithoutExtension().substring(0, 8);
             processor.setCustomSampleName(2, name);
             browseBtn.setButtonText(name);
@@ -247,12 +266,21 @@ private:
         }
     }
 
+    void navigateSample(bool isNext)
+    {
+        auto file = processor.getNeighborAudioFile(2, isNext);
+        if (file.existsAsFile())
+            loadFile(file);
+    }
+
     AnatomyAudioProcessor& processor;
     juce::AudioFormatManager formatManager;
 
     WaveformComponent waveform;
 
     juce::TextButton browseBtn;
+    juce::TextButton prevBtn { juce::CharPointer_UTF8("\xe2\x97\x80") };
+    juce::TextButton nextBtn { juce::CharPointer_UTF8("\xe2\x96\xb6") };
     juce::TextButton resetBtn;
     DragExportButton exportBtn{ "EXPORT", AnatomyColors::accentTonal };
     GlowToggle soloToggle{ "SOLO", AnatomyColors::accentTonal };

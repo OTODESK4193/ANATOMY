@@ -40,6 +40,8 @@ private:
     void updateSoloButtonStates();
     void resetAllParameters();
     void confirmThen(const juce::String& title, const juce::String& message, std::function<void()> action);
+    void loadAudioFile(const juce::File& file);
+    void navigateFullMixSample(bool isNext);
 
     AnatomyAudioProcessor& audioProcessor;
     juce::AudioFormatManager formatManager;
@@ -47,6 +49,8 @@ private:
 
     // --- 1段目: ヘッダー ---
     juce::TextButton loadButton       { "LOAD" };
+    juce::TextButton prevLoadBtn      { juce::CharPointer_UTF8("\xe2\x97\x80") };
+    juce::TextButton nextLoadBtn      { juce::CharPointer_UTF8("\xe2\x96\xb6") };
     juce::TextButton resetButton      { "RESET" };
     juce::ComboBox themeCombo;
     std::unique_ptr<juce::FileChooser> fileChooser;

@@ -171,6 +171,21 @@ public:
 
     juce::String customSampleNames[4] = { {}, {}, {}, {} };
 
+    void setLastLoadedFile(int laneIndex, const juce::File& file) noexcept
+    {
+        if (laneIndex >= 0 && laneIndex < 4)
+            lastLoadedFiles[laneIndex] = file;
+    }
+
+    juce::File getLastLoadedFile(int laneIndex) const noexcept
+    {
+        return (laneIndex >= 0 && laneIndex < 4) ? lastLoadedFiles[laneIndex] : juce::File();
+    }
+
+    juce::File getNeighborAudioFile(int laneIndex, bool isNext);
+
+    juce::File lastLoadedFiles[4];
+
 private:
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 

@@ -36,12 +36,19 @@ public:
         };
 
         styleBtn(browseBtn, AnatomyColors::peach);
-        styleBtn(resetBtn, AnatomyColors::textDim);
+        styleBtn(prevBtn,   AnatomyColors::peach);
+        styleBtn(nextBtn,   AnatomyColors::peach);
+        styleBtn(resetBtn,  AnatomyColors::textDim);
 
         auto sName = processor.getCustomSampleName(3);
         browseBtn.setButtonText(sName.isNotEmpty() ? sName : "BROWSE");
         browseBtn.onClick = [this] { openBrowser(); };
         addAndMakeVisible(browseBtn);
+
+        prevBtn.onClick = [this] { navigateSample(false); };
+        nextBtn.onClick = [this] { navigateSample(true); };
+        addAndMakeVisible(prevBtn);
+        addAndMakeVisible(nextBtn);
 
         resetBtn.setButtonText("RESET");
         resetBtn.onClick = [this] {
@@ -152,7 +159,7 @@ public:
 
     void resized() override
     {
-        // ヘッダーボタン: 右上 (BROWSE 52, RESET 44, EXPORT 50, SOLO 56, SNAP 56)
+        // ヘッダーボタン: 右上 (BROWSE 52, PREV 22, NEXT 22, RESET 44, EXPORT 50, SOLO 56, SNAP 56)
         int gap = 4;
         int bx = getWidth() - 8;
 
@@ -160,6 +167,8 @@ public:
         bx -= (gap + 56); soloToggle.setBounds(bx, 5, 56, 21);
         bx -= (gap + 50); exportBtn.setBounds(bx, 5, 50, 21);
         bx -= (gap + 44); resetBtn.setBounds(bx, 5, 44, 21);
+        bx -= (gap + 22); nextBtn.setBounds(bx, 5, 22, 21);
+        bx -= (gap + 22); prevBtn.setBounds(bx, 5, 22, 21);
         bx -= (gap + 52); browseBtn.setBounds(bx, 5, 52, 21);
 
         // 右端ノブエリア (3基: OFFSET, PITCH, GAIN)
@@ -207,9 +216,18 @@ public:
 private:
     void openBrowser()
     {
+        juce::File startDir;
+        auto lastFile = processor.getLastLoadedFile(3);
+        if (lastFile.existsAsFile())
+            startDir = lastFile.getParentDirectory();
+        else if (auto fullMixFile = processor.getLastLoadedFile(0); fullMixFile.existsAsFile())
+            startDir = fullMixFile.getParentDirectory();
+        else
+            startDir = juce::File::getSpecialLocation(juce::File::userMusicDirectory);
+
         fileChooser = std::make_unique<juce::FileChooser>(
             "Select Audio Sample for Layer",
-            juce::File::getSpecialLocation(juce::File::userMusicDirectory),
+            startDir,
             "*.wav;*.aif;*.aiff;*.flac;*.mp3");
 
         fileChooser->launchAsync(
@@ -232,6 +250,7 @@ private:
             juce::AudioBuffer<float> tempBuf((int)reader->numChannels, (int)reader->lengthInSamples);
             reader->read(&tempBuf, 0, (int)reader->lengthInSamples, 0, true, true);
             processor.storeCustomSampleFromUI(3, tempBuf, reader->sampleRate);
+            processor.setLastLoadedFile(3, file);
             auto name = file.getFileNameWithoutExtension().substring(0, 8);
             processor.setCustomSampleName(3, name);
             browseBtn.setButtonText(name);
@@ -241,12 +260,21 @@ private:
         }
     }
 
+    void navigateSample(bool isNext)
+    {
+        auto file = processor.getNeighborAudioFile(3, isNext);
+        if (file.existsAsFile())
+            loadFile(file);
+    }
+
     AnatomyAudioProcessor& processor;
     juce::AudioFormatManager formatManager;
 
     WaveformComponent waveform;
 
     juce::TextButton browseBtn;
+    juce::TextButton prevBtn { juce::CharPointer_UTF8("\xe2\x97\x80") };
+    juce::TextButton nextBtn { juce::CharPointer_UTF8("\xe2\x96\xb6") };
     juce::TextButton resetBtn;
     DragExportButton exportBtn{ "EXPORT", AnatomyColors::peach };
     GlowToggle soloToggle{ "SOLO", AnatomyColors::peach };

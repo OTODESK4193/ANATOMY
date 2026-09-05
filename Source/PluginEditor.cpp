@@ -35,30 +35,31 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     };
 
     styleHeaderButton(loadButton,  AnatomyColors::text);
+    styleHeaderButton(prevLoadBtn, AnatomyColors::text);
+    styleHeaderButton(nextLoadBtn, AnatomyColors::text);
     styleHeaderButton(resetButton, AnatomyColors::textDim);
 
     loadButton.onClick = [this]
     {
+        juce::File startDir;
+        auto lastFile = audioProcessor.getLastLoadedFile(0);
+        if (lastFile.existsAsFile())
+            startDir = lastFile.getParentDirectory();
+        else
+            startDir = juce::File::getSpecialLocation(juce::File::userMusicDirectory);
+
         fileChooser = std::make_unique<juce::FileChooser>(
-            "Load an audio sample", juce::File(), "*.wav;*.aif;*.aiff;*.mp3;*.flac");
+            "Load an audio sample", startDir, "*.wav;*.aif;*.aiff;*.mp3;*.flac");
         fileChooser->launchAsync(
             juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
             [this](const juce::FileChooser& fc)
             {
-                const auto file = fc.getResult();
-                if (file.existsAsFile())
-                {
-                    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
-                    if (reader != nullptr)
-                    {
-                        juce::AudioBuffer<float> buffer((int)reader->numChannels, (int)reader->lengthInSamples);
-                        reader->read(&buffer, 0, (int)reader->lengthInSamples, 0, true, true);
-                        audioProcessor.startSeparation(buffer, reader->sampleRate);
-                        wasProcessing = true;
-                    }
-                }
+                loadAudioFile(fc.getResult());
             });
     };
+
+    prevLoadBtn.onClick = [this] { navigateFullMixSample(false); };
+    nextLoadBtn.onClick = [this] { navigateFullMixSample(true); };
 
     resetButton.onClick = [this]
     {
@@ -68,6 +69,8 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     };
 
     addAndMakeVisible(loadButton);
+    addAndMakeVisible(prevLoadBtn);
+    addAndMakeVisible(nextLoadBtn);
     addAndMakeVisible(resetButton);
 
     // テーマ選択
@@ -96,14 +99,7 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
         repaint();
     };
     fullMixLane.onFileDropped = [this](const juce::File& file) {
-        std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
-        if (reader != nullptr)
-        {
-            juce::AudioBuffer<float> buffer((int)reader->numChannels, (int)reader->lengthInSamples);
-            reader->read(&buffer, 0, (int)reader->lengthInSamples, 0, true, true);
-            audioProcessor.startSeparation(buffer, reader->sampleRate);
-            wasProcessing = true;
-        }
+        loadAudioFile(file);
     };
     addAndMakeVisible(fullMixLane);
 
@@ -408,7 +404,7 @@ void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
 void AnatomyAudioProcessorEditor::resized()
 {
     // --- 1段目: ヘッダーボタン (右側) ---
-    // [LOAD] -> [RESET] -> [THEME]
+    // [LOAD] -> [◀] -> [▶] -> [RESET] -> [THEME]
     int hX = getWidth() - kMargin;
 
     hX -= 90;
@@ -419,6 +415,14 @@ void AnatomyAudioProcessorEditor::resized()
     resetButton.setBounds(hX, 16, 64, 24);
 
     hX -= 8;
+    hX -= 24;
+    nextLoadBtn.setBounds(hX, 16, 24, 24);
+
+    hX -= 4;
+    hX -= 24;
+    prevLoadBtn.setBounds(hX, 16, 24, 24);
+
+    hX -= 6;
     hX -= 64;
     loadButton.setBounds(hX, 16, 64, 24);
 
@@ -443,4 +447,27 @@ void AnatomyAudioProcessorEditor::resized()
 
     // --- 4段目: Card FX Rack ---
     fxRackView.setBounds(kMargin, curY, fullW, kFxH);
+}
+
+void AnatomyAudioProcessorEditor::loadAudioFile(const juce::File& file)
+{
+    if (file.existsAsFile())
+    {
+        std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
+        if (reader != nullptr)
+        {
+            juce::AudioBuffer<float> buffer((int)reader->numChannels, (int)reader->lengthInSamples);
+            reader->read(&buffer, 0, (int)reader->lengthInSamples, 0, true, true);
+            audioProcessor.startSeparation(buffer, reader->sampleRate);
+            audioProcessor.setLastLoadedFile(0, file);
+            wasProcessing = true;
+        }
+    }
+}
+
+void AnatomyAudioProcessorEditor::navigateFullMixSample(bool isNext)
+{
+    auto nextFile = audioProcessor.getNeighborAudioFile(0, isNext);
+    if (nextFile.existsAsFile())
+        loadAudioFile(nextFile);
 }
