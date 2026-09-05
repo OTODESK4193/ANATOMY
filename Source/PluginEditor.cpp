@@ -94,6 +94,7 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
         transientLane.setSelected(false);
         tonalLane.setSelected(false);
         layerLane.setSelected(false);
+        repaint();
     };
     fullMixLane.onBeforeChanged = [this] {
         repaint();
@@ -110,9 +111,11 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
         transientLane.setSelected(false);
         tonalLane.setSelected(false);
         layerLane.setSelected(true);
+        repaint();
     };
     layerLane.onSampleChanged = [this] {
         audioProcessor.offlineMixRenderer.triggerRender();
+        repaint();
     };
     layerLane.onSoloChanged = [this] {
         updateSoloButtonStates();
@@ -126,9 +129,11 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
         transientLane.setSelected(true);
         tonalLane.setSelected(false);
         layerLane.setSelected(false);
+        repaint();
     };
     transientLane.onSampleChanged = [this] {
         audioProcessor.offlineMixRenderer.triggerRender();
+        repaint();
     };
     transientLane.onSoloChanged = [this] {
         updateSoloButtonStates();
@@ -141,9 +146,11 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
         transientLane.setSelected(false);
         tonalLane.setSelected(true);
         layerLane.setSelected(false);
+        repaint();
     };
     tonalLane.onSampleChanged = [this] {
         audioProcessor.offlineMixRenderer.triggerRender();
+        repaint();
     };
     tonalLane.onSoloChanged = [this] {
         updateSoloButtonStates();
@@ -156,6 +163,7 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
         transientLane.setSelected(route == TargetRoute::Transient);
         tonalLane.setSelected(route == TargetRoute::Tonal);
         layerLane.setSelected(route == TargetRoute::Layer);
+        repaint();
     };
     addAndMakeVisible(fxRackView);
 
@@ -339,6 +347,9 @@ void AnatomyAudioProcessorEditor::timerCallback()
         hudStatus = "Engine: Ready";
     }
 
+    // ヘッダーHUDと選択エリア名表示を常に最新化
+    repaint(310, 8, getWidth() - 310, 36);
+
     if (wasProcessing && !audioProcessor.isCurrentlyProcessing())
     {
         wasProcessing = false;
@@ -373,7 +384,80 @@ void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
     g.drawText(hudFile + "   " + hudSr, 320, 12, 300, 14, juce::Justification::centredLeft);
 
     g.setColour(audioProcessor.isCurrentlyProcessing() ? AnatomyColors::accentTransient : AnatomyColors::textDim);
-    g.drawText(hudStatus, 320, 30, 300, 14, juce::Justification::centredLeft);
+    g.drawText(hudStatus, 320, 30, 90, 14, juce::Justification::centredLeft);
+
+    // 選択エリアのサンプル名表示 (Engine: Ready の右隣)
+    {
+        TargetRoute route = fxRackView.getTargetRoute();
+        juce::String selectedLaneName;
+        juce::String selectedSampleName;
+        juce::Colour selectedColour = AnatomyColors::textDim;
+
+        if (route == TargetRoute::Transient)
+        {
+            selectedLaneName = "TRANSIENT";
+            selectedColour = AnatomyColors::accentTransient;
+            if (audioProcessor.isCustomSampleLoaded(1))
+            {
+                auto f = audioProcessor.getLastLoadedFile(1);
+                selectedSampleName = f.existsAsFile() ? f.getFileName() : audioProcessor.getCustomSampleName(1);
+            }
+            else
+            {
+                auto f = audioProcessor.getLastLoadedFile(0);
+                if (f.existsAsFile()) selectedSampleName = f.getFileName();
+            }
+        }
+        else if (route == TargetRoute::Tonal)
+        {
+            selectedLaneName = "TONAL";
+            selectedColour = AnatomyColors::accentTonal;
+            if (audioProcessor.isCustomSampleLoaded(2))
+            {
+                auto f = audioProcessor.getLastLoadedFile(2);
+                selectedSampleName = f.existsAsFile() ? f.getFileName() : audioProcessor.getCustomSampleName(2);
+            }
+            else
+            {
+                auto f = audioProcessor.getLastLoadedFile(0);
+                if (f.existsAsFile()) selectedSampleName = f.getFileName();
+            }
+        }
+        else if (route == TargetRoute::Layer)
+        {
+            selectedLaneName = "LAYER";
+            selectedColour = AnatomyColors::peach;
+            if (audioProcessor.isCustomSampleLoaded(3))
+            {
+                auto f = audioProcessor.getLastLoadedFile(3);
+                selectedSampleName = f.existsAsFile() ? f.getFileName() : audioProcessor.getCustomSampleName(3);
+            }
+            else
+            {
+                selectedSampleName = "(No Sample)";
+            }
+        }
+        else // FullMix
+        {
+            selectedLaneName = "FULLMIX";
+            selectedColour = AnatomyColors::accentFull;
+            auto f = audioProcessor.getLastLoadedFile(0);
+            if (f.existsAsFile()) selectedSampleName = f.getFileName();
+        }
+
+        if (selectedSampleName.isEmpty())
+            selectedSampleName = "(No Sample)";
+
+        int sampleX = 415;
+        int maxSampleW = (getWidth() - 300) - sampleX;
+        if (maxSampleW > 50)
+        {
+            g.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
+            g.setColour(selectedColour);
+            g.drawText("[" + selectedLaneName + "]  " + selectedSampleName,
+                       sampleX, 30, maxSampleW, 14, juce::Justification::centredLeft, true);
+        }
+    }
 
     // 解析中オーバーレイ表示
     if (audioProcessor.isCurrentlyProcessing())

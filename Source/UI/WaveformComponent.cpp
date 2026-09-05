@@ -118,7 +118,10 @@ void WaveformComponent::setOffsets(float startMs, float endMs, double sr) noexce
         return;
 
     startOffsetMs = startMs;
-    endOffsetMs = endMs;
+    if (endMs <= 0.0f && internalBuffer.getNumSamples() > 0 && sr > 0.0)
+        endOffsetMs = static_cast<float>((static_cast<double>(internalBuffer.getNumSamples()) / sr) * 1000.0);
+    else
+        endOffsetMs = endMs;
     sampleRate = sr;
     repaint();
 }
@@ -534,7 +537,7 @@ void WaveformComponent::paint(juce::Graphics& g)
         }
         else
         {
-            float fOutX = getXFromMs(endOffsetMs);
+            float fOutX = std::min(w - 6.0f, getXFromMs(endOffsetMs));
             if (fOutX >= 0.0f && fOutX <= w)
             {
                 g.setColour(AnatomyColors::rose.withAlpha(0.85f));
@@ -569,15 +572,16 @@ void WaveformComponent::paint(juce::Graphics& g)
         }
 
         // ── END マーカー (上部 ◀ 三角形 ＋ 縦線) ──
-        if (endX >= -5.0f && endX <= w + 5.0f)
+        float drawEndX = std::min(w - 1.0f, endX);
+        if (drawEndX >= -5.0f && drawEndX <= w + 5.0f)
         {
             g.setColour(juce::Colours::white.withAlpha(0.6f));
-            g.drawVerticalLine(static_cast<int>(endX), 12.0f, h);
+            g.drawVerticalLine(static_cast<int>(drawEndX), 12.0f, h);
 
             juce::Path tri;
-            tri.startNewSubPath(endX, 0.0f);
-            tri.lineTo(endX - 10.0f, 6.0f);
-            tri.lineTo(endX, 12.0f);
+            tri.startNewSubPath(drawEndX, 0.0f);
+            tri.lineTo(drawEndX - 10.0f, 6.0f);
+            tri.lineTo(drawEndX, 12.0f);
             tri.closeSubPath();
 
             // 影/縁取り効果として少しずらして黒で描画
@@ -590,7 +594,7 @@ void WaveformComponent::paint(juce::Graphics& g)
             if (isSnappedToZeroCrossing && currentDragMode == DragMode::EndMarker)
             {
                 g.setColour(AnatomyColors::mint);
-                g.drawEllipse(endX - 5.0f, 14.0f, 10.0f, 10.0f, 1.5f);
+                g.drawEllipse(drawEndX - 5.0f, 14.0f, 10.0f, 10.0f, 1.5f);
             }
         }
     }
@@ -625,84 +629,11 @@ void WaveformComponent::paint(juce::Graphics& g)
         g.drawText(zoomText, getWidth() - 50, getHeight() - 22, 44, 14, juce::Justification::centredRight, false);
     }
 
-    // 6. 読み込み中サンプル名称表示 (右上にカラーテーマ連動色で表示)
-    if (processor != nullptr)
-    {
-        juce::String sampleName;
-        if (laneIndex == 0) // FullMix
-        {
-            auto f = processor->getLastLoadedFile(0);
-            if (f.existsAsFile())
-                sampleName = f.getFileName();
-        }
-        else if (laneIndex == 1) // Transient
-        {
-            if (processor->isCustomSampleLoaded(1))
-            {
-                auto f = processor->getLastLoadedFile(1);
-                sampleName = f.existsAsFile() ? f.getFileName() : processor->getCustomSampleName(1);
-            }
-            else
-            {
-                auto f = processor->getLastLoadedFile(0);
-                if (f.existsAsFile())
-                    sampleName = f.getFileName();
-            }
-        }
-        else if (laneIndex == 2) // Tonal
-        {
-            if (processor->isCustomSampleLoaded(2))
-            {
-                auto f = processor->getLastLoadedFile(2);
-                sampleName = f.existsAsFile() ? f.getFileName() : processor->getCustomSampleName(2);
-            }
-            else
-            {
-                auto f = processor->getLastLoadedFile(0);
-                if (f.existsAsFile())
-                    sampleName = f.getFileName();
-            }
-        }
-        else if (laneIndex == 3) // Layer
-        {
-            if (processor->isCustomSampleLoaded(3))
-            {
-                auto f = processor->getLastLoadedFile(3);
-                sampleName = f.existsAsFile() ? f.getFileName() : processor->getCustomSampleName(3);
-            }
-        }
-
-        if (sampleName.isNotEmpty())
-        {
-            juce::Colour nameColour = (laneIndex == 0) ? AnatomyColors::accentFull :
-                                      (laneIndex == 1) ? AnatomyColors::accentTransient :
-                                      (laneIndex == 2) ? AnatomyColors::accentTonal :
-                                                         AnatomyColors::peach;
-
-            auto font = juce::Font(juce::FontOptions(10.0f, juce::Font::bold));
-            g.setFont(font);
-            float textW = font.getStringWidthFloat(sampleName);
-            float boxW = std::min(textW + 12.0f, w - 24.0f);
-            float boxH = 15.0f;
-            float boxX = w - boxW - 8.0f;
-            float boxY = 6.0f;
-
-            g.setColour(juce::Colours::black.withAlpha(0.45f));
-            g.fillRoundedRectangle(boxX, boxY, boxW, boxH, 3.0f);
-
-            g.setColour(nameColour.withAlpha(0.35f));
-            g.drawRoundedRectangle(boxX, boxY, boxW, boxH, 3.0f, 1.0f);
-
-            g.setColour(nameColour.withAlpha(0.9f));
-            g.drawText(sampleName, juce::Rectangle<float>(boxX + 5.0f, boxY, boxW - 10.0f, boxH),
-                       juce::Justification::centredRight, true);
-        }
-    }
-
-    // 7. 外枠境界線 (選択時は各アクセント色で光る)
+    // 6. 外枠境界線 (選択時は各アクセント色で光る)
     juce::Colour borderCol = isSelected ? (laneIndex == 0 ? AnatomyColors::accentFull :
                                            (laneIndex == 1 ? AnatomyColors::accentTransient :
-                                                             AnatomyColors::accentTonal)) : AnatomyColors::panelLine;
+                                           (laneIndex == 2 ? AnatomyColors::accentTonal :
+                                                             AnatomyColors::peach))) : AnatomyColors::panelLine;
     g.setColour(borderCol);
     g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, isSelected ? 1.5f : 1.0f);
 }
@@ -773,8 +704,9 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
 
         float startX = getXFromMs(startOffsetMs);
         float endX = getXFromMs(endOffsetMs);
+        float drawEndX = std::min(static_cast<float>(getWidth() - 1), endX);
         float fInX = getXFromMs(startOffsetMs + fadeInMs);
-        float fOutX = getXFromMs(endOffsetMs - fadeOutMs);
+        float fOutX = (fadeOutMs > 0.1f) ? getXFromMs(endOffsetMs - fadeOutMs) : std::min(static_cast<float>(getWidth() - 6), getXFromMs(endOffsetMs));
 
         // 1. 上部 ▶ / ◀ 三角形マーカー判定 (y <= 18)
         if (my <= 18.0f)
@@ -786,7 +718,7 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
                 dragStartMouseXf = e.position.x;
                 return;
             }
-            if (mx >= endX - 16.0f && mx <= endX + 6.0f)
+            if (mx >= drawEndX - 16.0f && mx <= drawEndX + 6.0f)
             {
                 currentDragMode = DragMode::EndMarker;
                 dragStartParamMs = endOffsetMs;
@@ -812,7 +744,7 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
         // 3. FadeOut テンションハンドル判定 (カーブ中央 ●)
         if (fadeOutMs > 0.1f)
         {
-            float fMidX = (fOutX + endX) * 0.5f;
+            float fMidX = (fOutX + drawEndX) * 0.5f;
             float fMidY = getHeight() - calculateFadeGain(0.5f, fadeOutTension) * (getHeight() - 4.0f);
             if (std::abs(mx - fMidX) <= 10.0f && std::abs(my - fMidY) <= 10.0f)
             {
@@ -849,7 +781,7 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
             dragStartMouseXf = e.position.x;
             return;
         }
-        if (std::abs(mx - endX) <= 8.0f)
+        if (std::abs(mx - drawEndX) <= 8.0f || (endX >= static_cast<float>(getWidth()) && mx >= static_cast<float>(getWidth() - 12)))
         {
             currentDragMode = DragMode::EndMarker;
             dragStartParamMs = endOffsetMs;
@@ -1007,10 +939,11 @@ void WaveformComponent::mouseMove(const juce::MouseEvent& e)
     float midY = getHeight() * 0.5f;
     float startX = getXFromMs(startOffsetMs);
     float endX = getXFromMs(endOffsetMs);
+    float drawEndX = std::min(static_cast<float>(getWidth() - 1), endX);
     float fInX = getXFromMs(startOffsetMs + fadeInMs);
-    float fOutX = getXFromMs(endOffsetMs - fadeOutMs);
+    float fOutX = (fadeOutMs > 0.1f) ? getXFromMs(endOffsetMs - fadeOutMs) : std::min(static_cast<float>(getWidth() - 6), getXFromMs(endOffsetMs));
 
-    if (my <= 18.0f && ((mx >= startX - 6.0f && mx <= startX + 16.0f) || (mx >= endX - 16.0f && mx <= endX + 6.0f)))
+    if (my <= 18.0f && ((mx >= startX - 6.0f && mx <= startX + 16.0f) || (mx >= drawEndX - 16.0f && mx <= drawEndX + 6.0f)))
     {
         setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
     }
@@ -1018,7 +951,7 @@ void WaveformComponent::mouseMove(const juce::MouseEvent& e)
     {
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
     }
-    else if (std::abs(mx - startX) <= 8.0f || std::abs(mx - endX) <= 8.0f)
+    else if (std::abs(mx - startX) <= 8.0f || std::abs(mx - drawEndX) <= 8.0f || (endX >= static_cast<float>(getWidth()) && mx >= static_cast<float>(getWidth() - 12)))
     {
         setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
     }
