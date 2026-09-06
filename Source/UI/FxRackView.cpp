@@ -386,8 +386,11 @@ void FxRackView::rebuildDetails()
             }
 
             ottXoverLinkBtn.setButtonText("XO LINK");
-            ottXoverLinkBtn.setColour(juce::ToggleButton::textColourId, accent);
-            ottXoverLinkBtn.setColour(juce::ToggleButton::tickColourId, accent);
+            ottXoverLinkBtn.setClickingTogglesState(true);
+            ottXoverLinkBtn.setColour(juce::TextButton::buttonColourId, AnatomyColors::knobTrack);
+            ottXoverLinkBtn.setColour(juce::TextButton::buttonOnColourId, accent);
+            ottXoverLinkBtn.setColour(juce::TextButton::textColourOffId, AnatomyColors::textDim);
+            ottXoverLinkBtn.setColour(juce::TextButton::textColourOnId, juce::Colours::black);
             addAndMakeVisible(ottXoverLinkBtn);
 
             if (proc.apvts.getParameter(pre + "OttXoverLink") != nullptr)
@@ -573,14 +576,14 @@ void FxRackView::layoutDetails()
     // OTT コントロール配置 (STAGE 1 / STAGE 2 ボタン, PHASE MODE, XO LINK)
     if (fxType == 3)
     {
-        ottStageBtns[0].setBounds(x, y + 4, 68, 22);
-        ottStageBtns[1].setBounds(x, y + 30, 68, 22);
-        x += 76;
+        ottStageBtns[0].setBounds(x, y + 4, 70, 22);
+        ottStageBtns[1].setBounds(x, y + 30, 70, 22);
+        x += 78;
 
-        ottPhaseModeLabel.setBounds(x, y, 62, 14);
-        ottPhaseModeCombo.setBounds(x, y + 16, 62, 20);
-        ottXoverLinkBtn.setBounds(x, y + 40, 64, 18);
-        x += 72;
+        ottPhaseModeLabel.setBounds(x, y, 82, 14);
+        ottPhaseModeCombo.setBounds(x, y + 16, 82, 22);
+        ottXoverLinkBtn.setBounds(x, y + 42, 82, 20);
+        x += 90;
     }
 
     // ノブ配置

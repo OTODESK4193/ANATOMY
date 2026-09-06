@@ -55,13 +55,13 @@ AnatomyAudioProcessor::AnatomyAudioProcessor()
     apvts.addParameterListener("clickLength", this);
     apvts.addParameterListener("clickCurve", this);
 
-    juce::StringArray ottParams{ "transOttDepth", "transOttTime", "transOttLowMidXOver", "transOttMidHighXOver",
+    juce::StringArray ottParams{ "transOttDepth", "transOttTime", "transOttLowMidXOver", "transOttMidHighXOver", "transOttXoverLink",
                                  "transOtt2On", "transOtt2Depth", "transOtt2Time", "transOtt2LowMidXOver", "transOtt2MidHighXOver",
-                                 "tonalOttDepth", "tonalOttTime", "tonalOttLowMidXOver", "tonalOttMidHighXOver",
+                                 "tonalOttDepth", "tonalOttTime", "tonalOttLowMidXOver", "tonalOttMidHighXOver", "tonalOttXoverLink",
                                  "tonalOtt2On", "tonalOtt2Depth", "tonalOtt2Time", "tonalOtt2LowMidXOver", "tonalOtt2MidHighXOver",
-                                 "fullOttDepth", "fullOttTime", "fullOttLowMidXOver", "fullOttMidHighXOver",
+                                 "fullOttDepth", "fullOttTime", "fullOttLowMidXOver", "fullOttMidHighXOver", "fullOttXoverLink",
                                  "fullOtt2On", "fullOtt2Depth", "fullOtt2Time", "fullOtt2LowMidXOver", "fullOtt2MidHighXOver",
-                                 "layerOttDepth", "layerOttTime", "layerOttLowMidXOver", "layerOttMidHighXOver",
+                                 "layerOttDepth", "layerOttTime", "layerOttLowMidXOver", "layerOttMidHighXOver", "layerOttXoverLink",
                                  "layerOtt2On", "layerOtt2Depth", "layerOtt2Time", "layerOtt2LowMidXOver", "layerOtt2MidHighXOver",
                                  "transPitch", "tonalPitch", "layerPitch", "transMixGain", "tonalMixGain",
                                  "layerGain", "layerOffset", "tonalDelay" };
@@ -95,13 +95,13 @@ AnatomyAudioProcessor::~AnatomyAudioProcessor()
     apvts.removeParameterListener("clickLength", this);
     apvts.removeParameterListener("clickCurve", this);
 
-    juce::StringArray ottParams{ "transOttDepth", "transOttTime", "transOttLowMidXOver", "transOttMidHighXOver",
+    juce::StringArray ottParams{ "transOttDepth", "transOttTime", "transOttLowMidXOver", "transOttMidHighXOver", "transOttXoverLink",
                                  "transOtt2On", "transOtt2Depth", "transOtt2Time", "transOtt2LowMidXOver", "transOtt2MidHighXOver",
-                                 "tonalOttDepth", "tonalOttTime", "tonalOttLowMidXOver", "tonalOttMidHighXOver",
+                                 "tonalOttDepth", "tonalOttTime", "tonalOttLowMidXOver", "tonalOttMidHighXOver", "tonalOttXoverLink",
                                  "tonalOtt2On", "tonalOtt2Depth", "tonalOtt2Time", "tonalOtt2LowMidXOver", "tonalOtt2MidHighXOver",
-                                 "fullOttDepth", "fullOttTime", "fullOttLowMidXOver", "fullOttMidHighXOver",
+                                 "fullOttDepth", "fullOttTime", "fullOttLowMidXOver", "fullOttMidHighXOver", "fullOttXoverLink",
                                  "fullOtt2On", "fullOtt2Depth", "fullOtt2Time", "fullOtt2LowMidXOver", "fullOtt2MidHighXOver",
-                                 "layerOttDepth", "layerOttTime", "layerOttLowMidXOver", "layerOttMidHighXOver",
+                                 "layerOttDepth", "layerOttTime", "layerOttLowMidXOver", "layerOttMidHighXOver", "layerOttXoverLink",
                                  "layerOtt2On", "layerOtt2Depth", "layerOtt2Time", "layerOtt2LowMidXOver", "layerOtt2MidHighXOver",
                                  "transPitch", "tonalPitch", "layerPitch", "transMixGain", "tonalMixGain",
                                  "layerGain", "layerOffset", "tonalDelay" };
@@ -1279,12 +1279,90 @@ void AnatomyAudioProcessor::setOffsetsFromUI(int laneIndex, float startMs, float
         return bestSample;
     }
 
-    void AnatomyAudioProcessor::parameterChanged(const juce::String& paramID, float)
+    void AnatomyAudioProcessor::parameterChanged(const juce::String& paramID, float newValue)
     {
         if (paramID == "clickLength" || paramID == "clickCurve")
         {
             needsReanalysis.store(true, std::memory_order_release);
         }
+
+        // XO リンク同期処理 (S1 と S2 のクロスオーバー周波数を双方向で完全同期)
+        if (!isSyncingXover.load(std::memory_order_relaxed))
+        {
+            if (paramID.endsWith("OttLowMidXOver"))
+            {
+                juce::String pre = paramID.upToFirstOccurrenceOf("OttLowMidXOver", false, false);
+                if (auto* linkParam = apvts.getRawParameterValue(pre + "OttXoverLink"))
+                {
+                    if (linkParam->load() >= 0.5f)
+                    {
+                        isSyncingXover.store(true, std::memory_order_relaxed);
+                        if (auto* target = apvts.getParameter(pre + "Ott2LowMidXOver"))
+                            target->setValueNotifyingHost(target->convertTo0to1(newValue));
+                        isSyncingXover.store(false, std::memory_order_relaxed);
+                    }
+                }
+            }
+            else if (paramID.endsWith("Ott2LowMidXOver"))
+            {
+                juce::String pre = paramID.upToFirstOccurrenceOf("Ott2LowMidXOver", false, false);
+                if (auto* linkParam = apvts.getRawParameterValue(pre + "OttXoverLink"))
+                {
+                    if (linkParam->load() >= 0.5f)
+                    {
+                        isSyncingXover.store(true, std::memory_order_relaxed);
+                        if (auto* target = apvts.getParameter(pre + "OttLowMidXOver"))
+                            target->setValueNotifyingHost(target->convertTo0to1(newValue));
+                        isSyncingXover.store(false, std::memory_order_relaxed);
+                    }
+                }
+            }
+            else if (paramID.endsWith("OttMidHighXOver"))
+            {
+                juce::String pre = paramID.upToFirstOccurrenceOf("OttMidHighXOver", false, false);
+                if (auto* linkParam = apvts.getRawParameterValue(pre + "OttXoverLink"))
+                {
+                    if (linkParam->load() >= 0.5f)
+                    {
+                        isSyncingXover.store(true, std::memory_order_relaxed);
+                        if (auto* target = apvts.getParameter(pre + "Ott2MidHighXOver"))
+                            target->setValueNotifyingHost(target->convertTo0to1(newValue));
+                        isSyncingXover.store(false, std::memory_order_relaxed);
+                    }
+                }
+            }
+            else if (paramID.endsWith("Ott2MidHighXOver"))
+            {
+                juce::String pre = paramID.upToFirstOccurrenceOf("Ott2MidHighXOver", false, false);
+                if (auto* linkParam = apvts.getRawParameterValue(pre + "OttXoverLink"))
+                {
+                    if (linkParam->load() >= 0.5f)
+                    {
+                        isSyncingXover.store(true, std::memory_order_relaxed);
+                        if (auto* target = apvts.getParameter(pre + "OttMidHighXOver"))
+                            target->setValueNotifyingHost(target->convertTo0to1(newValue));
+                        isSyncingXover.store(false, std::memory_order_relaxed);
+                    }
+                }
+            }
+            else if (paramID.endsWith("OttXoverLink"))
+            {
+                juce::String pre = paramID.upToFirstOccurrenceOf("OttXoverLink", false, false);
+                if (newValue >= 0.5f)
+                {
+                    isSyncingXover.store(true, std::memory_order_relaxed);
+                    if (auto* s1Low = apvts.getRawParameterValue(pre + "OttLowMidXOver"))
+                        if (auto* t = apvts.getParameter(pre + "Ott2LowMidXOver"))
+                            t->setValueNotifyingHost(t->convertTo0to1(s1Low->load()));
+
+                    if (auto* s1High = apvts.getRawParameterValue(pre + "OttMidHighXOver"))
+                        if (auto* t = apvts.getParameter(pre + "Ott2MidHighXOver"))
+                            t->setValueNotifyingHost(t->convertTo0to1(s1High->load()));
+                    isSyncingXover.store(false, std::memory_order_relaxed);
+                }
+            }
+        }
+
         offlineMixRenderer.triggerRender();
     }
 

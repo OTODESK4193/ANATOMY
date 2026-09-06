@@ -247,6 +247,8 @@ private:
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedTonalGain { 1.0f };
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedLayerGain { 1.0f };
 
+    std::atomic<bool> isSyncingXover{ false };
+
     std::unique_ptr<AudioEffect> transientPool[7];
     std::unique_ptr<AudioEffect> tonalPool[7];
     std::unique_ptr<AudioEffect> fullMixPool[7];

@@ -39,7 +39,7 @@ juce_add_plugin(${PROJECT_NAME}
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     VST3_AUTO_MANIFEST FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE
-    VERSION "1.1.0"
+    VERSION "1.2.0"
 )
 
 # ==============================================================================

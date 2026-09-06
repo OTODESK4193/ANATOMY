@@ -60,8 +60,12 @@ FxSlotCard::FxSlotCard(AnatomyAudioProcessor& processor, int slotIndex,
     s2AmountLabel.setVisible(false);
     addChildComponent(s2AmountLabel);
 
-    s2ToggleBtn.setColour(juce::ToggleButton::textColourId, AnatomyColors::babyBlue);
-    s2ToggleBtn.setColour(juce::ToggleButton::tickColourId, AnatomyColors::babyBlue);
+    s2ToggleBtn.setButtonText("S2 ON");
+    s2ToggleBtn.setClickingTogglesState(true);
+    s2ToggleBtn.setColour(juce::TextButton::buttonOnColourId, AnatomyColors::babyBlue);
+    s2ToggleBtn.setColour(juce::TextButton::textColourOnId, juce::Colours::black);
+    s2ToggleBtn.setColour(juce::TextButton::buttonColourId, AnatomyColors::knobTrack);
+    s2ToggleBtn.setColour(juce::TextButton::textColourOffId, AnatomyColors::textDim.withAlpha(0.7f));
     s2ToggleBtn.setVisible(false);
     addChildComponent(s2ToggleBtn);
 }
@@ -137,6 +141,11 @@ void FxSlotCard::setEffectType(int fxType)
             s2ToggleAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
                 proc.apvts, pre + "Ott2On", s2ToggleBtn);
         }
+        s2ToggleBtn.onClick = [this] {
+            s2ToggleBtn.setButtonText(s2ToggleBtn.getToggleState() ? "S2 ON" : "S2 OFF");
+        };
+        if (auto* p = proc.apvts.getRawParameterValue(pre + "Ott2On"))
+            s2ToggleBtn.setButtonText(p->load() >= 0.5f ? "S2 ON" : "S2 OFF");
     }
     else if (fxType >= 0 && fxType < 7)
     {
@@ -251,7 +260,8 @@ void FxSlotCard::resized()
         s2AmountKnob.setBounds(s2X, knobY, knobSize, knobSize);
         s2AmountLabel.setBounds(s2X - 6, knobY + knobSize + 2, knobSize + 12, 12);
 
-        s2ToggleBtn.setBounds(getWidth() / 2 - 16, knobY + 10, 32, 20);
+        const int btnW = 46;
+        s2ToggleBtn.setBounds((getWidth() - btnW) / 2, knobY + 12, btnW, 18);
     }
     else
     {

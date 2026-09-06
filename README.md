@@ -1,9 +1,16 @@
 # ANATOMY
-![Release](https://img.shields.io/badge/release-v1.1.0-blue)
+![Release](https://img.shields.io/badge/release-v1.2.0-blue)
 ![License](https://img.shields.io/badge/license-AGPLv3-green)
 ![JUCE](https://img.shields.io/badge/JUCE-8.0.x-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%2064bit-lightgrey)
 ![Downloads](https://img.shields.io/github/downloads/OTODESK4193/ANATOMY/total.svg)
+
+---
+
+### **[V1.2.0] - 2026-09-06 (OTT×2 Dual-Stage & Workflow Upgrade)**
+- **Dual-Stage OTT×2 Architecture**: Ported MULTI-OTO DSP engine with cascaded Stage 1 & Stage 2 processing, 4th-order Linkwitz-Riley crossovers, AVX2 SIMD RMS detection, per-band dynamics, and Align Phase mode.
+- **Waveform Interaction & Stability**: Resolved Windows wait-cursor freezes via smart anchoring and widened hitboxes for end markers across all lanes.
+- **FX Rack & UI Enhancements**: Added dedicated dual-knob Stage 1 / Stage 2 controls on FX cards, expanded Phase Mode selection, and bi-directional Crossover Link synchronization.
 
 ---
 

@@ -63,7 +63,7 @@ private:
     ValueKnob s2AmountKnob;
     juce::Label s2AmountLabel;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> s2AmountAttachment;
-    juce::ToggleButton s2ToggleBtn{ "S2" };
+    juce::TextButton s2ToggleBtn{ "S2" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> s2ToggleAttachment;
 
     bool dragOver = false;

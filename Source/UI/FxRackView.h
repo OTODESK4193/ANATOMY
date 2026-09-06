@@ -86,7 +86,7 @@ private:
     juce::ComboBox ottPhaseModeCombo;
     juce::Label ottPhaseModeLabel;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> ottPhaseModeAttachment;
-    juce::ToggleButton ottXoverLinkBtn{ "XO LINK" };
+    juce::TextButton ottXoverLinkBtn{ "XO LINK" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> ottXoverLinkAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FxRackView)
