@@ -176,6 +176,7 @@ float WaveformComponent::getXFromMs(float ms) const noexcept
 
 float WaveformComponent::findZeroCrossingMs(float targetMs, float magnetPixels) const noexcept
 {
+    const juce::ScopedLock sl(renderLock);
     const int numSamples = internalBuffer.getNumSamples();
     const int numChannels = internalBuffer.getNumChannels();
     if (numSamples <= 1 || numChannels == 0 || sampleRate <= 0.0) return targetMs;
@@ -429,14 +430,15 @@ void WaveformComponent::paint(juce::Graphics& g)
             float fInEndX = getXFromMs(startOffsetMs + fadeInMs);
             float fInStartX = std::max(0.0f, startX);
             float fInW = fInEndX - fInStartX;
+            float denomIn = fInEndX - startX;
 
-            if (fInW > 1.0f)
+            if (fInW > 1.0f && denomIn > 0.5f)
             {
                 juce::Path fadeArea;
                 fadeArea.startNewSubPath(fInStartX, 0.0f);
                 for (float fx = fInStartX; fx <= fInEndX; fx += 2.0f)
                 {
-                    float prog = (fx - startX) / (fInEndX - startX);
+                    float prog = juce::jlimit(0.0f, 1.0f, (fx - startX) / denomIn);
                     float gain = calculateFadeGain(prog, fadeInTension);
                     float curH = h * (1.0f - gain);
                     fadeArea.lineTo(fx, curH);
@@ -451,7 +453,7 @@ void WaveformComponent::paint(juce::Graphics& g)
                 fadeLine.startNewSubPath(fInStartX, h);
                 for (float fx = fInStartX; fx <= fInEndX; fx += 2.0f)
                 {
-                    float prog = (fx - startX) / (fInEndX - startX);
+                    float prog = juce::jlimit(0.0f, 1.0f, (fx - startX) / denomIn);
                     float gain = calculateFadeGain(prog, fadeInTension);
                     fadeLine.lineTo(fx, h - gain * (h - 4.0f));
                 }
@@ -490,14 +492,15 @@ void WaveformComponent::paint(juce::Graphics& g)
             float fOutStartX = getXFromMs(endOffsetMs - fadeOutMs);
             float fOutEndX = std::min(w, endX);
             float fOutW = fOutEndX - fOutStartX;
+            float denomOut = endX - fOutStartX;
 
-            if (fOutW > 1.0f)
+            if (fOutW > 1.0f && denomOut > 0.5f)
             {
                 juce::Path fadeArea;
                 fadeArea.startNewSubPath(fOutStartX, 0.0f);
                 for (float fx = fOutStartX; fx <= fOutEndX; fx += 2.0f)
                 {
-                    float prog = (endX - fx) / (endX - fOutStartX);
+                    float prog = juce::jlimit(0.0f, 1.0f, (endX - fx) / denomOut);
                     float gain = calculateFadeGain(prog, fadeOutTension);
                     float curH = h * (1.0f - gain);
                     fadeArea.lineTo(fx, curH);
@@ -512,7 +515,7 @@ void WaveformComponent::paint(juce::Graphics& g)
                 fadeLine.startNewSubPath(fOutStartX, 4.0f);
                 for (float fx = fOutStartX; fx <= fOutEndX; fx += 2.0f)
                 {
-                    float prog = (endX - fx) / (endX - fOutStartX);
+                    float prog = juce::jlimit(0.0f, 1.0f, (endX - fx) / denomOut);
                     float gain = calculateFadeGain(prog, fadeOutTension);
                     fadeLine.lineTo(fx, h - gain * (h - 4.0f));
                 }
@@ -818,7 +821,8 @@ void WaveformComponent::mouseDrag(const juce::MouseEvent& e)
         // PicoSampler 方式: サブピクセル変位を加算
         double deltaMs = static_cast<double>(e.position.x - dragStartMouseXf) * msPerPixel;
         double minMarginMs = (1.0 / sampleRate) * 1000.0;
-        double targetMs = juce::jlimit(0.0, static_cast<double>(endOffsetMs) - minMarginMs, dragStartParamMs + deltaMs);
+        double maxAllowedMs = std::max(0.0, static_cast<double>(endOffsetMs) - minMarginMs);
+        double targetMs = juce::jlimit(0.0, maxAllowedMs, dragStartParamMs + deltaMs);
 
         if (shouldSnap)
         {
@@ -829,6 +833,9 @@ void WaveformComponent::mouseDrag(const juce::MouseEvent& e)
         {
             isSnappedToZeroCrossing = false;
         }
+
+        // スナップ後の逆転防止クランプ
+        targetMs = juce::jlimit(0.0, maxAllowedMs, targetMs);
 
         startOffsetMs = static_cast<float>(targetMs);
         synchronizeToTargetSliders(startOffsetMs, endOffsetMs, false); // ドラッグ中は高速反映
@@ -839,7 +846,8 @@ void WaveformComponent::mouseDrag(const juce::MouseEvent& e)
     {
         double deltaMs = static_cast<double>(e.position.x - dragStartMouseXf) * msPerPixel;
         double minMarginMs = (1.0 / sampleRate) * 1000.0;
-        double targetMs = juce::jlimit(static_cast<double>(startOffsetMs) + minMarginMs, totalMs, dragStartParamMs + deltaMs);
+        double minAllowedMs = std::min(totalMs, static_cast<double>(startOffsetMs) + minMarginMs);
+        double targetMs = juce::jlimit(minAllowedMs, totalMs, dragStartParamMs + deltaMs);
 
         if (shouldSnap)
         {
@@ -851,6 +859,9 @@ void WaveformComponent::mouseDrag(const juce::MouseEvent& e)
             isSnappedToZeroCrossing = false;
         }
 
+        // スナップ後の逆転防止クランプ
+        targetMs = juce::jlimit(minAllowedMs, totalMs, targetMs);
+
         endOffsetMs = static_cast<float>(targetMs);
         synchronizeToTargetSliders(startOffsetMs, endOffsetMs, false); // ドラッグ中は高速反映
         repaint();
@@ -859,18 +870,18 @@ void WaveformComponent::mouseDrag(const juce::MouseEvent& e)
     case DragMode::FadeInHandle:
     {
         double deltaMs = static_cast<double>(e.position.x - dragStartMouseXf) * msPerPixel;
-        float maxFade = (endOffsetMs - startOffsetMs) * 0.95f;
+        float maxFade = std::max(0.0f, (endOffsetMs - startOffsetMs) * 0.95f);
         fadeInMs = juce::jlimit(0.0f, maxFade, static_cast<float>(dragStartParamMs + deltaMs));
-        updateFadeToProcessor();
+        updateFadeToProcessor(false);
         repaint();
         break;
     }
     case DragMode::FadeOutHandle:
     {
         double deltaMs = static_cast<double>(dragStartMouseXf - e.position.x) * msPerPixel;
-        float maxFade = (endOffsetMs - startOffsetMs) * 0.95f;
+        float maxFade = std::max(0.0f, (endOffsetMs - startOffsetMs) * 0.95f);
         fadeOutMs = juce::jlimit(0.0f, maxFade, static_cast<float>(dragStartParamMs + deltaMs));
-        updateFadeToProcessor();
+        updateFadeToProcessor(false);
         repaint();
         break;
     }
@@ -879,7 +890,7 @@ void WaveformComponent::mouseDrag(const juce::MouseEvent& e)
         // 上ドラッグ（dy > 0）で急峻（プラス / 上に凸）、下ドラッグ（dy < 0）でなだらか（マイナス / 下に凹）
         float dy = dragStartPos.y - static_cast<float>(e.y);
         fadeInTension = juce::jlimit(-1.0f, 1.0f, dragStartTension + dy / 40.0f);
-        updateFadeToProcessor();
+        updateFadeToProcessor(false);
         repaint();
         break;
     }
@@ -888,7 +899,7 @@ void WaveformComponent::mouseDrag(const juce::MouseEvent& e)
         // 上ドラッグ（dy > 0）で急峻（プラス / 上に凸）、下ドラッグ（dy < 0）でなだらか（マイナス / 下に凹）
         float dy = dragStartPos.y - static_cast<float>(e.y);
         fadeOutTension = juce::jlimit(-1.0f, 1.0f, dragStartTension + dy / 40.0f);
-        updateFadeToProcessor();
+        updateFadeToProcessor(false);
         repaint();
         break;
     }
@@ -918,6 +929,12 @@ void WaveformComponent::mouseUp(const juce::MouseEvent&)
     {
         // マウスを離したタイミングで確定レンダリングをキック
         synchronizeToTargetSliders(startOffsetMs, endOffsetMs, true);
+    }
+    else if (currentDragMode == DragMode::FadeInHandle || currentDragMode == DragMode::FadeOutHandle ||
+             currentDragMode == DragMode::FadeInTension || currentDragMode == DragMode::FadeOutTension)
+    {
+        // フェード操作終了時に確定レンダリングをキック
+        updateFadeToProcessor(true);
     }
 
     currentDragMode = DragMode::None;
@@ -1011,13 +1028,13 @@ void WaveformComponent::mouseWheelMove(const juce::MouseEvent& e, const juce::Mo
 void WaveformComponent::synchronizeToTargetSliders(float startMs, float endMs, bool notifyProcessor)
 {
     if (processor == nullptr) return;
-    processor->setOffsetsFromUI(laneIndex, startMs, endMs);
+    processor->setOffsetsFromUI(laneIndex, startMs, endMs, notifyProcessor);
 }
 
-void WaveformComponent::updateFadeToProcessor()
+void WaveformComponent::updateFadeToProcessor(bool triggerOfflineRender)
 {
     if (processor == nullptr || laneIndex == 0) return;
-    processor->setFadeFromUI(laneIndex, fadeInMs, fadeOutMs, fadeInTension, fadeOutTension);
+    processor->setFadeFromUI(laneIndex, fadeInMs, fadeOutMs, fadeInTension, fadeOutTension, triggerOfflineRender);
     if (onFadeChanged)
         onFadeChanged(fadeInMs, fadeOutMs, fadeInTension, fadeOutTension);
 }

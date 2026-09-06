@@ -31,8 +31,8 @@ public:
     void prepare(double sampleRate, int /*maxBlockSize*/) override
     {
         this->currentSampleRate = sampleRate;
-        // DCブロッカー係数をSR連動に（44.1kで従来の0.995＝時定数約4.52msと一致。高SRでも同じ低域カットに保つ）
-        dcCoef = std::exp(-1.0f / (0.004523f * static_cast<float>(sampleRate)));
+        // DCブロッカー係数をSR連動に（キックのサブベース40〜60Hzを損なわない約5Hz: 時定数約31.83ms に適正化）
+        dcCoef = std::exp(-1.0f / (0.03183f * static_cast<float>(sampleRate)));
         updatePreAlpha();
         reset();
     }

@@ -75,7 +75,100 @@ public:
     }
 
     /**
-     * タイムドメイン・ピッチシフト処理の実体
+     * 高精度ステレオ対応タイムドメイン・ピッチシフト処理の実体
+     * - トリムオフセットと相対インデックスを独立して受け取ることで、ピッチ変更時のアタック位置ワープを完全防止
+     * - L/R 独立で 4点 Hermite 補間を適用し、左右の位相・音像空間を完全維持
+     */
+    void processSampleStereo(const juce::AudioBuffer<float>& sourceBuffer,
+                             double startOffsetSamples, double relativeIndex,
+                             float scaleFactor, float& outL, float& outR) noexcept
+    {
+        const int maxSamples = sourceBuffer.getNumSamples();
+        const int numChannels = sourceBuffer.getNumChannels();
+        if (maxSamples <= 0)
+        {
+            outL = 0.0f; outR = 0.0f;
+            return;
+        }
+
+        const float* srcL = sourceBuffer.getReadPointer(0);
+        const float* srcR = (numChannels > 1) ? sourceBuffer.getReadPointer(1) : srcL;
+
+        // ピッチ変更なし（1.0倍）の時は、一切の演算をバイパスして100%完全な同値原音を保証
+        if (std::abs(scaleFactor - 1.0f) < 0.001f)
+        {
+            double exactPos = startOffsetSamples + relativeIndex;
+            if (exactPos < 0.0 || exactPos >= static_cast<double>(maxSamples - 1))
+            {
+                outL = 0.0f; outR = 0.0f;
+                return;
+            }
+            outL = readHermite(srcL, maxSamples, static_cast<float>(exactPos));
+            outR = readHermite(srcR, maxSamples, static_cast<float>(exactPos));
+            return;
+        }
+
+        // ==============================================================================
+        // 【MODE 1】Transient: 窓関数を通さない「ワンショット・高次Hermiteリサンプリング」
+        // トリム位置は固定し、相対インデックスのみを scaleFactor で伸縮
+        // ==============================================================================
+        if (isTransientMode)
+        {
+            double srcPos = startOffsetSamples + (relativeIndex * static_cast<double>(scaleFactor));
+            if (srcPos < 0.0 || srcPos >= static_cast<double>(maxSamples - 1))
+            {
+                outL = 0.0f; outR = 0.0f;
+                return;
+            }
+
+            float posF = static_cast<float>(srcPos);
+            outL = readHermite(srcL, maxSamples, posF);
+            outR = readHermite(srcR, maxSamples, posF);
+            return;
+        }
+
+        // ==============================================================================
+        // 【MODE 2】Tonal: 4点位相分散型 Hann グラニュラー・ローテーター（ステレオ同期）
+        // ==============================================================================
+        float phaseIncrement = (1.0f - scaleFactor) / maxDelaySamples;
+        basePhase += phaseIncrement;
+
+        while (basePhase >= 1.0f) basePhase -= 1.0f;
+        while (basePhase < 0.0f)  basePhase += 1.0f;
+
+        float outSumL = 0.0f, outSumR = 0.0f;
+        float weightSum = 0.0f;
+        double currentExactPos = startOffsetSamples + relativeIndex;
+
+        for (int tap = 0; tap < 4; ++tap)
+        {
+            float p = basePhase + static_cast<float>(tap) * 0.25f;
+            while (p >= 1.0f) p -= 1.0f;
+
+            // Hann 窓
+            float w = 0.5f * (1.0f - std::cos(2.0f * juce::MathConstants<float>::pi * p));
+            float delay = (p - 0.5f) * maxDelaySamples;
+            float tapPos = static_cast<float>(currentExactPos) - delay;
+
+            outSumL += readHermite(srcL, maxSamples, tapPos) * w;
+            outSumR += readHermite(srcR, maxSamples, tapPos) * w;
+            weightSum += w;
+        }
+
+        if (weightSum > 1.0e-5f)
+        {
+            outL = outSumL / weightSum;
+            outR = outSumR / weightSum;
+        }
+        else
+        {
+            outL = outSumL;
+            outR = outSumR;
+        }
+    }
+
+    /**
+     * 互換性のためのモノラル版ピッチシフト
      */
     float processSample(const juce::AudioBuffer<float>& sourceBuffer, int currentTimelineIdx, float scaleFactor) noexcept
     {
@@ -91,9 +184,6 @@ public:
 
         const float* src = sourceBuffer.getReadPointer(0);
 
-        // ==============================================================================
-        // 【MODE 1】Transient: 窓関数を通さない「ワンショット・高次Hermiteリサンプリング」
-        // ==============================================================================
         if (isTransientMode)
         {
             float srcPos = static_cast<float>(currentTimelineIdx) * scaleFactor;
@@ -103,16 +193,12 @@ public:
             return readHermite(src, maxSamples, srcPos);
         }
 
-        // ==============================================================================
-        // 【MODE 2】Tonal: 4点位相分散型 Hann グラニュラー・ローテーター
-        // ==============================================================================
         float phaseIncrement = (1.0f - scaleFactor) / maxDelaySamples;
         basePhase += phaseIncrement;
 
         while (basePhase >= 1.0f) basePhase -= 1.0f;
         while (basePhase < 0.0f)  basePhase += 1.0f;
 
-        // 4つのグラニュラー・タップ（位相差 0.0, 0.25, 0.5, 0.75）で均一なエネルギー合成
         float outSum = 0.0f;
         float weightSum = 0.0f;
 
@@ -121,7 +207,6 @@ public:
             float p = basePhase + static_cast<float>(tap) * 0.25f;
             while (p >= 1.0f) p -= 1.0f;
 
-            // Hann 窓
             float w = 0.5f * (1.0f - std::cos(2.0f * juce::MathConstants<float>::pi * p));
             float delay = (p - 0.5f) * maxDelaySamples;
 

@@ -75,7 +75,7 @@ namespace ngk
             }
         }
 
-        // --- ADAA (1次アンチエイリアス) を使う群 (0,1,6,7,10) ---
+        // --- ADAA (1次アンチエイリアス) を使う群 (0: Soft Tanh, 1: Hard Clip, 6: BJT, 7: Wavefold) ---
         float g = x * drive;
 
         if (!state.active) {
@@ -88,7 +88,7 @@ namespace ngk
             case 1: return juce::jlimit(-1.0f, 1.0f, g);
             case 6: return std::atan(g * 2.2f) * 0.58f;
             case 7: return std::sin(g * juce::MathConstants<float>::pi);
-            case 10: return g - (g * g * g) / 3.1f;
+            default: return g;
             }
         }
 
@@ -96,13 +96,15 @@ namespace ngk
         float output = 0.0f;
         float delta = g - state.lastX;
 
+        // 特異点（delta -> 0）近傍では2次精度の中点評価で滑らかにフォールバック（桁落ちノイズ完全防止）
         if (std::abs(delta) < 1.0e-5f) {
+            float xMid = 0.5f * (g + state.lastX);
             switch (type) {
-            case 0: output = std::tanh(g); break;
-            case 1: output = juce::jlimit(-1.0f, 1.0f, g); break;
-            case 6: output = std::atan(g * 2.2f) * 0.58f; break;
-            case 7: output = std::sin(g * juce::MathConstants<float>::pi); break;
-            case 10: output = g - (g * g * g) / 3.1f; break;
+            case 0: output = std::tanh(xMid); break;
+            case 1: output = juce::jlimit(-1.0f, 1.0f, xMid); break;
+            case 6: output = std::atan(xMid * 2.2f) * 0.58f; break;
+            case 7: output = std::sin(xMid * juce::MathConstants<float>::pi); break;
+            default: output = xMid; break;
             }
         }
         else {

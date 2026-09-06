@@ -96,14 +96,17 @@ public:
 
     void reset() noexcept {}
 
-    float processSample(double clickReadIndex, double /*pitchRatio*/, float transScale,
-                        float clickHold, float /*clickCurve*/, double /*hostSampleRate*/, int soloMode) noexcept
+    void processSampleStereo(double clickReadIndex, double /*pitchRatio*/, float transScale,
+                             float clickHold, float /*clickCurve*/, double /*hostSampleRate*/, int soloMode,
+                             float& outL, float& outR) noexcept
     {
+        outL = 0.0f; outR = 0.0f;
         if (soloMode == 2 || !hasSample.load(std::memory_order_relaxed))
-            return 0.0f;
+            return;
 
         const int maxSamples = replacedBuffer.getNumSamples();
-        if (maxSamples == 0) return 0.0f;
+        const int numChannels = replacedBuffer.getNumChannels();
+        if (maxSamples == 0) return;
 
         double startSmpl = (static_cast<double>(startOffsetMs.load(std::memory_order_relaxed)) / 1000.0) * sourceSampleRate;
         double endSmpl = (static_cast<double>(endOffsetMs.load(std::memory_order_relaxed)) / 1000.0) * sourceSampleRate;
@@ -112,8 +115,8 @@ public:
         double effectiveEnd = (holdSmpl > 0.0) ? std::min(endSmpl, startSmpl + holdSmpl) : endSmpl;
         double readPos = startSmpl + clickReadIndex;
 
-        if (readPos >= effectiveEnd || readPos >= maxSamples - 1)
-            return 0.0f;
+        if (readPos < 0.0 || readPos >= effectiveEnd || readPos >= maxSamples - 1)
+            return;
 
         int index0 = static_cast<int>(readPos);
         int index1 = std::min(index0 + 1, maxSamples - 1);
@@ -145,9 +148,18 @@ public:
             fadeGain *= static_cast<float>(std::max(0.0, remSmpl / 64.0));
         }
 
-        const float* src = replacedBuffer.getReadPointer(0);
-        float raw = (src[index0] * (1.0f - frac) + src[index1] * frac) * transScale * fadeGain;
-        return raw;
+        const float* srcL = replacedBuffer.getReadPointer(0);
+        const float* srcR = (numChannels > 1) ? replacedBuffer.getReadPointer(1) : srcL;
+        outL = (srcL[index0] * (1.0f - frac) + srcL[index1] * frac) * transScale * fadeGain;
+        outR = (srcR[index0] * (1.0f - frac) + srcR[index1] * frac) * transScale * fadeGain;
+    }
+
+    float processSample(double clickReadIndex, double pitchRatio, float transScale,
+                        float clickHold, float clickCurve, double hostSampleRate, int soloMode) noexcept
+    {
+        float l = 0.0f, r = 0.0f;
+        processSampleStereo(clickReadIndex, pitchRatio, transScale, clickHold, clickCurve, hostSampleRate, soloMode, l, r);
+        return l;
     }
 
 private:

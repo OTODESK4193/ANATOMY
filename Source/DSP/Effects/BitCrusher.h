@@ -29,8 +29,7 @@ public:
     {
         lastSample[0] = 0.0f;
         lastSample[1] = 0.0f;
-        holdCounter[0] = 0;
-        holdCounter[1] = 0;
+        globalHoldCounter = 0;
     }
 
     void process(juce::AudioBuffer<float>& buffer) noexcept override
@@ -44,43 +43,37 @@ public:
         const float mix = currentMix;
 
         const float quantScale = std::pow(2.0f, bits - 1.0f);
+        const int validCh = std::min(numChannels, 2);
 
-        for (int ch = 0; ch < numChannels; ++ch)
+        for (int s = 0; s < numSamples; ++s)
         {
-            if (ch >= 2) break;
+            float noiseComponent = nextRandomBipolar() * jitter * (baseDownsample * 0.5f);
+            int dynamicFactor = std::max(1, static_cast<int>(std::round(baseDownsample + noiseComponent)));
+            bool shouldUpdate = (globalHoldCounter % dynamicFactor == 0);
 
-            float* channelData = buffer.getWritePointer(ch);
-            float lastSmp = lastSample[ch];
-            int count = holdCounter[ch];
-
-            for (int s = 0; s < numSamples; ++s)
+            for (int ch = 0; ch < validCh; ++ch)
             {
+                float* channelData = buffer.getWritePointer(ch);
                 float input = channelData[s];
                 float processed = input;
 
-                float noiseComponent = nextRandomBipolar() * jitter * (baseDownsample * 0.5f);
-                int dynamicFactor = std::max(1, static_cast<int>(std::round(baseDownsample + noiseComponent)));
-
-                if (count % dynamicFactor == 0)
+                if (shouldUpdate)
                 {
                     if (bits < 24.0f)
                     {
                         processed = std::round(processed * quantScale) / quantScale;
                     }
-                    lastSmp = processed;
+                    lastSample[ch] = processed;
                 }
                 else
                 {
-                    processed = lastSmp;
+                    processed = lastSample[ch];
                 }
-
-                count++;
 
                 channelData[s] = (input * (1.0f - mix)) + (processed * mix);
             }
 
-            lastSample[ch] = lastSmp;
-            holdCounter[ch] = count % 96000;
+            globalHoldCounter = (globalHoldCounter + 1) % 96000;
         }
     }
 
@@ -95,10 +88,22 @@ public:
     float getMix() const noexcept override { return currentMix; }
 
     void setBits(float newBits) noexcept { currentBits = juce::jlimit(2.0f, 24.0f, newBits); }
-    void setDownsample(float newDownsample) noexcept { currentDownsample = juce::jlimit(1.0f, 32.0f, newDownsample); }
-    void setJitter(float newJitter) noexcept { currentJitter = juce::jlimit(0.0f, 1.0f, newJitter); }
+    float getBits() const noexcept { return currentBits; }
 
-    float getIndexedParameter(int index) const noexcept override { return 0.0f; }
+    void setDownsample(float newDownsample) noexcept { currentDownsample = juce::jlimit(1.0f, 32.0f, newDownsample); }
+    float getDownsample() const noexcept { return currentDownsample; }
+
+    void setJitter(float newJitter) noexcept { currentJitter = juce::jlimit(0.0f, 1.0f, newJitter); }
+    float getJitter() const noexcept { return currentJitter; }
+
+    float getIndexedParameter(int index) const noexcept override
+    {
+        if      (index == 0) return currentBits;
+        else if (index == 1) return currentDownsample;
+        else if (index == 2) return currentMix;
+        else if (index == 3) return currentJitter;
+        return 0.0f;
+    }
     void setIndexedParameter(int index, float value) noexcept override
     {
         if (index == 0)      setBits(value);
@@ -113,7 +118,7 @@ private:
     bool activeState = false;
 
     float lastSample[2] = { 0.0f, 0.0f };
-    int holdCounter[2] = { 0, 0 };
+    int globalHoldCounter = 0;
 
     // RT安全な xorshift32 PRNG（メモリ確保・システムコール一切なし）
     uint32_t rngState = 0x12345678u;

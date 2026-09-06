@@ -64,9 +64,11 @@ FxRackView::FxRackView(AnatomyAudioProcessor& p) : proc(p)
     ottBandsBtn.setColour(juce::TextButton::textColourOffId, AnatomyColors::textDim);
     ottBandsBtn.setColour(juce::TextButton::textColourOnId, AnatomyColors::text);
     ottBandsBtn.onClick = [this] {
-        juce::MessageManager::callAsync([this] {
-            showOttBands = ottBandsBtn.getToggleState();
-            rebuildDetails();
+        juce::Component::SafePointer<FxRackView> safeThis(this);
+        juce::MessageManager::callAsync([safeThis] {
+            if (safeThis == nullptr) return;
+            safeThis->showOttBands = safeThis->ottBandsBtn.getToggleState();
+            safeThis->rebuildDetails();
         });
     };
 
@@ -82,9 +84,11 @@ FxRackView::FxRackView(AnatomyAudioProcessor& p) : proc(p)
         ottBandSelectBtns[i].setColour(juce::TextButton::textColourOffId, AnatomyColors::textDim);
         ottBandSelectBtns[i].setColour(juce::TextButton::textColourOnId, juce::Colours::black);
         ottBandSelectBtns[i].onClick = [this, i] {
-            juce::MessageManager::callAsync([this, i] {
-                selectedOttBand = i;
-                rebuildDetails();
+            juce::Component::SafePointer<FxRackView> safeThis(this);
+            juce::MessageManager::callAsync([safeThis, i] {
+                if (safeThis == nullptr) return;
+                safeThis->selectedOttBand = i;
+                safeThis->rebuildDetails();
             });
         };
     }

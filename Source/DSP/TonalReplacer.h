@@ -51,17 +51,20 @@ public:
 
     void reset() noexcept { tapAPhase = 0.5f; }
 
-    float processSample(double sustainReadIndex, double originalPitchRatio, float tonalScale,
-        float clickHoldMs, float clickCurveMs, double hostSampleRate, int soloMode) noexcept
+    void processSampleStereo(double sustainReadIndex, double originalPitchRatio, float tonalScale,
+                             float clickHoldMs, float clickCurveMs, double hostSampleRate, int soloMode,
+                             float& outL, float& outR) noexcept
     {
+        outL = 0.0f; outR = 0.0f;
         if (soloMode == 1 || !hasSample.load(std::memory_order_relaxed))
-            return 0.0f;
+            return;
 
         const int maxSamples = replacedBuffer.getNumSamples();
-        if (maxSamples <= 0) return 0.0f;
+        const int numChannels = replacedBuffer.getNumChannels();
+        if (maxSamples <= 0) return;
 
         double n = (originalPitchRatio > 0.0) ? (sustainReadIndex / originalPitchRatio) : sustainReadIndex;
-        if (n < 0.0) return 0.0f;
+        if (n < 0.0) return;
 
         float maxDelaySamples = static_cast<float>((40.0f / 1000.0f) * hostSampleRate);
         if (maxDelaySamples < 64.0f) maxDelaySamples = 64.0f;
@@ -85,14 +88,15 @@ public:
         float weightA = getHannWeight(tapAPhase);
         float weightB = getHannWeight(tapBPhase);
 
-        const float* src = replacedBuffer.getReadPointer(0);
+        const float* srcL = replacedBuffer.getReadPointer(0);
+        const float* srcR = (numChannels > 1) ? replacedBuffer.getReadPointer(1) : srcL;
         double startMs = startOffsetMs.load(std::memory_order_relaxed);
         double endMs = endOffsetMs.load(std::memory_order_relaxed);
         double offsetSamples = (startMs / 1000.0) * sourceSampleRate;
         double speedRatio = sourceSampleRate / hostSampleRate;
         double baseTimelinePos = offsetSamples + (n * speedRatio);
 
-        auto readSourceInterpolated = [src, maxSamples, this, endMs](double timelinePos, float delay) noexcept -> float
+        auto readSourceInterpolated = [maxSamples, this, endMs](const float* src, double timelinePos, float delay) noexcept -> float
             {
                 double srcPos = timelinePos - delay;
 
@@ -118,8 +122,10 @@ public:
                 return ((c3 * frac + c2) * frac + c1) * frac + c0;
             };
 
-        float sampleA = readSourceInterpolated(baseTimelinePos, delayA);
-        float sampleB = readSourceInterpolated(baseTimelinePos, delayB);
+        float sampleAL = readSourceInterpolated(srcL, baseTimelinePos, delayA);
+        float sampleBL = readSourceInterpolated(srcL, baseTimelinePos, delayB);
+        float sampleAR = readSourceInterpolated(srcR, baseTimelinePos, delayA);
+        float sampleBR = readSourceInterpolated(srcR, baseTimelinePos, delayB);
 
         // --- Start/End フェードイン・フェードアウト計算 ---
         float fadeGain = 1.0f;
@@ -150,7 +156,16 @@ public:
             fadeGain *= static_cast<float>(std::max(0.0, toEndMs / 1.5));
         }
 
-        return ((sampleA * weightA) + (sampleB * weightB)) * fadeGain;
+        outL = ((sampleAL * weightA) + (sampleBL * weightB)) * fadeGain;
+        outR = ((sampleAR * weightA) + (sampleBR * weightB)) * fadeGain;
+    }
+
+    float processSample(double sustainReadIndex, double originalPitchRatio, float tonalScale,
+        float clickHoldMs, float clickCurveMs, double hostSampleRate, int soloMode) noexcept
+    {
+        float l = 0.0f, r = 0.0f;
+        processSampleStereo(sustainReadIndex, originalPitchRatio, tonalScale, clickHoldMs, clickCurveMs, hostSampleRate, soloMode, l, r);
+        return l;
     }
 
 private:

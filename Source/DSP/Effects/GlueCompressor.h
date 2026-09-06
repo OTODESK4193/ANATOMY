@@ -148,7 +148,22 @@ public:
         updateMakeupLinear();
     }
 
-    float getIndexedParameter(int index) const noexcept override { return 0.0f; }
+    float getThresholdDb() const noexcept { return currentThresholdDb; }
+    float getRatio() const noexcept       { return currentRatio; }
+    float getAttackMs() const noexcept    { return currentAttackMs; }
+    float getReleaseMs() const noexcept   { return currentReleaseMs; }
+    float getMakeupDb() const noexcept    { return currentMakeupDb; }
+
+    float getIndexedParameter(int index) const noexcept override
+    {
+        if      (index == 0) return getMix();
+        else if (index == 1) return getThresholdDb();
+        else if (index == 2) return getRatio();
+        else if (index == 3) return getAttackMs();
+        else if (index == 4) return getReleaseMs();
+        else if (index == 5) return getMakeupDb();
+        return 0.0f;
+    }
     void setIndexedParameter(int index, float value) noexcept override
     {
         if      (index == 0) setMix(value);

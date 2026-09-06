@@ -21,8 +21,7 @@ class OTT_Multiband final : public AudioEffect
 public:
     OTT_Multiband()
     {
-        filterLow.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
-        filterHigh.setType(juce::dsp::StateVariableTPTFilterType::highpass);
+        updateCrossoverFilters();
         // 初期値でリニア閾値を事前計算
         updateGateThresholds();
     }
@@ -38,16 +37,16 @@ public:
         spec.maximumBlockSize = static_cast<juce::uint32>(maxBlockSize);
         spec.numChannels      = 2;
 
-        filterLow.prepare(spec);
-        filterHigh.prepare(spec);
+        filterLowLP.prepare(spec);
+        filterLowHP.prepare(spec);
+        filterHighLP.prepare(spec);
+        filterHighHP.prepare(spec);
 
         updateCrossoverFilters();
 
         lowBuffer.setSize(2, maxBlockSize, false, false, true);
         midBuffer.setSize(2, maxBlockSize, false, false, true);
         highBuffer.setSize(2, maxBlockSize, false, false, true);
-        // 【爆音修正】未初期化メモリがフィルターに流入し積分器を発散させていた。
-        // setSize の clearExtraSpace=false ではバッファ内容は未定義。
         lowBuffer.clear();
         midBuffer.clear();
         highBuffer.clear();
@@ -58,8 +57,10 @@ public:
 
     void reset() noexcept override
     {
-        filterLow.reset();
-        filterHigh.reset();
+        filterLowLP.reset();
+        filterLowHP.reset();
+        filterHighLP.reset();
+        filterHighHP.reset();
         for (int b = 0; b < 3; ++b)
             envFollower[b] = 0.0f;
     }
@@ -71,36 +72,33 @@ public:
 
         if (lowBuffer.getNumSamples() < numSamples) return;
 
-        // ── 3バンド分割 ─────────────────────────────────────────────────
-        // 【爆音修正】copyFrom は numSamples 分のみコピーするが、
-        // AudioBlock(lowBuffer) はバッファ全体（maxBlockSize）をラップする。
-        // フィルターが numSamples 以降のゴミ/残留データを処理し、
-        // TPT 積分器が発散 → 爆音の根本原因。
-        // getSubBlock(0, numSamples) で有効サンプル範囲のみ処理する。
+        // ── 3バンド同相カスケード分割（逆相コムフィルタ・低域ノッチ完全根絶） ──
+        // 1. Low バンド: 原信号 -> filterLowLP (140Hz LP)
         lowBuffer.copyFrom(0, 0, buffer, 0, 0, numSamples);
         if (numChannels > 1) lowBuffer.copyFrom(1, 0, buffer, 1, 0, numSamples);
 
-        highBuffer.copyFrom(0, 0, buffer, 0, 0, numSamples);
-        if (numChannels > 1) highBuffer.copyFrom(1, 0, buffer, 1, 0, numSamples);
-
         juce::dsp::AudioBlock<float> lowBlockFull(lowBuffer);
         auto lowBlock = lowBlockFull.getSubBlock(0, static_cast<size_t>(numSamples));
-        filterLow.process(juce::dsp::ProcessContextReplacing<float>(lowBlock));
+        filterLowLP.process(juce::dsp::ProcessContextReplacing<float>(lowBlock));
+
+        // 2. Mid+High 候補: 原信号 -> filterLowHP (140Hz HP)
+        midBuffer.copyFrom(0, 0, buffer, 0, 0, numSamples);
+        if (numChannels > 1) midBuffer.copyFrom(1, 0, buffer, 1, 0, numSamples);
+
+        juce::dsp::AudioBlock<float> midBlockFull(midBuffer);
+        auto midBlock = midBlockFull.getSubBlock(0, static_cast<size_t>(numSamples));
+        filterLowHP.process(juce::dsp::ProcessContextReplacing<float>(midBlock));
+
+        // 3. High バンド: Mid+High 信号 -> filterHighHP (3800Hz HP)
+        highBuffer.copyFrom(0, 0, midBuffer, 0, 0, numSamples);
+        if (numChannels > 1) highBuffer.copyFrom(1, 0, midBuffer, 1, 0, numSamples);
 
         juce::dsp::AudioBlock<float> highBlockFull(highBuffer);
         auto highBlock = highBlockFull.getSubBlock(0, static_cast<size_t>(numSamples));
-        filterHigh.process(juce::dsp::ProcessContextReplacing<float>(highBlock));
+        filterHighHP.process(juce::dsp::ProcessContextReplacing<float>(highBlock));
 
-        for (int ch = 0; ch < numChannels; ++ch)
-        {
-            if (ch >= 2) break;
-            const float* src  = buffer.getReadPointer(ch);
-            const float* low  = lowBuffer.getReadPointer(ch);
-            const float* high = highBuffer.getReadPointer(ch);
-            float*       mid  = midBuffer.getWritePointer(ch);
-            for (int s = 0; s < numSamples; ++s)
-                mid[s] = src[s] - low[s] - high[s];
-        }
+        // 4. Mid バンド: Mid+High 信号 -> filterHighLP (3800Hz LP)
+        filterHighLP.process(juce::dsp::ProcessContextReplacing<float>(midBlock));
 
         // ── エンベロープ係数 ─────────────────────────────────────────────
         const float timeMultiplier = std::max(0.1f, timeMultiplierParam);
@@ -250,7 +248,16 @@ public:
             bandGainDb[bandIdx] = juce::jlimit(-24.0f, 24.0f, db);
     }
 
-    float getIndexedParameter(int index) const noexcept override { return 0.0f; }
+    float getTimeMultiplier() const noexcept { return timeMultiplierParam; }
+    float getGateFloorDb() const noexcept    { return gateFloorDb; }
+
+    float getIndexedParameter(int index) const noexcept override
+    {
+        if      (index == 0) return getMix();
+        else if (index == 1) return getTimeMultiplier();
+        else if (index == 2) return getGateFloorDb();
+        return 0.0f;
+    }
     void setIndexedParameter(int index, float value) noexcept override
     {
         if      (index == 0) setMix(value);
@@ -261,8 +268,17 @@ public:
 private:
     void updateCrossoverFilters() noexcept
     {
-        filterLow.setCutoffFrequency(lowMidFreqParam);
-        filterHigh.setCutoffFrequency(midHighFreqParam);
+        filterLowLP.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
+        filterLowLP.setCutoffFrequency(lowMidFreqParam);
+
+        filterLowHP.setType(juce::dsp::StateVariableTPTFilterType::highpass);
+        filterLowHP.setCutoffFrequency(lowMidFreqParam);
+
+        filterHighLP.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
+        filterHighLP.setCutoffFrequency(midHighFreqParam);
+
+        filterHighHP.setType(juce::dsp::StateVariableTPTFilterType::highpass);
+        filterHighHP.setCutoffFrequency(midHighFreqParam);
     }
 
     /** gateFloorDb から線形閾値を事前計算 */
@@ -274,8 +290,10 @@ private:
 
     double currentSampleRate = 44100.0;
 
-    juce::dsp::StateVariableTPTFilter<float> filterLow;
-    juce::dsp::StateVariableTPTFilter<float> filterHigh;
+    juce::dsp::StateVariableTPTFilter<float> filterLowLP;
+    juce::dsp::StateVariableTPTFilter<float> filterLowHP;
+    juce::dsp::StateVariableTPTFilter<float> filterHighLP;
+    juce::dsp::StateVariableTPTFilter<float> filterHighHP;
 
     juce::AudioBuffer<float> lowBuffer;
     juce::AudioBuffer<float> midBuffer;

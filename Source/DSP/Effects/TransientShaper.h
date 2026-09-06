@@ -68,23 +68,25 @@ public:
             se += (rect > se ? slowAtk : slowRel) * (rect - se);
 
             // 過渡（Attack）と余韻（Sustain）のエネルギー分離
-            const float delta = fe - se;
+            // se > 1.0e-5 ガードを撤廃し、最初のアタック打撃音を即座に検出
             float targetGainDb = 0.0f;
+            const float delta = fe - se;
 
-            if (delta > 0.0f && se > 1.0e-5f)
+            float attackPart = 0.0f;
+            if (delta > 0.0f)
             {
-                // アタック区間: 立ち上がり比率から滑らかにゲイン計算
-                float attackRatio = delta / (se + 0.05f);
-                targetGainDb = atkAmt * 18.0f * std::min(2.0f, attackRatio);
-            }
-            else if (se > 1.0e-5f)
-            {
-                // サステイン区間: 余韻比率から滑らかにゲイン計算
-                float sustainRatio = se / (fe + 0.05f);
-                targetGainDb = susAmt * 12.0f * std::min(2.0f, sustainRatio);
+                float attackRatio = delta / (se + 0.01f);
+                attackPart = atkAmt * 18.0f * std::min(2.0f, attackRatio);
             }
 
-            targetGainDb = juce::jlimit(-24.0f, 24.0f, targetGainDb);
+            float sustainPart = 0.0f;
+            if (se > 1.0e-4f)
+            {
+                float sustainRatio = se / (fe + 0.01f);
+                sustainPart = susAmt * 12.0f * std::min(2.0f, sustainRatio);
+            }
+
+            targetGainDb = juce::jlimit(-24.0f, 24.0f, attackPart + sustainPart);
             const float targetLinear = std::pow(10.0f, targetGainDb / 20.0f);
 
             // ゲインのスムージング（チャタリング歪みを完全排除）

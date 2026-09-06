@@ -22,7 +22,7 @@
 class NoiseGenerator final : public AudioEffect
 {
 public:
-    NoiseGenerator() : rd(), gen(rd()) {}
+    NoiseGenerator() = default;
     ~NoiseGenerator() override = default;
 
     void prepare(double sampleRate, int /*maxBlockSize*/) override
@@ -164,7 +164,24 @@ public:
     /** バンドパス Q 値 0.1〜10 (固定 2.0 がデフォルト) */
     void setBpQ(float q) noexcept        { bpQ            = juce::jlimit(0.1f, 10.0f, q); }
 
-    float getIndexedParameter(int index) const noexcept override { return 0.0f; }
+    float getDecay() const noexcept       { return decayMs; }
+    int   getNoiseType() const noexcept   { return currentNoiseType; }
+    float getGainDb() const noexcept      { return currentGainDb; }
+    float getAttack() const noexcept      { return attackMs; }
+    float getBpCenterHz() const noexcept  { return bpCenterHz; }
+    float getBpQ() const noexcept         { return bpQ; }
+
+    float getIndexedParameter(int index) const noexcept override
+    {
+        if      (index == 0) return getDecay();
+        else if (index == 1) return getMix();
+        else if (index == 2) return static_cast<float>(getNoiseType());
+        else if (index == 3) return getGainDb();
+        else if (index == 4) return getAttack();
+        else if (index == 5) return getBpCenterHz();
+        else if (index == 6) return getBpQ();
+        return 0.0f;
+    }
     void setIndexedParameter(int index, float value) noexcept override
     {
         if      (index == 0) setDecay(value);
@@ -177,12 +194,16 @@ public:
     }
 
 private:
-    // ── ノイズ生成（チャンネル別） ────────────────────────────────────────
+    // ── ノイズ生成（RT安全な xorshift32 PRNG） ─────────────────────────────
+    uint32_t rngState = 0x54321098u;
 
-    float generateWhite()
+    inline float generateWhite() noexcept
     {
-        std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
-        return dist(gen);
+        rngState ^= rngState << 13;
+        rngState ^= rngState >> 17;
+        rngState ^= rngState << 5;
+        // [-1.0f, 1.0f]
+        return (static_cast<float>(rngState) / static_cast<float>(0xFFFFFFFFu)) * 2.0f - 1.0f;
     }
 
     /** Pink noise: Paul Kellett 3段フィルター法（チャンネル別ステート） */
@@ -215,9 +236,6 @@ private:
     // ─────────────────────────────────────────────────────────────────────
 
     double currentSampleRate = 44100.0;
-    std::random_device rd;
-    std::mt19937 gen;
-
     TargetRoute route  = TargetRoute::Transient;
     bool activeState   = false;
 

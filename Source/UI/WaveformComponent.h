@@ -47,9 +47,9 @@ private:
     float getXFromMs(float ms) const noexcept;
     float findZeroCrossingMs(float targetMs, float magnetPixels = 14.0f) const noexcept;
     void synchronizeToTargetSliders(float startMs, float endMs, bool notifyProcessor = true);
-    void updateFadeToProcessor();
+    void updateFadeToProcessor(bool triggerOfflineRender = true);
 
-    juce::CriticalSection renderLock;
+    mutable juce::CriticalSection renderLock;
     juce::AudioBuffer<float> internalBuffer;
     std::vector<float> componentRatios;
 

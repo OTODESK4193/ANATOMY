@@ -112,20 +112,20 @@ public:
     BeforeAfterBypasser beforeAfterBypasser;
     OfflineMixRenderer offlineMixRenderer;
 
-    float fullMixStartOffsetMs = 0.0f;
-    float fullMixEndOffsetMs = 0.0f;
-    float transStartOffsetMs = 0.0f;
-    float transEndOffsetMs = 0.0f;
-    float tonalStartOffsetMs = 0.0f;
-    float tonalEndOffsetMs = 0.0f;
-    float layerStartOffsetMs = 0.0f;
-    float layerEndOffsetMs = 0.0f;
+    std::atomic<float> fullMixStartOffsetMs{ 0.0f };
+    std::atomic<float> fullMixEndOffsetMs{ 0.0f };
+    std::atomic<float> transStartOffsetMs{ 0.0f };
+    std::atomic<float> transEndOffsetMs{ 0.0f };
+    std::atomic<float> tonalStartOffsetMs{ 0.0f };
+    std::atomic<float> tonalEndOffsetMs{ 0.0f };
+    std::atomic<float> layerStartOffsetMs{ 0.0f };
+    std::atomic<float> layerEndOffsetMs{ 0.0f };
 
     void flushPendingExports();
     juce::File createTemporaryWavForExport(int laneIndex);
     void applyEffectsOffline(juce::AudioBuffer<float>& buffer, TargetRoute route, double sr);
-    void setOffsetsFromUI(int laneIndex, float startMs, float endMs) noexcept;
-    void setFadeFromUI(int laneIndex, float inMs, float outMs, float inTension, float outTension) noexcept;
+    void setOffsetsFromUI(int laneIndex, float startMs, float endMs, bool triggerRender = true) noexcept;
+    void setFadeFromUI(int laneIndex, float inMs, float outMs, float inTension, float outTension, bool triggerRender = true) noexcept;
     void getFadeForUI(int laneIndex, float& inMs, float& outMs, float& inTension, float& outTension) const noexcept;
 
     void setLaneSolo(int laneIndex, bool isSolo);

@@ -77,10 +77,13 @@ public:
                 }
             }
         }
-        else // ================= Clip モード (Soft-Knee Precision Clipper) =================
+        else // ================= Clip モード (C1-Continuous Soft-Knee Precision Clipper) =================
         {
-            const float kneeThresh = ceiling * 0.85f;
-            const float kneeRange  = ceiling * 0.15f;
+            // kneeThresh: ceiling の 80% からソフトニー開始
+            // ceiling で微分値 0.0（傾き水平）かつ振幅 ceiling に滑らかに連続到達
+            const float kneeThresh = ceiling * 0.80f;
+            const float kneeRange  = ceiling - kneeThresh;
+            const float clampLimit = kneeThresh + 2.0f * kneeRange;
 
             for (int ch = 0; ch < numChannels; ++ch)
             {
@@ -95,15 +98,14 @@ public:
                     if (absIn > kneeThresh)
                     {
                         const float sign = (input >= 0.0f) ? 1.0f : -1.0f;
-                        if (absIn >= ceiling)
+                        if (absIn >= clampLimit)
                         {
                             clipped = sign * ceiling;
                         }
                         else
                         {
-                            // ソフトニー滑らか遷移
-                            float ratio = (absIn - kneeThresh) / kneeRange;
-                            clipped = sign * (kneeThresh + kneeRange * std::tanh(ratio));
+                            const float diff = absIn - kneeThresh;
+                            clipped = sign * (absIn - (diff * diff) / (4.0f * kneeRange));
                         }
                     }
 
@@ -134,7 +136,14 @@ public:
     void setMode(int m) noexcept { currentMode = juce::jlimit(0, 1, m); }
     int getMode() const noexcept { return currentMode; }
 
-    float getIndexedParameter(int index) const noexcept override { return 0.0f; }
+    float getIndexedParameter(int index) const noexcept override
+    {
+        if      (index == 0) return getCeiling();
+        else if (index == 1) return getMix();
+        else if (index == 2) return static_cast<float>(getMode());
+        else if (index == 3) return getInputGain();
+        return 0.0f;
+    }
     void setIndexedParameter(int index, float value) noexcept override
     {
         if      (index == 0) setCeiling(value);
