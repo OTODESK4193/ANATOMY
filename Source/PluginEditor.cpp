@@ -305,10 +305,21 @@ void AnatomyAudioProcessorEditor::timerCallback()
     }
 
     double sr = audioProcessor.getFileSampleRate();
+    if (sr <= 0.0) sr = 44100.0;
+
+    double transSr = audioProcessor.isCustomSampleLoaded(1) ? audioProcessor.customTransientReplacer.getSourceSampleRate() : sr;
+    if (transSr <= 0.0) transSr = sr;
+
+    double tonalSr = audioProcessor.isCustomSampleLoaded(2) ? audioProcessor.customTonalReplacer.getSourceSampleRate() : sr;
+    if (tonalSr <= 0.0) tonalSr = sr;
+
+    double layerSr = audioProcessor.isCustomSampleLoaded(3) ? audioProcessor.customLayerReplacer.getSourceSampleRate() : sr;
+    if (layerSr <= 0.0) layerSr = sr;
+
     fullMixLane.setWaveOffsets(audioProcessor.fullMixStartOffsetMs, audioProcessor.fullMixEndOffsetMs, sr);
-    transientLane.setWaveOffsets(audioProcessor.transStartOffsetMs, audioProcessor.transEndOffsetMs, sr);
-    tonalLane.setWaveOffsets(audioProcessor.tonalStartOffsetMs, audioProcessor.tonalEndOffsetMs, sr);
-    layerLane.setWaveOffsets(audioProcessor.layerStartOffsetMs, audioProcessor.layerEndOffsetMs, sr);
+    transientLane.setWaveOffsets(audioProcessor.transStartOffsetMs, audioProcessor.transEndOffsetMs, transSr);
+    tonalLane.setWaveOffsets(audioProcessor.tonalStartOffsetMs, audioProcessor.tonalEndOffsetMs, tonalSr);
+    layerLane.setWaveOffsets(audioProcessor.layerStartOffsetMs, audioProcessor.layerEndOffsetMs, layerSr);
 
     // フェード設定の反映
     float tInMs, tOutMs, tInTension, tOutTension;
@@ -376,7 +387,7 @@ void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
 
     g.setColour(AnatomyColors::textDim);
     g.setFont(juce::Font(juce::FontOptions(10.5f)));
-    g.drawText("OTODESK  |  Anatomy 1.2.0 B002  HPSS Audio Splice & Synthesis", 22, 34, 380, 14, juce::Justification::centredLeft);
+    g.drawText("OTODESK  |  Anatomy 1.2.0 B003  HPSS Audio Splice & Synthesis", 22, 34, 380, 14, juce::Justification::centredLeft);
 
     // HUD (ロゴ右側・2行)
     g.setFont(juce::Font(juce::FontOptions(10.5f)));

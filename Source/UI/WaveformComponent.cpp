@@ -114,14 +114,15 @@ void WaveformComponent::setOffsets(float startMs, float endMs, double sr) noexce
     if (currentDragMode == DragMode::StartMarker || currentDragMode == DragMode::EndMarker)
         return;
 
-    if (startOffsetMs == startMs && endOffsetMs == endMs && sampleRate == sr)
+    float resolvedEndMs = endMs;
+    if (resolvedEndMs <= 0.0f && internalBuffer.getNumSamples() > 0 && sr > 0.0)
+        resolvedEndMs = static_cast<float>((static_cast<double>(internalBuffer.getNumSamples()) / sr) * 1000.0);
+
+    if (std::abs(startOffsetMs - startMs) < 0.001f && std::abs(endOffsetMs - resolvedEndMs) < 0.001f && sampleRate == sr)
         return;
 
     startOffsetMs = startMs;
-    if (endMs <= 0.0f && internalBuffer.getNumSamples() > 0 && sr > 0.0)
-        endOffsetMs = static_cast<float>((static_cast<double>(internalBuffer.getNumSamples()) / sr) * 1000.0);
-    else
-        endOffsetMs = endMs;
+    endOffsetMs = resolvedEndMs;
     sampleRate = sr;
     repaint();
 }

@@ -1142,38 +1142,38 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
 }
 
 void AnatomyAudioProcessor::setOffsetsFromUI(int laneIndex, float startMs, float endMs, bool triggerRender) noexcept
+{
+    // ScopedLock(lock) を完全撤廃: 各オフセット変数および Replacer はロックフリーな atomic であり、
+    // UIスレッドがマウスドラッグ中にロック待ちでフリーズ（DAWハングアップ）するのを防止
+    if (laneIndex == 0)
     {
-        const juce::ScopedLock sl(lock);
-
-        if (laneIndex == 0)
-        {
-            fullMixStartOffsetMs.store(startMs, std::memory_order_release);
-            fullMixEndOffsetMs.store(endMs, std::memory_order_release);
-        }
-        else if (laneIndex == 1)
-        {
-            transStartOffsetMs.store(startMs, std::memory_order_release);
-            transEndOffsetMs.store(endMs, std::memory_order_release);
-            customTransientReplacer.setStartOffsetMs(startMs);
-            customTransientReplacer.setEndOffsetMs(endMs);
-        }
-        else if (laneIndex == 2)
-        {
-            tonalStartOffsetMs.store(startMs, std::memory_order_release);
-            tonalEndOffsetMs.store(endMs, std::memory_order_release);
-            customTonalReplacer.setStartOffsetMs(startMs);
-            customTonalReplacer.setEndOffsetMs(endMs);
-        }
-        else if (laneIndex == 3)
-        {
-            layerStartOffsetMs.store(startMs, std::memory_order_release);
-            layerEndOffsetMs.store(endMs, std::memory_order_release);
-            customLayerReplacer.setStartOffsetMs(startMs);
-            customLayerReplacer.setEndOffsetMs(endMs);
-        }
-        if (triggerRender)
-            offlineMixRenderer.triggerRender();
+        fullMixStartOffsetMs.store(startMs, std::memory_order_release);
+        fullMixEndOffsetMs.store(endMs, std::memory_order_release);
     }
+    else if (laneIndex == 1)
+    {
+        transStartOffsetMs.store(startMs, std::memory_order_release);
+        transEndOffsetMs.store(endMs, std::memory_order_release);
+        customTransientReplacer.setStartOffsetMs(startMs);
+        customTransientReplacer.setEndOffsetMs(endMs);
+    }
+    else if (laneIndex == 2)
+    {
+        tonalStartOffsetMs.store(startMs, std::memory_order_release);
+        tonalEndOffsetMs.store(endMs, std::memory_order_release);
+        customTonalReplacer.setStartOffsetMs(startMs);
+        customTonalReplacer.setEndOffsetMs(endMs);
+    }
+    else if (laneIndex == 3)
+    {
+        layerStartOffsetMs.store(startMs, std::memory_order_release);
+        layerEndOffsetMs.store(endMs, std::memory_order_release);
+        customLayerReplacer.setStartOffsetMs(startMs);
+        customLayerReplacer.setEndOffsetMs(endMs);
+    }
+    if (triggerRender)
+        offlineMixRenderer.triggerRender();
+}
 
     int AnatomyAudioProcessor::snapToZeroCrossing(const juce::AudioBuffer<float>& buffer, int targetSample) noexcept
     {
@@ -1345,10 +1345,11 @@ void AnatomyAudioProcessor::setOffsetsFromUI(int laneIndex, float startMs, float
         {
             customLayerBuffer.setSize(0, 0);
             customLayerReplacer.clearSample();
+            float origDurationMs = (fileSampleRate > 0.0) ? (static_cast<float>(transBufferThread.getNumSamples()) / static_cast<float>(fileSampleRate)) * 1000.0f : 0.0f;
             layerStartOffsetMs = 0.0f;
-            layerEndOffsetMs = 0.0f;
+            layerEndOffsetMs = origDurationMs;
             customLayerReplacer.setStartOffsetMs(0.0f);
-            customLayerReplacer.setEndOffsetMs(0.0f);
+            customLayerReplacer.setEndOffsetMs(origDurationMs);
         }
 
         updateActiveSampleData();
@@ -1373,6 +1374,11 @@ void AnatomyAudioProcessor::setOffsetsFromUI(int laneIndex, float startMs, float
             transEndOffsetMs = 0.0f;
             tonalStartOffsetMs = 0.0f;
             tonalEndOffsetMs = 0.0f;
+            if (customLayerBuffer.getNumSamples() == 0)
+            {
+                layerStartOffsetMs = 0.0f;
+                layerEndOffsetMs = 0.0f;
+            }
         }
         needsReanalysis.store(true, std::memory_order_release);
     }
@@ -1422,6 +1428,13 @@ void AnatomyAudioProcessor::setOffsetsFromUI(int laneIndex, float startMs, float
             transEndOffsetMs = static_cast<float>(durationMs);
             tonalStartOffsetMs = 0.0f;
             tonalEndOffsetMs = static_cast<float>(durationMs);
+            if (customLayerBuffer.getNumSamples() == 0)
+            {
+                layerStartOffsetMs = 0.0f;
+                layerEndOffsetMs = static_cast<float>(durationMs);
+                customLayerReplacer.setStartOffsetMs(0.0f);
+                customLayerReplacer.setEndOffsetMs(static_cast<float>(durationMs));
+            }
         }
         isAnalysisFinished.store(true, std::memory_order_release);
 
