@@ -30,6 +30,7 @@ void WaveformComponent::setBuffer(const juce::AudioBuffer<float>& buffer)
     {
         if (internalBuffer.getNumSamples() != 0 || internalBuffer.getNumChannels() != 0)
             internalBuffer.setSize(0, 0);
+        needsWaveformCacheUpdate = true;
         repaint();
         return;
     }
@@ -41,11 +42,13 @@ void WaveformComponent::setBuffer(const juce::AudioBuffer<float>& buffer)
         autoFitToContent();
         hasInitializedZoom = true;
     }
+    needsWaveformCacheUpdate = true;
     repaint();
 }
 
 void WaveformComponent::autoFitToContent()
 {
+    needsWaveformCacheUpdate = true;
     const int numSamples = internalBuffer.getNumSamples();
     const int numChannels = internalBuffer.getNumChannels();
     if (numSamples == 0 || numChannels == 0 || sampleRate <= 0.0)
@@ -148,6 +151,7 @@ void WaveformComponent::setRatioData(const std::vector<float>& ratios) noexcept
 {
     const juce::ScopedLock sl(renderLock);
     componentRatios = ratios;
+    needsWaveformCacheUpdate = true;
     repaint();
 }
 
@@ -235,39 +239,33 @@ float WaveformComponent::findZeroCrossingMs(float targetMs, float magnetPixels) 
     return targetMs;
 }
 
-void WaveformComponent::paint(juce::Graphics& g)
+void WaveformComponent::renderWaveformCache()
 {
     const juce::ScopedLock sl(renderLock);
 
-    auto bounds = getLocalBounds().toFloat();
-    const float w = bounds.getWidth();
-    const float h = bounds.getHeight();
-    const float mid = h * 0.5f;
+    const int w = getWidth();
+    const int h = getHeight();
+    if (w <= 0 || h <= 0) return;
 
-    // 1. 背景描画
-    g.setColour(AnatomyColors::panel.darker(0.35f));
-    g.fillRoundedRectangle(bounds, 6.0f);
-
-    // 2. 微細グリッド
-    g.setColour(AnatomyColors::grid.withAlpha(0.6f));
-    g.drawHorizontalLine(static_cast<int>(mid), 0.0f, w);
-
-    for (float gx = 40.0f; gx < w; gx += 50.0f)
-        g.drawVerticalLine(static_cast<int>(gx), 0.0f, h);
+    if (cachedWaveformImage.isNull() || cachedWaveformImage.getWidth() != w || cachedWaveformImage.getHeight() != h)
+    {
+        cachedWaveformImage = juce::Image(juce::Image::ARGB, w, h, true);
+    }
+    else
+    {
+        cachedWaveformImage.clear(juce::Rectangle<int>(0, 0, w, h), juce::Colours::transparentBlack);
+    }
 
     const int numSamples = internalBuffer.getNumSamples();
     const int numChannels = internalBuffer.getNumChannels();
-    if (numSamples == 0 || numChannels == 0 || w <= 0.0f || h <= 0.0f || sampleRate <= 0.0)
+    if (numSamples == 0 || numChannels == 0 || sampleRate <= 0.0)
     {
-        g.setColour(AnatomyColors::textDim.withAlpha(0.4f));
-        g.setFont(juce::Font(juce::FontOptions(12.0f)));
-        g.drawText("Drag & Drop WAV Audio File Here", getLocalBounds(), juce::Justification::centred, false);
-
-        g.setColour(isSelected ? (laneIndex == 0 ? AnatomyColors::accentFull : (laneIndex == 1 ? AnatomyColors::accentTransient : (laneIndex == 2 ? AnatomyColors::accentTonal : AnatomyColors::peach))) : AnatomyColors::panelLine);
-        g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, isSelected ? 1.5f : 1.0f);
+        needsWaveformCacheUpdate = false;
         return;
     }
 
+    juce::Graphics g(cachedWaveformImage);
+    const float mid = static_cast<float>(h) * 0.5f;
     const float* data = internalBuffer.getReadPointer(0);
     double totalMs = (static_cast<double>(numSamples) / sampleRate) * 1000.0;
     double visibleMs = totalMs / static_cast<double>(zoomLevel);
@@ -278,11 +276,11 @@ void WaveformComponent::paint(juce::Graphics& g)
     endSampleIdx = juce::jlimit(1, numSamples, endSampleIdx);
 
     int visibleSampleCount = std::max(1, endSampleIdx - startSampleIdx);
-    float samplesPerPixel = static_cast<float>(visibleSampleCount) / w;
+    float samplesPerPixel = static_cast<float>(visibleSampleCount) / static_cast<float>(w);
 
     bool isBeforeMode = (processor != nullptr && processor->beforeAfterBypasser.julesIsBeforeBypassed());
 
-    // 3. 高精度波形描画
+    // 高精度波形描画
     if (samplesPerPixel >= 1.0f)
     {
         if (laneIndex == 0 && !isBeforeMode && !componentRatios.empty())
@@ -290,7 +288,7 @@ void WaveformComponent::paint(juce::Graphics& g)
             // FullMix 3色（Transient: Mint / Layer: Peach / Tonal: Pink）比率グラデーション加算描画
             bool hasDualRatios = (componentRatios.size() >= static_cast<size_t>(numSamples * 2));
 
-            for (int xPix = 0; xPix < static_cast<int>(w); ++xPix)
+            for (int xPix = 0; xPix < w; ++xPix)
             {
                 int s0 = startSampleIdx + static_cast<int>(static_cast<float>(xPix) * samplesPerPixel);
                 int s1 = startSampleIdx + static_cast<int>(static_cast<float>(xPix + 1) * samplesPerPixel);
@@ -347,7 +345,7 @@ void WaveformComponent::paint(juce::Graphics& g)
                                       (laneIndex == 3) ? AnatomyColors::peach :
                                                          AnatomyColors::accentFull;
 
-            for (int xPix = 0; xPix < static_cast<int>(w); ++xPix)
+            for (int xPix = 0; xPix < w; ++xPix)
             {
                 int s0 = startSampleIdx + static_cast<int>(static_cast<float>(xPix) * samplesPerPixel);
                 int s1 = startSampleIdx + static_cast<int>(static_cast<float>(xPix + 1) * samplesPerPixel);
@@ -413,7 +411,7 @@ void WaveformComponent::paint(juce::Graphics& g)
             float sx = getXFromMs(static_cast<float>(ms));
             float sy = mid - data[s] * (mid - 2.0f);
 
-            if (sx >= -5.0f && sx <= w + 5.0f)
+            if (sx >= -5.0f && sx <= static_cast<float>(w) + 5.0f)
             {
                 g.setColour(waveColour);
                 g.fillEllipse(sx - 2.5f, sy - 2.5f, 5.0f, 5.0f);
@@ -421,6 +419,58 @@ void WaveformComponent::paint(juce::Graphics& g)
                 g.fillEllipse(sx - 1.0f, sy - 1.0f, 2.0f, 2.0f);
             }
         }
+    }
+
+    needsWaveformCacheUpdate = false;
+}
+
+void WaveformComponent::paint(juce::Graphics& g)
+{
+    const juce::ScopedLock sl(renderLock);
+
+    auto bounds = getLocalBounds().toFloat();
+    const float w = bounds.getWidth();
+    const float h = bounds.getHeight();
+    const float mid = h * 0.5f;
+
+    // 1. 背景描画
+    g.setColour(AnatomyColors::panel.darker(0.35f));
+    g.fillRoundedRectangle(bounds, 6.0f);
+
+    // 2. 微細グリッド
+    g.setColour(AnatomyColors::grid.withAlpha(0.6f));
+    g.drawHorizontalLine(static_cast<int>(mid), 0.0f, w);
+
+    for (float gx = 40.0f; gx < w; gx += 50.0f)
+        g.drawVerticalLine(static_cast<int>(gx), 0.0f, h);
+
+    const int numSamples = internalBuffer.getNumSamples();
+    const int numChannels = internalBuffer.getNumChannels();
+    if (numSamples == 0 || numChannels == 0 || w <= 0.0f || h <= 0.0f || sampleRate <= 0.0)
+    {
+        g.setColour(AnatomyColors::textDim.withAlpha(0.4f));
+        g.setFont(juce::Font(juce::FontOptions(12.0f)));
+        g.drawText("Drag & Drop WAV Audio File Here", getLocalBounds(), juce::Justification::centred, false);
+
+        g.setColour(isSelected ? (laneIndex == 0 ? AnatomyColors::accentFull : (laneIndex == 1 ? AnatomyColors::accentTransient : (laneIndex == 2 ? AnatomyColors::accentTonal : AnatomyColors::peach))) : AnatomyColors::panelLine);
+        g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, isSelected ? 1.5f : 1.0f);
+        return;
+    }
+
+    double totalMs = (sampleRate > 0.0) ? (static_cast<double>(numSamples) / sampleRate) * 1000.0 : 0.0;
+    double visibleMs = (zoomLevel > 0.0f) ? totalMs / static_cast<double>(zoomLevel) : totalMs;
+
+    // 3. 高精度波形描画（オフスクリーンキャッシュからの超高速転送）
+    if (needsWaveformCacheUpdate || cachedWaveformImage.isNull() ||
+        cachedWaveformImage.getWidth() != static_cast<int>(w) ||
+        cachedWaveformImage.getHeight() != static_cast<int>(h))
+    {
+        renderWaveformCache();
+    }
+
+    if (!cachedWaveformImage.isNull())
+    {
+        g.drawImageAt(cachedWaveformImage, 0, 0);
     }
 
     // 4. Start / End トリミングマスク ＆ フェードイン・フェードアウト描画（全レーン共通）
@@ -653,6 +703,7 @@ void WaveformComponent::paint(juce::Graphics& g)
 
 void WaveformComponent::resized()
 {
+    needsWaveformCacheUpdate = true;
 }
 
 void WaveformComponent::mouseDown(const juce::MouseEvent& e)
@@ -662,11 +713,17 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
 
     if (internalBuffer.getNumSamples() == 0) return;
 
+    if (endOffsetMs <= 0.0f && sampleRate > 0.0 && internalBuffer.getNumSamples() > 0)
+    {
+        endOffsetMs = static_cast<float>((static_cast<double>(internalBuffer.getNumSamples()) / sampleRate) * 1000.0);
+    }
+
     // 右クリック: ズーム ＆ スクロール一発リセット
     if (e.mods.isRightButtonDown())
     {
         zoomLevel = 1.0f;
         viewOffsetMs = 0.0f;
+        needsWaveformCacheUpdate = true;
         repaint();
         return;
     }
@@ -694,6 +751,7 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
             currentDragMode = DragMode::ScrollBarThumb;
             dragStartPos = e.position;
             scrollThumbDragStartOffset = viewOffsetMs;
+            needsWaveformCacheUpdate = true;
             repaint();
         }
         return;
@@ -721,17 +779,36 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
         float fInX = getXFromMs(startOffsetMs + fadeInMs);
         float fOutX = (fadeOutMs > 0.1f) ? getXFromMs(endOffsetMs - fadeOutMs) : std::min(static_cast<float>(getWidth() - 6), getXFromMs(endOffsetMs));
 
-        // 1. 上部 ▶ / ◀ 三角形マーカー判定 (y <= 18)
+        // 1. 上部 ▶ / ◀ 三角形マーカー判定 (y <= 18) (最近傍判定で密集時も確実に選択)
         if (my <= 18.0f)
         {
-            if (mx >= startX - 6.0f && mx <= startX + 16.0f)
+            bool inStartTri = (mx >= startX - 6.0f && mx <= startX + 16.0f);
+            bool inEndTri   = (mx >= drawEndX - 16.0f && mx <= drawEndX + 6.0f);
+            if (inStartTri && inEndTri)
+            {
+                if (std::abs(mx - startX) <= std::abs(mx - drawEndX))
+                {
+                    currentDragMode = DragMode::StartMarker;
+                    dragStartParamMs = startOffsetMs;
+                    dragStartMouseXf = e.position.x;
+                    return;
+                }
+                else
+                {
+                    currentDragMode = DragMode::EndMarker;
+                    dragStartParamMs = endOffsetMs;
+                    dragStartMouseXf = e.position.x;
+                    return;
+                }
+            }
+            else if (inStartTri)
             {
                 currentDragMode = DragMode::StartMarker;
                 dragStartParamMs = startOffsetMs;
                 dragStartMouseXf = e.position.x;
                 return;
             }
-            if (mx >= drawEndX - 16.0f && mx <= drawEndX + 6.0f)
+            else if (inEndTri)
             {
                 currentDragMode = DragMode::EndMarker;
                 dragStartParamMs = endOffsetMs;
@@ -786,15 +863,37 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
             return;
         }
 
-        // 6. 縦線マーカー判定
-        if (std::abs(mx - startX) <= 8.0f)
+        // 6. 縦線マーカー判定 (最近傍判定で近い方を優先選択)
+        float distStart = std::abs(mx - startX);
+        float distEnd = std::abs(mx - drawEndX);
+        bool nearStart = (distStart <= 8.0f);
+        bool nearEnd = (distEnd <= 8.0f || (endX >= static_cast<float>(getWidth()) && mx >= static_cast<float>(getWidth() - 12)));
+
+        if (nearStart && nearEnd)
+        {
+            if (distStart <= distEnd)
+            {
+                currentDragMode = DragMode::StartMarker;
+                dragStartParamMs = startOffsetMs;
+                dragStartMouseXf = e.position.x;
+                return;
+            }
+            else
+            {
+                currentDragMode = DragMode::EndMarker;
+                dragStartParamMs = endOffsetMs;
+                dragStartMouseXf = e.position.x;
+                return;
+            }
+        }
+        else if (nearStart)
         {
             currentDragMode = DragMode::StartMarker;
             dragStartParamMs = startOffsetMs;
             dragStartMouseXf = e.position.x;
             return;
         }
-        if (std::abs(mx - drawEndX) <= 8.0f || (endX >= static_cast<float>(getWidth()) && mx >= static_cast<float>(getWidth() - 12)))
+        else if (nearEnd)
         {
             currentDragMode = DragMode::EndMarker;
             dragStartParamMs = endOffsetMs;
@@ -917,6 +1016,7 @@ void WaveformComponent::mouseDrag(const juce::MouseEvent& e)
     {
         float dx = dragStartPos.x - static_cast<float>(e.x);
         viewOffsetMs = static_cast<float>(juce::jlimit(0.0, std::max(0.0, totalMs - visibleMs), static_cast<double>(dragStartViewOffsetMs) + static_cast<double>(dx) * msPerPixel));
+        needsWaveformCacheUpdate = true;
         repaint();
         break;
     }
@@ -925,6 +1025,7 @@ void WaveformComponent::mouseDrag(const juce::MouseEvent& e)
         float dx = static_cast<float>(e.x) - dragStartPos.x;
         double msPerPix = totalMs / static_cast<double>(getWidth());
         viewOffsetMs = static_cast<float>(juce::jlimit(0.0, std::max(0.0, totalMs - visibleMs), static_cast<double>(scrollThumbDragStartOffset) + static_cast<double>(dx) * msPerPix));
+        needsWaveformCacheUpdate = true;
         repaint();
         break;
     }
@@ -967,6 +1068,9 @@ void WaveformComponent::mouseUp(const juce::MouseEvent&)
 
 void WaveformComponent::mouseMove(const juce::MouseEvent& e)
 {
+    if (endOffsetMs <= 0.0f && sampleRate > 0.0 && internalBuffer.getNumSamples() > 0)
+        endOffsetMs = static_cast<float>((static_cast<double>(internalBuffer.getNumSamples()) / sampleRate) * 1000.0);
+
     if (endOffsetMs <= 0.0f)
     {
         setMouseCursor(juce::MouseCursor::NormalCursor);
@@ -1016,6 +1120,7 @@ void WaveformComponent::mouseWheelMove(const juce::MouseEvent& e, const juce::Mo
     {
         double visibleMs = totalMs / static_cast<double>(zoomLevel);
         viewOffsetMs = static_cast<float>(juce::jlimit(0.0, totalMs - visibleMs, static_cast<double>(viewOffsetMs) - static_cast<double>(wheel.deltaY) * visibleMs * 0.15));
+        needsWaveformCacheUpdate = true;
         repaint();
         return;
     }
@@ -1044,6 +1149,7 @@ void WaveformComponent::mouseWheelMove(const juce::MouseEvent& e, const juce::Mo
         float mouseRatio = static_cast<float>(e.x) / static_cast<float>(getWidth());
         viewOffsetMs = static_cast<float>(juce::jlimit(0.0, totalMs - visibleMs, static_cast<double>(mouseMs) - static_cast<double>(mouseRatio) * visibleMs));
     }
+    needsWaveformCacheUpdate = true;
     repaint();
 }
 

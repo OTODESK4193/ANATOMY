@@ -53,6 +53,11 @@ private:
     juce::AudioBuffer<float> internalBuffer;
     std::vector<float> componentRatios;
 
+    // 高速オフスクリーン波形キャッシュ（ドラッグ時のCPU走査負荷を完全排除）
+    juce::Image cachedWaveformImage;
+    bool needsWaveformCacheUpdate = true;
+    void renderWaveformCache();
+
     AnatomyAudioProcessor* processor = nullptr;
     int laneIndex = 0; // 0: FullMix, 1: Transient, 2: Tonal
     bool isSelected = false;
