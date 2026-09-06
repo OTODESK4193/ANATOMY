@@ -65,10 +65,13 @@ AnatomyAudioProcessor::AnatomyAudioProcessor()
 
     synchronizePoolParameters();
     offlineMixRenderer.startThread();
+    startTimerHz(30);
 }
 
 AnatomyAudioProcessor::~AnatomyAudioProcessor()
 {
+    stopTimer();
+
     // 1. バックグラウンドスレッドを最優先で安全停止
     offlineMixRenderer.signalThreadShouldExit();
     offlineMixRenderer.notify();
@@ -105,6 +108,12 @@ AnatomyAudioProcessor::~AnatomyAudioProcessor()
 
     SharedSampleData* oldData = masterSampleData.exchange(nullptr, std::memory_order_acq_rel);
     if (oldData != nullptr) delete oldData;
+}
+
+void AnatomyAudioProcessor::timerCallback()
+{
+    handleAsyncReanalysis();
+    flushPendingExports();
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::createParameterLayout()
@@ -208,6 +217,13 @@ void AnatomyAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     transientBlockBuffer.setSize(2, safetyBufferSize, false, false, true);
     tonalBlockBuffer.setSize(2, safetyBufferSize, false, false, true);
     layerBlockBuffer.setSize(2, safetyBufferSize, false, false, true);
+
+    const int exportBufferSize = static_cast<int>(std::max(1.0, 6.0 * sampleRate));
+    for (int l = 0; l < 4; ++l)
+    {
+        exportLanes[l].buffer.setSize(2, exportBufferSize, false, false, true);
+        exportLanes[l].buffer.clear();
+    }
 
     for (int i = 0; i < 7; ++i)
     {
@@ -436,17 +452,16 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
         return;
     }
 
-    for (int l = 0; l < 3; ++l)
+    for (int l = 0; l < 4; ++l)
     {
-        if (exportLanes[l].state.load() == ExportRecordingCore::State::Request)
+        if (exportLanes[l].state.load(std::memory_order_acquire) == ExportRecordingCore::State::Request)
         {
-            exportLanes[l].buffer.setSize(2, static_cast<int>(6.0 * currentSampleRate), false, false, true);
             exportLanes[l].buffer.clear();
             exportLanes[l].writePos = 0;
             exportLanes[l].sampleCounter = 0;
             exportLanes[l].noteOffSample = static_cast<int>(0.4 * currentSampleRate);
             exportLanes[l].isNoteOffTriggered = false;
-            exportLanes[l].state.store(ExportRecordingCore::State::Recording);
+            exportLanes[l].state.store(ExportRecordingCore::State::Recording, std::memory_order_release);
 
             for (int i = 0; i < 4; ++i)
                 if (cachedLanes[i].ns != nullptr) cachedLanes[i].ns->trigger();
@@ -838,10 +853,12 @@ void AnatomyAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
 void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     float& outTransL, float& outTransR, float& outTonalL, float& outTonalR, float& outLayerL, float& outLayerR,
-    float clickHold, float clickCurve, float transScale, float tonalScale, double hostSampleRate) noexcept
+    float clickHold, float clickCurve, float transScale, float tonalScale, double hostSampleRate, int soloOverride) noexcept
 {
     outTransL = 0.0f; outTransR = 0.0f; outTonalL = 0.0f; outTonalR = 0.0f; outLayerL = 0.0f; outLayerR = 0.0f;
     if (voice.sampleData == nullptr) return;
+
+    const int effectiveSolo = (soloOverride >= 0) ? soloOverride : currentSoloMode.load(std::memory_order_acquire);
 
     bool isBefore = beforeAfterBypasser.julesIsBeforeBypassed();
     bool hasCustomTrans = (customTransBuffer.getNumSamples() > 0);
@@ -885,7 +902,7 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
 
     if (isBefore)
     {
-        int soloMode = currentSoloMode.load(std::memory_order_acquire);
+        int soloMode = effectiveSolo;
         float voiceGain = voice.triggerVelocity * voice.releaseGain;
 
         // Before (Soloなし = 完全原音再生)
@@ -994,7 +1011,7 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     // Layer 音声の生成
     if (hasCustomLayer && exactLayerIdx >= 0.0 && exactLayerIdx < static_cast<double>(customLayerBuffer.getNumSamples() - 1))
     {
-        if (currentSoloMode != 1 && currentSoloMode != 2 && layerGain > 0.0f)
+        if (effectiveSolo != 1 && effectiveSolo != 2 && layerGain > 0.0f)
         {
             float l = readInterpolated(customLayerBuffer, 0, exactLayerIdx);
             float r = customLayerBuffer.getNumChannels() > 1 ? readInterpolated(customLayerBuffer, 1, exactLayerIdx) : l;
@@ -1007,14 +1024,14 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     // Fast Path (Pitch Shift == 1.0, Custom Sample なし)
     if (!hasCustomTrans && !hasCustomTonal && std::abs(transScale - 1.0f) < 0.01f && std::abs(tonalScale - 1.0f) < 0.01f)
     {
-        if (currentSoloMode != 2 && currentSoloMode != 3 && transGain > 0.0f && transBufferThread.getNumSamples() > 0 && exactClickIdx < static_cast<double>(transBufferThread.getNumSamples() - 1))
+        if (effectiveSolo != 2 && effectiveSolo != 3 && transGain > 0.0f && transBufferThread.getNumSamples() > 0 && exactClickIdx < static_cast<double>(transBufferThread.getNumSamples() - 1))
         {
             float l = readInterpolated(transBufferThread, 0, exactClickIdx);
             float r = transBufferThread.getNumChannels() > 1 ? readInterpolated(transBufferThread, 1, exactClickIdx) : l;
             outTransL = l * transGain * voice.triggerVelocity * voice.releaseGain;
             outTransR = r * transGain * voice.triggerVelocity * voice.releaseGain;
         }
-        if (currentSoloMode != 1 && currentSoloMode != 3 && tonalGain > 0.0f && tonalBufferThread.getNumSamples() > 0 && exactSustainIdx >= 0.0 && exactSustainIdx < static_cast<double>(tonalBufferThread.getNumSamples() - 1))
+        if (effectiveSolo != 1 && effectiveSolo != 3 && tonalGain > 0.0f && tonalBufferThread.getNumSamples() > 0 && exactSustainIdx >= 0.0 && exactSustainIdx < static_cast<double>(tonalBufferThread.getNumSamples() - 1))
         {
             float l = readInterpolated(tonalBufferThread, 0, exactSustainIdx);
             float r = tonalBufferThread.getNumChannels() > 1 ? readInterpolated(tonalBufferThread, 1, exactSustainIdx) : l;
@@ -1066,11 +1083,11 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     float shiftedClickL = 0.0f, shiftedClickR = 0.0f;
     float shiftedSustainL = 0.0f, shiftedSustainR = 0.0f;
 
-    if (transGateOpen && currentSoloMode != 2 && currentSoloMode != 3)
+    if (transGateOpen && effectiveSolo != 2 && effectiveSolo != 3)
     {
         if (hasCustomTrans)
         {
-            customTransientReplacer.processSampleStereo(voice.clickReadIndex, voice.pitchRatio, transScale, clickHold, clickCurve, hostSampleRate, currentSoloMode, shiftedClickL, shiftedClickR);
+            customTransientReplacer.processSampleStereo(voice.clickReadIndex, voice.pitchRatio, transScale, clickHold, clickCurve, hostSampleRate, effectiveSolo, shiftedClickL, shiftedClickR);
         }
         else if (voice.transShifter && click.getNumSamples() > 0)
         {
@@ -1079,11 +1096,11 @@ void AnatomyAudioProcessor::generateVoiceSample(VoiceState& voice,
     }
     voice.clickReadIndex += voice.pitchRatio;
 
-    if (tonalGateOpen && currentSoloMode != 1 && currentSoloMode != 3 && exactSustainIdx >= 0.0)
+    if (tonalGateOpen && effectiveSolo != 1 && effectiveSolo != 3 && exactSustainIdx >= 0.0)
     {
         if (hasCustomTonal)
         {
-            customTonalReplacer.processSampleStereo(voice.sustainReadIndex, voice.pitchRatio, tonalScale, clickHold, clickCurve, hostSampleRate, currentSoloMode, shiftedSustainL, shiftedSustainR);
+            customTonalReplacer.processSampleStereo(voice.sustainReadIndex, voice.pitchRatio, tonalScale, clickHold, clickCurve, hostSampleRate, effectiveSolo, shiftedSustainL, shiftedSustainR);
         }
         else if (voice.tonalShifter && sustain.getNumSamples() > 0)
         {
@@ -1726,14 +1743,10 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
     float tonalMixGain = std::pow(10.0f, apvts.getRawParameterValue("tonalMixGain")->load() / 20.0f);
     float layerGain    = std::pow(10.0f, apvts.getRawParameterValue("layerGain")->load() / 20.0f);
 
-    // 一時的にSoloモードを解除して、全パートが鳴る状態(0)でレンダリングする
-    int savedSolo = currentSoloMode.load();
-    currentSoloMode.store(0);
-
     for (int s = 0; s < maxSamples; ++s)
     {
         float outTransL = 0.0f, outTransR = 0.0f, outTonalL = 0.0f, outTonalR = 0.0f, outLayerL = 0.0f, outLayerR = 0.0f;
-        generateVoiceSample(exportVoice, outTransL, outTransR, outTonalL, outTonalR, outLayerL, outLayerR, clickHold, clickCurve, transScale, tonalScale, sr);
+        generateVoiceSample(exportVoice, outTransL, outTransR, outTonalL, outTonalR, outLayerL, outLayerR, clickHold, clickCurve, transScale, tonalScale, sr, /*soloOverride*/ 0);
         
         renderedTrans.setSample(0, s, outTransL * transMixGain);
         renderedTrans.setSample(1, s, outTransR * transMixGain);
@@ -1742,9 +1755,6 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
         renderedLayer.setSample(0, s, outLayerL * layerGain);
         renderedLayer.setSample(1, s, outLayerR * layerGain);
     }
-    
-    // Soloモード復元
-    currentSoloMode.store(savedSolo);
 
     // 2. 専用 FX 適用！
     applyEffectsOffline(renderedTrans, TargetRoute::Transient, sr);
@@ -1812,7 +1822,7 @@ juce::File AnatomyAudioProcessor::createTemporaryWavForExport(int laneIndex)
         return {};
 
     juce::File tempDir = juce::File::getSpecialLocation(juce::File::SpecialLocationType::tempDirectory);
-    juce::String laneName = (laneIndex == 0 ? "FullMix" : (laneIndex == 1 ? "Transient" : "Tonal"));
+    juce::String laneName = (laneIndex == 0 ? "FullMix" : (laneIndex == 1 ? "Transient" : (laneIndex == 2 ? "Tonal" : "Layer")));
     juce::File exportFile = tempDir.getChildFile("ANATOMY_" + laneName + "_" + juce::String(juce::Random::getSystemRandom().nextInt64()) + ".wav");
 
     juce::WavAudioFormat wavFormat;
@@ -2144,8 +2154,9 @@ void AnatomyAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
     out.writeInt(static_cast<int>(apvtsBlock.getSize()));
     out.write(apvtsBlock.getData(), apvtsBlock.getSize());
 
-    // 2. マジックナンバーでオーディオデータセクション開始を明示
-    out.writeInt(0x414E4154); // "ANAT"
+    // 2. マジックナンバーでオーディオデータセクション開始を明示 (ANA2 = Version 2)
+    out.writeInt(0x414E4132); // "ANA2"
+    out.writeInt(2);          // Version: 2
 
     // 3. fileSampleRate
     out.writeDouble(fileSampleRate);
@@ -2203,16 +2214,21 @@ void AnatomyAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
     // 8. Solo モード
     out.writeInt(currentSoloMode.load(std::memory_order_acquire));
 
-    // 9. エフェクト処理順（ChipBar復元用）
-    auto writeOrder = [&](const std::vector<int>& order)
+    // 9. エフェクト処理順 & バイパス（isActive）状態（ChipBar復元用）
+    auto writeOrderAndActive = [&](const std::vector<int>& order, const std::unique_ptr<AudioEffect> pool[7])
     {
         out.writeInt(static_cast<int>(order.size()));
         for (int idx : order) out.writeInt(idx);
+        for (int i = 0; i < 7; ++i)
+        {
+            bool active = (pool[i] != nullptr) ? pool[i]->isActive() : true;
+            out.writeBool(active);
+        }
     };
-    writeOrder(transEffectOrder);
-    writeOrder(tonalEffectOrder);
-    writeOrder(layerEffectOrder);
-    writeOrder(fullMixEffectOrder);
+    writeOrderAndActive(transEffectOrder, transientPool);
+    writeOrderAndActive(tonalEffectOrder, tonalPool);
+    writeOrderAndActive(layerEffectOrder, layerPool);
+    writeOrderAndActive(fullMixEffectOrder, fullMixPool);
 
     // 10. 直近ロードファイルパス (4レーン)
     for (int i = 0; i < 4; ++i)
@@ -2236,7 +2252,19 @@ void AnatomyAudioProcessor::setStateInformation(const void* data, int sizeInByte
     // 2. マジックナンバー確認（オーディオデータが無い旧セーブとの互換性）
     if (in.isExhausted()) return;
     int magic = in.readInt();
-    if (magic != 0x414E4154) return; // "ANAT" でなければオーディオ無し
+    int version = 1;
+    if (magic == 0x414E4132) // "ANA2" (Version 2)
+    {
+        version = in.readInt();
+    }
+    else if (magic == 0x414E4154) // "ANAT" (Version 1)
+    {
+        version = 1;
+    }
+    else
+    {
+        return; // "ANAT" または "ANA2" でなければオーディオ無し
+    }
 
     // 3. fileSampleRate
     fileSampleRate = in.readDouble();
@@ -2318,36 +2346,48 @@ void AnatomyAudioProcessor::setStateInformation(const void* data, int sizeInByte
         currentSoloMode.store(in.readInt(), std::memory_order_release);
     }
 
-    // 9. エフェクト処理順の復元
-    auto readOrder = [&]() -> std::vector<int>
+    // 9. エフェクト処理順 & バイパス（isActive）状態の復元
+    auto readOrderAndActive = [&](std::vector<int>& order, const std::unique_ptr<AudioEffect> pool[7])
     {
-        std::vector<int> order;
-        if (in.isExhausted()) return order;
+        order.clear();
+        if (in.isExhausted()) return;
         int count = in.readInt();
-        if (count < 0 || count > 6) return order;
+        if (count < 0 || count > 7) return;
         order.reserve(static_cast<size_t>(count));
         for (int i = 0; i < count && !in.isExhausted(); ++i)
-            order.push_back(in.readInt());
-        return order;
+        {
+            int idx = in.readInt();
+            if (idx >= 0 && idx < 7)
+                order.push_back(idx);
+        }
+        if (version >= 2)
+        {
+            for (int i = 0; i < 7 && !in.isExhausted(); ++i)
+            {
+                bool active = in.readBool();
+                if (pool[i] != nullptr)
+                    pool[i]->setActive(active);
+            }
+        }
     };
     if (!in.isExhausted())
     {
-        transEffectOrder   = readOrder();
-        tonalEffectOrder   = readOrder();
-        layerEffectOrder   = readOrder();
-        fullMixEffectOrder = readOrder();
+        readOrderAndActive(transEffectOrder, transientPool);
+        readOrderAndActive(tonalEffectOrder, tonalPool);
+        readOrderAndActive(layerEffectOrder, layerPool);
+        readOrderAndActive(fullMixEffectOrder, fullMixPool);
 
-        auto restoreChain = [this](TargetRoute route, const std::vector<int>& order)
+        auto restoreChain = [this, version](TargetRoute route, const std::vector<int>& order)
         {
             for (int idx : order)
             {
-                if (idx < 0 || idx >= 6) continue;
+                if (idx < 0 || idx >= 7) continue;
                 AudioEffect* fx = nullptr;
                 if (route == TargetRoute::Transient)     fx = transientPool[idx].get();
                 else if (route == TargetRoute::Tonal)    fx = tonalPool[idx].get();
                 else if (route == TargetRoute::Layer)    fx = layerPool[idx].get();
                 else if (route == TargetRoute::FullMix)  fx = fullMixPool[idx].get();
-                if (fx) fx->setActive(true);
+                if (fx && version < 2) fx->setActive(true);
             }
             updateRouteOrder(route, order);
         };
@@ -2431,13 +2471,28 @@ juce::File AnatomyAudioProcessor::getNeighborAudioFile(int laneIndex, bool isNex
     if (!parentDir.isDirectory())
         return {};
 
-    auto files = parentDir.findChildFiles(juce::File::findFiles, false, "*.wav;*.aif;*.aiff;*.flac;*.mp3");
+    juce::Array<juce::File> files;
+    {
+        const juce::ScopedLock sl(dirScanLock);
+        juce::int64 now = juce::Time::currentTimeMillis();
+        if (lastScannedDir == parentDir && !cachedFolderFiles.isEmpty() && (now - lastScanTimeMs < 5000))
+        {
+            files = cachedFolderFiles;
+        }
+        else
+        {
+            files = parentDir.findChildFiles(juce::File::findFiles, false, "*.wav;*.aif;*.aiff;*.flac;*.mp3");
+            std::sort(files.begin(), files.end(), [](const juce::File& a, const juce::File& b) {
+                return a.getFileName().compareNatural(b.getFileName()) < 0;
+            });
+            cachedFolderFiles = files;
+            lastScannedDir = parentDir;
+            lastScanTimeMs = now;
+        }
+    }
+
     if (files.isEmpty())
         return {};
-
-    std::sort(files.begin(), files.end(), [](const juce::File& a, const juce::File& b) {
-        return a.getFileName().compareNatural(b.getFileName()) < 0;
-    });
 
     int currentIndex = -1;
     for (int i = 0; i < files.size(); ++i)

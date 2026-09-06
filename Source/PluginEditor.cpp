@@ -398,7 +398,7 @@ void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
 
     g.setColour(AnatomyColors::textDim);
     g.setFont(juce::Font(juce::FontOptions(10.5f)));
-    g.drawText("OTODESK  |  Anatomy 1.2.0 B005  HPSS Audio Splice & Synthesis", 22, 34, 380, 14, juce::Justification::centredLeft);
+    g.drawText("OTODESK  |  Anatomy 1.2.0 B006  HPSS Audio Splice & Synthesis", 22, 34, 380, 14, juce::Justification::centredLeft);
 
     // HUD (ロゴ右側・2行)
     g.setFont(juce::Font(juce::FontOptions(10.5f)));

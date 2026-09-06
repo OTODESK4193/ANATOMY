@@ -40,13 +40,16 @@ namespace ExportRecordingCore
 
 class AnatomyAudioProcessor final : public juce::AudioProcessor,
     public juce::Thread,
-    public juce::AudioProcessorValueTreeState::Listener
+    public juce::AudioProcessorValueTreeState::Listener,
+    private juce::Timer
 {
 public:
     ExportRecordingCore::Lane exportLanes[4];
 public:
     AnatomyAudioProcessor();
     ~AnatomyAudioProcessor() override;
+
+    void timerCallback() override;
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
@@ -189,7 +192,7 @@ public:
 private:
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
-    void generateVoiceSample(VoiceState& voice, float& outTransL, float& outTransR, float& outTonalL, float& outTonalR, float& outLayerL, float& outLayerR, float clickHold, float clickCurve, float transScale, float tonalScale, double hostSampleRate) noexcept;
+    void generateVoiceSample(VoiceState& voice, float& outTransL, float& outTransR, float& outTonalL, float& outTonalR, float& outLayerL, float& outLayerR, float clickHold, float clickCurve, float transScale, float tonalScale, double hostSampleRate, int soloOverride = -1) noexcept;
 
     void updateActiveSampleData();
     void cleanUpGarbageBin();
@@ -314,6 +317,12 @@ private:
 
     LaneParamCache cachedLanes[4]; // 0=trans, 1=tonal, 2=full, 3=layer
     void initParamCache();
+
+    // --- ディレクトリ走査キャッシュ (◀▶ サンプル切替高速化) ---
+    juce::CriticalSection dirScanLock;
+    juce::File lastScannedDir;
+    juce::Array<juce::File> cachedFolderFiles;
+    juce::int64 lastScanTimeMs = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnatomyAudioProcessor)
 };
