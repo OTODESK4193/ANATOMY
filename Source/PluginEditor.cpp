@@ -89,12 +89,17 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     // --- 2段目: FullMix & Layer (50% スプリット) ---
     fullMixLane.setSelected(true); // 初期選択
     fullMixLane.onSelectLane = [this] {
-        fxRackView.setTargetRoute(TargetRoute::FullMix);
-        fullMixLane.setSelected(true);
-        transientLane.setSelected(false);
-        tonalLane.setSelected(false);
-        layerLane.setSelected(false);
-        repaint();
+        if (fxRackView.getTargetRoute() == TargetRoute::FullMix) return;
+        juce::Component::SafePointer<AnatomyAudioProcessorEditor> safeThis(this);
+        juce::MessageManager::callAsync([safeThis] {
+            if (safeThis == nullptr) return;
+            safeThis->fxRackView.setTargetRoute(TargetRoute::FullMix);
+            safeThis->fullMixLane.setSelected(true);
+            safeThis->transientLane.setSelected(false);
+            safeThis->tonalLane.setSelected(false);
+            safeThis->layerLane.setSelected(false);
+            safeThis->repaint();
+        });
     };
     fullMixLane.onBeforeChanged = [this] {
         repaint();
@@ -106,12 +111,17 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
 
     // LayerLaneView (右半分表示)
     layerLane.onSelectLane = [this] {
-        fxRackView.setTargetRoute(TargetRoute::Layer);
-        fullMixLane.setSelected(false);
-        transientLane.setSelected(false);
-        tonalLane.setSelected(false);
-        layerLane.setSelected(true);
-        repaint();
+        if (fxRackView.getTargetRoute() == TargetRoute::Layer) return;
+        juce::Component::SafePointer<AnatomyAudioProcessorEditor> safeThis(this);
+        juce::MessageManager::callAsync([safeThis] {
+            if (safeThis == nullptr) return;
+            safeThis->fxRackView.setTargetRoute(TargetRoute::Layer);
+            safeThis->fullMixLane.setSelected(false);
+            safeThis->transientLane.setSelected(false);
+            safeThis->tonalLane.setSelected(false);
+            safeThis->layerLane.setSelected(true);
+            safeThis->repaint();
+        });
     };
     layerLane.onSampleChanged = [this] {
         audioProcessor.offlineMixRenderer.triggerRender();
@@ -124,12 +134,17 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
 
     // --- 3段目: TransientView & TonalView ---
     transientLane.onSelectLane = [this] {
-        fxRackView.setTargetRoute(TargetRoute::Transient);
-        fullMixLane.setSelected(false);
-        transientLane.setSelected(true);
-        tonalLane.setSelected(false);
-        layerLane.setSelected(false);
-        repaint();
+        if (fxRackView.getTargetRoute() == TargetRoute::Transient) return;
+        juce::Component::SafePointer<AnatomyAudioProcessorEditor> safeThis(this);
+        juce::MessageManager::callAsync([safeThis] {
+            if (safeThis == nullptr) return;
+            safeThis->fxRackView.setTargetRoute(TargetRoute::Transient);
+            safeThis->fullMixLane.setSelected(false);
+            safeThis->transientLane.setSelected(true);
+            safeThis->tonalLane.setSelected(false);
+            safeThis->layerLane.setSelected(false);
+            safeThis->repaint();
+        });
     };
     transientLane.onSampleChanged = [this] {
         audioProcessor.offlineMixRenderer.triggerRender();
@@ -141,12 +156,17 @@ AnatomyAudioProcessorEditor::AnatomyAudioProcessorEditor(AnatomyAudioProcessor& 
     addAndMakeVisible(transientLane);
 
     tonalLane.onSelectLane = [this] {
-        fxRackView.setTargetRoute(TargetRoute::Tonal);
-        fullMixLane.setSelected(false);
-        transientLane.setSelected(false);
-        tonalLane.setSelected(true);
-        layerLane.setSelected(false);
-        repaint();
+        if (fxRackView.getTargetRoute() == TargetRoute::Tonal) return;
+        juce::Component::SafePointer<AnatomyAudioProcessorEditor> safeThis(this);
+        juce::MessageManager::callAsync([safeThis] {
+            if (safeThis == nullptr) return;
+            safeThis->fxRackView.setTargetRoute(TargetRoute::Tonal);
+            safeThis->fullMixLane.setSelected(false);
+            safeThis->transientLane.setSelected(false);
+            safeThis->tonalLane.setSelected(true);
+            safeThis->layerLane.setSelected(false);
+            safeThis->repaint();
+        });
     };
     tonalLane.onSampleChanged = [this] {
         audioProcessor.offlineMixRenderer.triggerRender();
@@ -387,7 +407,7 @@ void AnatomyAudioProcessorEditor::paint(juce::Graphics& g)
 
     g.setColour(AnatomyColors::textDim);
     g.setFont(juce::Font(juce::FontOptions(10.5f)));
-    g.drawText("OTODESK  |  Anatomy 1.2.0 B003  HPSS Audio Splice & Synthesis", 22, 34, 380, 14, juce::Justification::centredLeft);
+    g.drawText("OTODESK  |  Anatomy 1.2.0 B004  HPSS Audio Splice & Synthesis", 22, 34, 380, 14, juce::Justification::centredLeft);
 
     // HUD (ロゴ右側・2行)
     g.setFont(juce::Font(juce::FontOptions(10.5f)));

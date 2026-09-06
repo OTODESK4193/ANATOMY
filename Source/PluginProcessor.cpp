@@ -1145,13 +1145,20 @@ void AnatomyAudioProcessor::setOffsetsFromUI(int laneIndex, float startMs, float
 {
     // ScopedLock(lock) を完全撤廃: 各オフセット変数および Replacer はロックフリーな atomic であり、
     // UIスレッドがマウスドラッグ中にロック待ちでフリーズ（DAWハングアップ）するのを防止
+    bool changed = false;
     if (laneIndex == 0)
     {
+        if (std::abs(fullMixStartOffsetMs.load(std::memory_order_relaxed) - startMs) > 0.001f ||
+            std::abs(fullMixEndOffsetMs.load(std::memory_order_relaxed) - endMs) > 0.001f)
+            changed = true;
         fullMixStartOffsetMs.store(startMs, std::memory_order_release);
         fullMixEndOffsetMs.store(endMs, std::memory_order_release);
     }
     else if (laneIndex == 1)
     {
+        if (std::abs(transStartOffsetMs.load(std::memory_order_relaxed) - startMs) > 0.001f ||
+            std::abs(transEndOffsetMs.load(std::memory_order_relaxed) - endMs) > 0.001f)
+            changed = true;
         transStartOffsetMs.store(startMs, std::memory_order_release);
         transEndOffsetMs.store(endMs, std::memory_order_release);
         customTransientReplacer.setStartOffsetMs(startMs);
@@ -1159,6 +1166,9 @@ void AnatomyAudioProcessor::setOffsetsFromUI(int laneIndex, float startMs, float
     }
     else if (laneIndex == 2)
     {
+        if (std::abs(tonalStartOffsetMs.load(std::memory_order_relaxed) - startMs) > 0.001f ||
+            std::abs(tonalEndOffsetMs.load(std::memory_order_relaxed) - endMs) > 0.001f)
+            changed = true;
         tonalStartOffsetMs.store(startMs, std::memory_order_release);
         tonalEndOffsetMs.store(endMs, std::memory_order_release);
         customTonalReplacer.setStartOffsetMs(startMs);
@@ -1166,12 +1176,15 @@ void AnatomyAudioProcessor::setOffsetsFromUI(int laneIndex, float startMs, float
     }
     else if (laneIndex == 3)
     {
+        if (std::abs(layerStartOffsetMs.load(std::memory_order_relaxed) - startMs) > 0.001f ||
+            std::abs(layerEndOffsetMs.load(std::memory_order_relaxed) - endMs) > 0.001f)
+            changed = true;
         layerStartOffsetMs.store(startMs, std::memory_order_release);
         layerEndOffsetMs.store(endMs, std::memory_order_release);
         customLayerReplacer.setStartOffsetMs(startMs);
         customLayerReplacer.setEndOffsetMs(endMs);
     }
-    if (triggerRender)
+    if (triggerRender && changed)
         offlineMixRenderer.triggerRender();
 }
 
@@ -1844,11 +1857,20 @@ void OfflineMixRenderer::executeRender()
     juce::AudioBuffer<float> workLayer(2, maxSamples);
     workTrans.clear(); workTonal.clear(); workLayer.clear();
 
-    for (int ch = 0; ch < 2; ++ch)
+    if (transSamples > 0)
     {
-        if (transSamples > 0 && ch < localTrans.getNumChannels()) workTrans.copyFrom(ch, 0, localTrans, ch, 0, transSamples);
-        if (tonalSamples > 0 && ch < localTonal.getNumChannels()) workTonal.copyFrom(ch, 0, localTonal, ch, 0, tonalSamples);
-        if (layerSamples > 0 && ch < localLayer.getNumChannels()) workLayer.copyFrom(ch, 0, localLayer, ch, 0, layerSamples);
+        workTrans.copyFrom(0, 0, localTrans, 0, 0, transSamples);
+        workTrans.copyFrom(1, 0, localTrans, localTrans.getNumChannels() > 1 ? 1 : 0, 0, transSamples);
+    }
+    if (tonalSamples > 0)
+    {
+        workTonal.copyFrom(0, 0, localTonal, 0, 0, tonalSamples);
+        workTonal.copyFrom(1, 0, localTonal, localTonal.getNumChannels() > 1 ? 1 : 0, 0, tonalSamples);
+    }
+    if (layerSamples > 0)
+    {
+        workLayer.copyFrom(0, 0, localLayer, 0, 0, layerSamples);
+        workLayer.copyFrom(1, 0, localLayer, localLayer.getNumChannels() > 1 ? 1 : 0, 0, layerSamples);
     }
 
     float transPitch = processor.apvts.getRawParameterValue("transPitch")->load();
@@ -1984,14 +2006,14 @@ void OfflineMixRenderer::executeRender()
             oR = workTonal.getSample(1, exactSustain) * tonalGain * fGain;
         }
 
-        if (exactLayer >= 0 && exactLayer < lEndSmp && exactLayer < layerSamples)
+        if (layerSamples > 0 && exactLayer >= 0 && exactLayer < lEndSmp && exactLayer < layerSamples)
         {
             float fGain = 1.0f;
             int relL = exactLayer - lStartSmp;
-            if (lInSmp > 1 && relL < lInSmp)
+            if (lInSmp > 1 && relL >= 0 && relL < lInSmp)
                 fGain *= calculateFadeGain(static_cast<float>(relL) / static_cast<float>(lInSmp), lInTension);
             int remL = lEndSmp - exactLayer;
-            if (lOutSmp > 1 && remL < lOutSmp)
+            if (lOutSmp > 1 && remL >= 0 && remL < lOutSmp)
                 fGain *= calculateFadeGain(static_cast<float>(remL) / static_cast<float>(lOutSmp), lOutTension);
 
             lL = workLayer.getSample(0, exactLayer) * layerGain * fGain;
@@ -2012,7 +2034,8 @@ void OfflineMixRenderer::executeRender()
     if (threadShouldExit()) return;
     processor.applyEffectsOffline(outTonalRendered, TargetRoute::Tonal, sr);
     if (threadShouldExit()) return;
-    processor.applyEffectsOffline(outLayerRendered, TargetRoute::Layer, sr);
+    if (layerSamples > 0)
+        processor.applyEffectsOffline(outLayerRendered, TargetRoute::Layer, sr);
 
     for (int s = 0; s < maxSamples; ++s)
     {
@@ -2061,7 +2084,10 @@ void OfflineMixRenderer::executeRender()
         renderedFullMix.makeCopyOf(outputMix);
         renderedTransient.makeCopyOf(outTransRendered);
         renderedTonal.makeCopyOf(outTonalRendered);
-        renderedLayer.makeCopyOf(outLayerRendered);
+        if (layerSamples > 0)
+            renderedLayer.makeCopyOf(outLayerRendered);
+        else
+            renderedLayer.setSize(0, 0);
         componentRatios = std::move(ratios);
     }
     hasNewRender.store(true, std::memory_order_release);

@@ -196,6 +196,15 @@ float WaveformComponent::findZeroCrossingMs(float targetMs, float magnetPixels) 
     int startRange = std::max(0, targetSample - magnetSamples);
     int endRange = std::min(numSamples - 2, targetSample + magnetSamples);
 
+    // 無音または極小振幅時は全サンプルがゼロクロス判定に合致するため探索をバイパス
+    float maxAbsInWindow = 0.0f;
+    for (int s = startRange; s <= endRange; ++s)
+    {
+        float a = std::abs(data[s]);
+        if (a > maxAbsInWindow) maxAbsInWindow = a;
+    }
+    if (maxAbsInWindow < 0.0005f) return targetMs;
+
     int bestZeroCrossingS = -1;
     float bestFrac = 0.0f;
     int bestDist = 1000000;
@@ -928,14 +937,26 @@ void WaveformComponent::mouseUp(const juce::MouseEvent&)
 {
     if (currentDragMode == DragMode::StartMarker || currentDragMode == DragMode::EndMarker)
     {
-        // マウスを離したタイミングで確定レンダリングをキック
-        synchronizeToTargetSliders(startOffsetMs, endOffsetMs, true);
+        // 値が実際に変化した時のみ確定レンダリングをキック（単なるクリックでの無駄なレンダリングと競合を完全防止）
+        bool hasChanged = (currentDragMode == DragMode::StartMarker)
+            ? (std::abs(startOffsetMs - static_cast<float>(dragStartParamMs)) > 0.001f)
+            : (std::abs(endOffsetMs - static_cast<float>(dragStartParamMs)) > 0.001f);
+        synchronizeToTargetSliders(startOffsetMs, endOffsetMs, hasChanged);
     }
     else if (currentDragMode == DragMode::FadeInHandle || currentDragMode == DragMode::FadeOutHandle ||
              currentDragMode == DragMode::FadeInTension || currentDragMode == DragMode::FadeOutTension)
     {
-        // フェード操作終了時に確定レンダリングをキック
-        updateFadeToProcessor(true);
+        bool hasChanged = false;
+        if (currentDragMode == DragMode::FadeInHandle)
+            hasChanged = (std::abs(fadeInMs - static_cast<float>(dragStartParamMs)) > 0.001f);
+        else if (currentDragMode == DragMode::FadeOutHandle)
+            hasChanged = (std::abs(fadeOutMs - static_cast<float>(dragStartParamMs)) > 0.001f);
+        else if (currentDragMode == DragMode::FadeInTension)
+            hasChanged = (std::abs(fadeInTension - dragStartTension) > 0.001f);
+        else if (currentDragMode == DragMode::FadeOutTension)
+            hasChanged = (std::abs(fadeOutTension - dragStartTension) > 0.001f);
+
+        updateFadeToProcessor(hasChanged);
     }
 
     currentDragMode = DragMode::None;
