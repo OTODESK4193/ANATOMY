@@ -94,6 +94,28 @@ FxRackView::FxRackView(AnatomyAudioProcessor& p) : proc(p)
     }
     ottBandSelectBtns[0].setToggleState(true, juce::dontSendNotification);
 
+    // OTT STAGE 1 / STAGE 2 切り替えボタン
+    juce::StringArray stageNames{ "STAGE 1", "STAGE 2" };
+    for (int i = 0; i < 2; ++i)
+    {
+        ottStageBtns[i].setButtonText(stageNames[i]);
+        ottStageBtns[i].setClickingTogglesState(true);
+        ottStageBtns[i].setRadioGroupId(350);
+        ottStageBtns[i].setColour(juce::TextButton::buttonColourId, AnatomyColors::knobTrack);
+        ottStageBtns[i].setColour(juce::TextButton::buttonOnColourId, i == 0 ? AnatomyColors::peach : AnatomyColors::babyBlue);
+        ottStageBtns[i].setColour(juce::TextButton::textColourOffId, AnatomyColors::textDim);
+        ottStageBtns[i].setColour(juce::TextButton::textColourOnId, juce::Colours::black);
+        ottStageBtns[i].onClick = [this, i] {
+            juce::Component::SafePointer<FxRackView> safeThis(this);
+            juce::MessageManager::callAsync([safeThis, i] {
+                if (safeThis == nullptr) return;
+                safeThis->selectedOttStage = i;
+                safeThis->rebuildDetails();
+            });
+        };
+    }
+    ottStageBtns[0].setToggleState(true, juce::dontSendNotification);
+
     setTargetRoute(TargetRoute::Transient);
 }
 
@@ -240,6 +262,12 @@ void FxRackView::rebuildDetails()
     noiseTypeButtons.clear();
     removeChildComponent(&ottBandsBtn);
     for (auto& b : ottBandSelectBtns) removeChildComponent(&b);
+    ottPhaseModeAttachment.reset();
+    removeChildComponent(&ottPhaseModeCombo);
+    removeChildComponent(&ottPhaseModeLabel);
+    ottXoverLinkAttachment.reset();
+    removeChildComponent(&ottXoverLinkBtn);
+    for (auto& b : ottStageBtns) removeChildComponent(&b);
 
     int fxType = getSlotEffectType(selectedSlot);
     if (fxType < 0 || fxType >= 7)
@@ -334,32 +362,103 @@ void FxRackView::rebuildDetails()
             };
         }
         break;
-    case 3: // OTT
-        addAndMakeVisible(ottBandsBtn);
-        ottBandsBtn.setToggleState(showOttBands, juce::dontSendNotification);
-
-        if (!showOttBands)
+    case 3: // OTT (OTTx2 Dual Cascade)
         {
-            knobDefs = {
-                { pre + "OttTime",          "TIME" },
-                { pre + "OttLowMidXOver",   "LO/MI XO" },
-                { pre + "OttMidHighXOver",  "MI/HI XO" },
-                { pre + "OttGateFloor",     "GATE dB" },
-                { pre + "OttDepth",         "DRY/WET" }
-            };
-        }
-        else
-        {
-            for (auto& b : ottBandSelectBtns) addAndMakeVisible(b);
-            juce::StringArray bns{ "Low", "Mid", "High" };
-            auto bn = bns[selectedOttBand];
+            // GLOBAL コントロール: PHASE MODE, XO LINK, STAGE 1 / STAGE 2 切り替え
+            ottPhaseModeLabel.setText("PHASE", juce::dontSendNotification);
+            ottPhaseModeLabel.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
+            ottPhaseModeLabel.setColour(juce::Label::textColourId, accent.withAlpha(0.9f));
+            ottPhaseModeLabel.setJustificationType(juce::Justification::centred);
+            addAndMakeVisible(ottPhaseModeLabel);
 
-            knobDefs = {
-                { pre + "Ott" + bn + "Up",   "UP COMP" },
-                { pre + "Ott" + bn + "Down", "DOWN COMP" },
-                { pre + "Ott" + bn + "Gain", "GAIN dB" },
-                { pre + "OttDepth",          "DRY/WET" }
-            };
+            ottPhaseModeCombo.clear();
+            ottPhaseModeCombo.addItem("Color", 1);
+            ottPhaseModeCombo.addItem("Align", 2);
+            ottPhaseModeCombo.setColour(juce::ComboBox::backgroundColourId, AnatomyColors::knobTrack);
+            ottPhaseModeCombo.setColour(juce::ComboBox::textColourId, AnatomyColors::text);
+            ottPhaseModeCombo.setColour(juce::ComboBox::outlineColourId, accent.withAlpha(0.6f));
+            addAndMakeVisible(ottPhaseModeCombo);
+
+            if (proc.apvts.getParameter(pre + "OttPhaseMode") != nullptr)
+            {
+                ottPhaseModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+                    proc.apvts, pre + "OttPhaseMode", ottPhaseModeCombo);
+            }
+
+            ottXoverLinkBtn.setButtonText("XO LINK");
+            ottXoverLinkBtn.setColour(juce::ToggleButton::textColourId, accent);
+            ottXoverLinkBtn.setColour(juce::ToggleButton::tickColourId, accent);
+            addAndMakeVisible(ottXoverLinkBtn);
+
+            if (proc.apvts.getParameter(pre + "OttXoverLink") != nullptr)
+            {
+                ottXoverLinkAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+                    proc.apvts, pre + "OttXoverLink", ottXoverLinkBtn);
+            }
+
+            for (int i = 0; i < 2; ++i)
+            {
+                addAndMakeVisible(ottStageBtns[i]);
+                ottStageBtns[i].setToggleState(selectedOttStage == i, juce::dontSendNotification);
+            }
+
+            addAndMakeVisible(ottBandsBtn);
+            ottBandsBtn.setToggleState(showOttBands, juce::dontSendNotification);
+
+            if (selectedOttStage == 0) // STAGE 1
+            {
+                if (!showOttBands)
+                {
+                    knobDefs = {
+                        { pre + "OttTime",          "S1 TIME" },
+                        { pre + "OttLowMidXOver",   "S1 LO/MI" },
+                        { pre + "OttMidHighXOver",  "S1 MI/HI" },
+                        { pre + "OttGateFloor",     "GATE dB" },
+                        { pre + "OttDepth",         "S1 MIX" }
+                    };
+                }
+                else
+                {
+                    for (auto& b : ottBandSelectBtns) addAndMakeVisible(b);
+                    juce::StringArray bns{ "Low", "Mid", "High" };
+                    auto bn = bns[selectedOttBand];
+
+                    knobDefs = {
+                        { pre + "Ott" + bn + "Up",   "S1 UP" },
+                        { pre + "Ott" + bn + "Down", "S1 DOWN" },
+                        { pre + "Ott" + bn + "Gain", "S1 GAIN" },
+                        { pre + "OttGateFloor",      "GATE dB" },
+                        { pre + "OttDepth",          "S1 MIX" }
+                    };
+                }
+            }
+            else // STAGE 2
+            {
+                if (!showOttBands)
+                {
+                    knobDefs = {
+                        { pre + "Ott2Time",          "S2 TIME" },
+                        { pre + "Ott2LowMidXOver",   "S2 LO/MI" },
+                        { pre + "Ott2MidHighXOver",  "S2 MI/HI" },
+                        { pre + "OttGateFloor",      "GATE dB" },
+                        { pre + "Ott2Depth",         "S2 MIX" }
+                    };
+                }
+                else
+                {
+                    for (auto& b : ottBandSelectBtns) addAndMakeVisible(b);
+                    juce::StringArray bns{ "Low", "Mid", "High" };
+                    auto bn = bns[selectedOttBand];
+
+                    knobDefs = {
+                        { pre + "Ott2" + bn + "Up",   "S2 UP" },
+                        { pre + "Ott2" + bn + "Down", "S2 DOWN" },
+                        { pre + "Ott2" + bn + "Gain", "S2 GAIN" },
+                        { pre + "OttGateFloor",       "GATE dB" },
+                        { pre + "Ott2Depth",          "S2 MIX" }
+                    };
+                }
+            }
         }
         break;
     case 4: // Glue
@@ -471,6 +570,19 @@ void FxRackView::layoutDetails()
         x += 86;
     }
 
+    // OTT コントロール配置 (STAGE 1 / STAGE 2 ボタン, PHASE MODE, XO LINK)
+    if (fxType == 3)
+    {
+        ottStageBtns[0].setBounds(x, y + 4, 68, 22);
+        ottStageBtns[1].setBounds(x, y + 30, 68, 22);
+        x += 76;
+
+        ottPhaseModeLabel.setBounds(x, y, 62, 14);
+        ottPhaseModeCombo.setBounds(x, y + 16, 62, 20);
+        ottXoverLinkBtn.setBounds(x, y + 40, 64, 18);
+        x += 72;
+    }
+
     // ノブ配置
     for (size_t i = 0; i < detailKnobs.size(); ++i)
     {
@@ -482,17 +594,17 @@ void FxRackView::layoutDetails()
     // OTT BANDS / Band Selectors
     if (fxType == 3)
     {
-        int btnY = y + 35;
-        int btnX = x + 10;
+        int btnY = y + 26;
+        int btnX = x + 8;
         
-        ottBandsBtn.setBounds(btnX, btnY, 60, 20);
-        btnX += 70;
+        ottBandsBtn.setBounds(btnX, btnY, 60, 22);
+        btnX += 68;
 
         if (showOttBands)
         {
             for (int i = 0; i < 3; ++i)
             {
-                ottBandSelectBtns[i].setBounds(btnX, btnY, 46, 20);
+                ottBandSelectBtns[i].setBounds(btnX, btnY, 46, 22);
                 btnX += 50;
             }
         }

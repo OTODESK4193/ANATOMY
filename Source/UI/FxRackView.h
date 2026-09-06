@@ -80,5 +80,14 @@ private:
     bool showOttBands = false;
     int selectedOttBand = 0; // 0=Low, 1=Mid, 2=High
 
+    // OTTx2 専用コントロール
+    juce::TextButton ottStageBtns[2]; // 0=STAGE 1, 1=STAGE 2
+    int selectedOttStage = 0;         // 0=Stage 1, 1=Stage 2
+    juce::ComboBox ottPhaseModeCombo;
+    juce::Label ottPhaseModeLabel;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> ottPhaseModeAttachment;
+    juce::ToggleButton ottXoverLinkBtn{ "XO LINK" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> ottXoverLinkAttachment;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FxRackView)
 };

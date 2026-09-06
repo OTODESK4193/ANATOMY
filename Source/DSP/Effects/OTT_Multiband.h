@@ -1,29 +1,30 @@
 #pragma once
 
 #include "AudioEffect.h"
+#include "FastMath.h"
+#include "DynamicsNode.h"
+#include "Crossover.h"
 #include <juce_dsp/juce_dsp.h>
+#include <vector>
 #include <algorithm>
 #include <cmath>
 
 /**
- * OTT_Multiband (Production-Grade Noise-Controlled Edition)
- * 弱音領域でのフロアノイズ増幅を抑制する「改良型スマート・ローレベル・ゲート数理」を搭載。
- * 各帯域の役割に適合した傾斜配分初期値と、ドラムの基音に調和するクロスオーバー設計を内包した3バンドOTTエンジン。
- *
- * 追加パラメーター:
- *   - GateFloor (-70〜-20 dBFS, default -45):
- *     UpwardCompが作動を開始する上限閾値。
- *     高く設定するほどゲートが早く掛かり、ノイズの乗りを抑える。
- *     低く設定するほどより弱い信号まで引き上げる（より原音に近い動作）。
+ * OTT_Multiband (MULTI-OTO Equivalent DSP - OTTx2 Dual Stage Cascade)
+ * 
+ * MULTI-OTO の Linkwitz-Riley 4次 (LR4) + オールパス補正 Crossover、
+ * および AVX2 SIMD RMS検波 DynamicsNode を完全移植。
+ * 
+ * 独立した 2 段直列カスケード（Stage 1 & Stage 2）構成を備え、
+ * ドライ信号とのコムフィルタを排除する ALIGN PHASE モードと、
+ * ドラム音源の無音部ノイズフロア過剰持ち上げを抑制するスマートゲート（GateFloor）を統合。
  */
 class OTT_Multiband final : public AudioEffect
 {
 public:
     OTT_Multiband()
     {
-        updateCrossoverFilters();
-        // 初期値でリニア閾値を事前計算
-        updateGateThresholds();
+        updateCrossovers();
     }
 
     ~OTT_Multiband() override = default;
@@ -31,38 +32,46 @@ public:
     void prepare(double sampleRate, int maxBlockSize) override
     {
         currentSampleRate = sampleRate;
+        internalMaxBlock = std::max(64, maxBlockSize);
 
         juce::dsp::ProcessSpec spec;
         spec.sampleRate       = sampleRate;
-        spec.maximumBlockSize = static_cast<juce::uint32>(maxBlockSize);
+        spec.maximumBlockSize = static_cast<juce::uint32>(internalMaxBlock);
         spec.numChannels      = 2;
 
-        filterLowLP.prepare(spec);
-        filterLowHP.prepare(spec);
-        filterHighLP.prepare(spec);
-        filterHighHP.prepare(spec);
+        crossover1.prepare(spec);
+        dryCrossover1.prepare(spec);
+        crossover2.prepare(spec);
+        dryCrossover2.prepare(spec);
 
-        updateCrossoverFilters();
+        updateCrossovers();
 
-        lowBuffer.setSize(2, maxBlockSize, false, false, true);
-        midBuffer.setSize(2, maxBlockSize, false, false, true);
-        highBuffer.setSize(2, maxBlockSize, false, false, true);
-        lowBuffer.clear();
-        midBuffer.clear();
-        highBuffer.clear();
+        node1.prepare(sampleRate, internalMaxBlock);
+        node2.prepare(sampleRate, internalMaxBlock);
 
-        for (int b = 0; b < 3; ++b)
-            envFollower[b] = 0.0f;
+        node1.setGateFloorDb(gateFloorDb);
+        node2.setGateFloorDb(gateFloorDb);
+
+        dryBuffer.setSize(2, internalMaxBlock, false, false, true);
+        dryBuffer.clear();
+
+        simdBuffer.resize(static_cast<size_t>(internalMaxBlock));
+
+        updateNodeCoeffs();
     }
 
     void reset() noexcept override
     {
-        filterLowLP.reset();
-        filterLowHP.reset();
-        filterHighLP.reset();
-        filterHighHP.reset();
-        for (int b = 0; b < 3; ++b)
-            envFollower[b] = 0.0f;
+        crossover1.reset();
+        dryCrossover1.reset();
+        crossover2.reset();
+        dryCrossover2.reset();
+
+        node1.reset();
+        node2.reset();
+
+        if (dryBuffer.getNumSamples() > 0)
+            dryBuffer.clear();
     }
 
     void process(juce::AudioBuffer<float>& buffer) noexcept override
@@ -70,124 +79,22 @@ public:
         const int numChannels = buffer.getNumChannels();
         const int numSamples  = buffer.getNumSamples();
 
-        if (lowBuffer.getNumSamples() < numSamples) return;
+        if (numChannels < 2 || numSamples <= 0 || currentSampleRate <= 0.0)
+            return;
 
-        // ── 3バンド同相カスケード分割（逆相コムフィルタ・低域ノッチ完全根絶） ──
-        // 1. Low バンド: 原信号 -> filterLowLP (140Hz LP)
-        lowBuffer.copyFrom(0, 0, buffer, 0, 0, numSamples);
-        if (numChannels > 1) lowBuffer.copyFrom(1, 0, buffer, 1, 0, numSamples);
+        // 係数更新（スムージング目標値適用）
+        updateNodeCoeffs();
 
-        juce::dsp::AudioBlock<float> lowBlockFull(lowBuffer);
-        auto lowBlock = lowBlockFull.getSubBlock(0, static_cast<size_t>(numSamples));
-        filterLowLP.process(juce::dsp::ProcessContextReplacing<float>(lowBlock));
+        float* left  = buffer.getWritePointer(0);
+        float* right = buffer.getWritePointer(1);
 
-        // 2. Mid+High 候補: 原信号 -> filterLowHP (140Hz HP)
-        midBuffer.copyFrom(0, 0, buffer, 0, 0, numSamples);
-        if (numChannels > 1) midBuffer.copyFrom(1, 0, buffer, 1, 0, numSamples);
-
-        juce::dsp::AudioBlock<float> midBlockFull(midBuffer);
-        auto midBlock = midBlockFull.getSubBlock(0, static_cast<size_t>(numSamples));
-        filterLowHP.process(juce::dsp::ProcessContextReplacing<float>(midBlock));
-
-        // 3. High バンド: Mid+High 信号 -> filterHighHP (3800Hz HP)
-        highBuffer.copyFrom(0, 0, midBuffer, 0, 0, numSamples);
-        if (numChannels > 1) highBuffer.copyFrom(1, 0, midBuffer, 1, 0, numSamples);
-
-        juce::dsp::AudioBlock<float> highBlockFull(highBuffer);
-        auto highBlock = highBlockFull.getSubBlock(0, static_cast<size_t>(numSamples));
-        filterHighHP.process(juce::dsp::ProcessContextReplacing<float>(highBlock));
-
-        // 4. Mid バンド: Mid+High 信号 -> filterHighLP (3800Hz LP)
-        filterHighLP.process(juce::dsp::ProcessContextReplacing<float>(midBlock));
-
-        // ── エンベロープ係数 ─────────────────────────────────────────────
-        const float timeMultiplier = std::max(0.1f, timeMultiplierParam);
-        const float attackCoef  = std::exp(-1.0f / (0.010f * timeMultiplier * static_cast<float>(currentSampleRate)));
-        const float releaseCoef = std::exp(-1.0f / (0.100f * timeMultiplier * static_cast<float>(currentSampleRate)));
-
-        const float ottThreshold = std::pow(10.0f, -30.0f / 20.0f); // -30 dBFS 固定内部しきい値
-
-        // ── ノイズゲート閾値（ユーザー設定値を使用） ─────────────────────
-        const float noiseFloorThreshold = noiseFloorLinear;
-        const float gateGripBottom      = gateBottomLinear;
-
-        float* bandPtrs[3]  = { lowBuffer.getWritePointer(0),  midBuffer.getWritePointer(0),  highBuffer.getWritePointer(0) };
-        float* bandPtrsR[3] = {
-            numChannels > 1 ? lowBuffer.getWritePointer(1)  : nullptr,
-            numChannels > 1 ? midBuffer.getWritePointer(1)  : nullptr,
-            numChannels > 1 ? highBuffer.getWritePointer(1) : nullptr
-        };
-
-        // ── 各バンドへ圧縮・引き上げ処理 ────────────────────────────────
-        for (int b = 0; b < 3; ++b)
+        // 内部バッファ長を超えるブロック（オフラインレンダリング等）でも安全にチャンク分割処理
+        int offset = 0;
+        while (offset < numSamples)
         {
-            float* dataL = bandPtrs[b];
-            float* dataR = bandPtrsR[b];
-            const float bandGainLinear = std::pow(10.0f, bandGainDb[b] / 20.0f);
-
-            for (int s = 0; s < numSamples; ++s)
-            {
-                const float absL    = std::abs(dataL[s]);
-                const float absR    = dataR != nullptr ? std::abs(dataR[s]) : 0.0f;
-                const float currPeak = std::max(absL, absR);
-
-                float& env = envFollower[b];
-                if (currPeak > env) env = attackCoef  * env + (1.0f - attackCoef)  * currPeak;
-                else                env = releaseCoef * env + (1.0f - releaseCoef) * currPeak;
-
-                float gainReduction = 1.0f;
-
-                if (env > 1.0e-5f)
-                {
-                    const float ratioOffset = env / ottThreshold;
-
-                    if (ratioOffset > 1.0f)
-                    {
-                        // 【Downward領域】4:1 比率で圧縮
-                        const float downFactor = std::pow(ratioOffset, (1.0f / 4.0f) - 1.0f);
-                        gainReduction *= (1.0f - downwardAmount[b]) + (downwardAmount[b] * downFactor);
-                    }
-                    else
-                    {
-                        // 【Upward領域】1:2 比率で引き上げ（最大 +18 dB）
-                        float upFactor = std::pow(ratioOffset, (1.0f / 0.5f) - 1.0f);
-                        upFactor = std::min(upFactor, 7.94f);
-
-                        // ── スマートノイズゲート ─────────────────────────
-                        // env が noiseFloorThreshold (ユーザー設定) を下回る領域では
-                        // Upward 量を線形フェードアウトし、gateGripBottom で完全ミュート
-                        if (env < noiseFloorThreshold)
-                        {
-                            float gateFactor = (env - gateGripBottom)
-                                             / (noiseFloorThreshold - gateGripBottom);
-                            gateFactor = std::max(0.0f, std::min(1.0f, gateFactor));
-                            upFactor   = 1.0f + (upFactor - 1.0f) * gateFactor;
-                        }
-
-                        gainReduction *= (1.0f - upwardAmount[b]) + (upwardAmount[b] * upFactor);
-                    }
-                }
-
-                const float finalScalar = gainReduction * bandGainLinear;
-                dataL[s] *= finalScalar;
-                if (dataR != nullptr) dataR[s] *= finalScalar;
-            }
-        }
-
-        // ── Dry/Wet ミックス ─────────────────────────────────────────────
-        const float depth = currentMix;
-        for (int ch = 0; ch < numChannels; ++ch)
-        {
-            if (ch >= 2) break;
-            float*       dest = buffer.getWritePointer(ch);
-            const float* low  = lowBuffer.getReadPointer(ch);
-            const float* mid  = midBuffer.getReadPointer(ch);
-            const float* high = highBuffer.getReadPointer(ch);
-            for (int s = 0; s < numSamples; ++s)
-            {
-                const float wet = low[s] + mid[s] + high[s];
-                dest[s] = (dest[s] * (1.0f - depth)) + (wet * depth);
-            }
+            const int n = std::min(internalMaxBlock, numSamples - offset);
+            processChunk(left + offset, right + offset, n);
+            offset += n;
         }
     }
 
@@ -198,123 +105,279 @@ public:
     bool isActive() const noexcept override { return activeState; }
     void setActive(bool shouldBeActive) noexcept override { activeState = shouldBeActive; }
 
+    // --- Global Controls ---
     void setMix(float newMix) noexcept override { currentMix = juce::jlimit(0.0f, 1.0f, newMix); }
     float getMix() const noexcept override { return currentMix; }
 
-    void setTimeMultiplier(float t) noexcept { timeMultiplierParam = juce::jlimit(0.1f, 10.0f, t); }
-
-    void setLowMidXOver(float freq) noexcept
-    {
-        lowMidFreqParam = juce::jlimit(40.0f, 1000.0f, freq);
-        updateCrossoverFilters();
-    }
-
-    void setMidHighXOver(float freq) noexcept
-    {
-        midHighFreqParam = juce::jlimit(1000.0f, 15000.0f, freq);
-        updateCrossoverFilters();
-    }
-
-    /**
-     * ノイズゲート閾値 (dBFS): -70 〜 -20 dBFS, デフォルト -45
-     * 高くすると（例: -30）早めにゲートが掛かりノイズが乗りにくくなる。
-     * 低くすると（例: -60）より弱い信号まで引き上げる。
-     * 常に gateGripBottom = gateFloorDb - 9 dB の9dB窓を維持。
-     */
     void setGateFloorDb(float db) noexcept
     {
         gateFloorDb = juce::jlimit(-70.0f, -20.0f, db);
-        updateGateThresholds();
+        node1.setGateFloorDb(gateFloorDb);
+        node2.setGateFloorDb(gateFloorDb);
     }
+    float getGateFloorDb() const noexcept { return gateFloorDb; }
 
-    void setOutGainDb(float) noexcept {}
-    void setCrossoverFreq(float f) noexcept { setLowMidXOver(f); }
+    void setPhaseMode(int mode) noexcept { phaseMode = juce::jlimit(0, 1, mode); }
+    int getPhaseMode() const noexcept { return phaseMode; }
+
+    void setXoverLink(bool link) noexcept
+    {
+        xoverLink = link;
+        if (xoverLink)
+        {
+            s2LowMidFreq  = s1LowMidFreq;
+            s2MidHighFreq = s1MidHighFreq;
+            updateCrossovers();
+        }
+    }
+    bool isXoverLink() const noexcept { return xoverLink; }
+
+    // --- Stage 1 Controls ---
+    void setTimeMultiplier(float t) noexcept { s1Time = juce::jlimit(0.1f, 10.0f, t); }
+    float getTimeMultiplier() const noexcept { return s1Time; }
+
+    void setLowMidXOver(float freq) noexcept
+    {
+        s1LowMidFreq = juce::jlimit(40.0f, 1000.0f, freq);
+        if (xoverLink) s2LowMidFreq = s1LowMidFreq;
+        updateCrossovers();
+    }
+    float getLowMidXOver() const noexcept { return s1LowMidFreq; }
+
+    void setMidHighXOver(float freq) noexcept
+    {
+        s1MidHighFreq = juce::jlimit(1000.0f, 15000.0f, freq);
+        if (xoverLink) s2MidHighFreq = s1MidHighFreq;
+        updateCrossovers();
+    }
+    float getMidHighXOver() const noexcept { return s1MidHighFreq; }
 
     void setBandUpward(int bandIdx, float pct) noexcept
     {
         if (bandIdx >= 0 && bandIdx < 3)
-            upwardAmount[bandIdx] = juce::jlimit(0.0f, 1.0f, pct);
+            s1Upward[bandIdx] = juce::jlimit(0.0f, 100.0f, pct);
     }
-
     void setBandDownward(int bandIdx, float pct) noexcept
     {
         if (bandIdx >= 0 && bandIdx < 3)
-            downwardAmount[bandIdx] = juce::jlimit(0.0f, 1.0f, pct);
+            s1Downward[bandIdx] = juce::jlimit(0.0f, 100.0f, pct);
     }
-
     void setBandGainDb(int bandIdx, float db) noexcept
     {
         if (bandIdx >= 0 && bandIdx < 3)
-            bandGainDb[bandIdx] = juce::jlimit(-24.0f, 24.0f, db);
+            s1GainDb[bandIdx] = juce::jlimit(-24.0f, 24.0f, db);
     }
 
-    float getTimeMultiplier() const noexcept { return timeMultiplierParam; }
-    float getGateFloorDb() const noexcept    { return gateFloorDb; }
+    // --- Stage 2 Controls ---
+    void setStage2On(bool on) noexcept { s2On = on; }
+    bool isStage2On() const noexcept { return s2On; }
+
+    void setStage2Mix(float mix) noexcept { s2Mix = juce::jlimit(0.0f, 1.0f, mix); }
+    float getStage2Mix() const noexcept { return s2Mix; }
+
+    void setStage2TimeMultiplier(float t) noexcept { s2Time = juce::jlimit(0.1f, 10.0f, t); }
+    float getStage2TimeMultiplier() const noexcept { return s2Time; }
+
+    void setStage2LowMidXOver(float freq) noexcept
+    {
+        s2LowMidFreq = juce::jlimit(40.0f, 1000.0f, freq);
+        updateCrossovers();
+    }
+    float getStage2LowMidXOver() const noexcept { return s2LowMidFreq; }
+
+    void setStage2MidHighXOver(float freq) noexcept
+    {
+        s2MidHighFreq = juce::jlimit(1000.0f, 15000.0f, freq);
+        updateCrossovers();
+    }
+    float getStage2MidHighXOver() const noexcept { return s2MidHighFreq; }
+
+    void setStage2BandUpward(int bandIdx, float pct) noexcept
+    {
+        if (bandIdx >= 0 && bandIdx < 3)
+            s2Upward[bandIdx] = juce::jlimit(0.0f, 100.0f, pct);
+    }
+    void setStage2BandDownward(int bandIdx, float pct) noexcept
+    {
+        if (bandIdx >= 0 && bandIdx < 3)
+            s2Downward[bandIdx] = juce::jlimit(0.0f, 100.0f, pct);
+    }
+    void setStage2BandGainDb(int bandIdx, float db) noexcept
+    {
+        if (bandIdx >= 0 && bandIdx < 3)
+            s2GainDb[bandIdx] = juce::jlimit(-24.0f, 24.0f, db);
+    }
 
     float getIndexedParameter(int index) const noexcept override
     {
         if      (index == 0) return getMix();
         else if (index == 1) return getTimeMultiplier();
         else if (index == 2) return getGateFloorDb();
+        else if (index == 3) return getStage2Mix();
         return 0.0f;
     }
+
     void setIndexedParameter(int index, float value) noexcept override
     {
         if      (index == 0) setMix(value);
         else if (index == 1) setTimeMultiplier(value);
         else if (index == 2) setGateFloorDb(value);
+        else if (index == 3) setStage2Mix(value);
     }
 
 private:
-    void updateCrossoverFilters() noexcept
+    void updateCrossovers() noexcept
     {
-        filterLowLP.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
-        filterLowLP.setCutoffFrequency(lowMidFreqParam);
+        crossover1.setFrequencies(s1LowMidFreq, s1MidHighFreq);
+        dryCrossover1.setFrequencies(s1LowMidFreq, s1MidHighFreq);
 
-        filterLowHP.setType(juce::dsp::StateVariableTPTFilterType::highpass);
-        filterLowHP.setCutoffFrequency(lowMidFreqParam);
-
-        filterHighLP.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
-        filterHighLP.setCutoffFrequency(midHighFreqParam);
-
-        filterHighHP.setType(juce::dsp::StateVariableTPTFilterType::highpass);
-        filterHighHP.setCutoffFrequency(midHighFreqParam);
+        crossover2.setFrequencies(s2LowMidFreq, s2MidHighFreq);
+        dryCrossover2.setFrequencies(s2LowMidFreq, s2MidHighFreq);
     }
 
-    /** gateFloorDb から線形閾値を事前計算 */
-    void updateGateThresholds() noexcept
+    void updateNodeCoeffs() noexcept
     {
-        noiseFloorLinear = std::pow(10.0f, gateFloorDb / 20.0f);
-        gateBottomLinear = std::pow(10.0f, (gateFloorDb - 9.0f) / 20.0f);
+        if (currentSampleRate <= 0.0) return;
+
+        // MULTI-OTO 標準: attacks={20, 20, 20}, releases={100, 100, 100}
+        const float atk[3] = { 20.0f, 20.0f, 20.0f };
+        const float rel[3] = { 100.0f, 100.0f, 100.0f };
+        const float depths[3] = { 100.0f, 100.0f, 100.0f };
+
+        // Stage 1
+        const auto c1 = DynamicsNode::computeCoeffs(currentSampleRate,
+                                                    s1GainDb, depths, s1Upward, s1Downward,
+                                                    s1Time * 100.0f, atk, rel, 100.0f);
+        node1.applyCoeffs(c1);
+
+        // Stage 2
+        const auto c2 = DynamicsNode::computeCoeffs(currentSampleRate,
+                                                    s2GainDb, depths, s2Upward, s2Downward,
+                                                    s2Time * 100.0f, atk, rel, s2Mix * 100.0f);
+        node2.applyCoeffs(c2);
+    }
+
+    void processChunk(float* left, float* right, int numSamples) noexcept
+    {
+        // 1. Dry バッファのバックアップ
+        float* dL = dryBuffer.getWritePointer(0);
+        float* dR = dryBuffer.getWritePointer(1);
+        for (int i = 0; i < numSamples; ++i)
+        {
+            dL[i] = left[i];
+            dR[i] = right[i];
+        }
+
+        // 2. ALIGN PHASE モード: Dry 側にも Wet と同一のオールパス位相回転を通過させる
+        // これにより Dry/Wet ミックス時のコムフィルタ・中域位相キャンセルを 100% 根絶
+        if (phaseMode == 1)
+        {
+            for (int i = 0; i < numSamples; ++i)
+                dryCrossover1.processDry(dL[i], dR[i], dL[i], dR[i]);
+
+            if (s2On && s2Mix > 0.001f)
+            {
+                for (int i = 0; i < numSamples; ++i)
+                    dryCrossover2.processDry(dL[i], dR[i], dL[i], dR[i]);
+            }
+        }
+
+        // 3. Stage 1 (Pre/Main)
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float lL, lR, mL, mR, hL, hR;
+            crossover1.process(left[i], right[i], lL, lR, mL, mR, hL, hR);
+            alignas(32) float raw[8] = { lL, lR, mL, mR, hL, hR, 0.0f, 0.0f };
+            simdBuffer[static_cast<size_t>(i)] = juce::dsp::SIMDRegister<float>::fromRawArray(raw);
+        }
+
+        node1.process(simdBuffer.data(), numSamples);
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            alignas(32) float raw[8];
+            simdBuffer[static_cast<size_t>(i)].copyToRawArray(raw);
+            left[i]  = raw[0] + raw[2] + raw[4];
+            right[i] = raw[1] + raw[3] + raw[5];
+        }
+
+        // 4. Stage 2 (Post/Wall) - OTTx2 カスケード
+        if (s2On && s2Mix > 0.001f)
+        {
+            for (int i = 0; i < numSamples; ++i)
+            {
+                float lL, lR, mL, mR, hL, hR;
+                crossover2.process(left[i], right[i], lL, lR, mL, mR, hL, hR);
+                alignas(32) float raw[8] = { lL, lR, mL, mR, hL, hR, 0.0f, 0.0f };
+                simdBuffer[static_cast<size_t>(i)] = juce::dsp::SIMDRegister<float>::fromRawArray(raw);
+            }
+
+            node2.process(simdBuffer.data(), numSamples);
+
+            for (int i = 0; i < numSamples; ++i)
+            {
+                alignas(32) float raw[8];
+                simdBuffer[static_cast<size_t>(i)].copyToRawArray(raw);
+                left[i]  = raw[0] + raw[2] + raw[4];
+                right[i] = raw[1] + raw[3] + raw[5];
+            }
+        }
+
+        // 5. 最終 Dry / Wet ミックス
+        const float depth = currentMix;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            left[i]  = dL[i] + (left[i]  - dL[i]) * depth;
+            right[i] = dR[i] + (right[i] - dR[i]) * depth;
+
+            // 安全サニタイズ（NaN / Inf 除去）
+            if (std::isnan(left[i])  || std::isinf(left[i]))  left[i]  = 0.0f;
+            if (std::isnan(right[i]) || std::isinf(right[i])) right[i] = 0.0f;
+            left[i]  = juce::jlimit(-DynamicsNode::kSafeCeiling, DynamicsNode::kSafeCeiling, left[i]);
+            right[i] = juce::jlimit(-DynamicsNode::kSafeCeiling, DynamicsNode::kSafeCeiling, right[i]);
+        }
     }
 
     double currentSampleRate = 44100.0;
+    int internalMaxBlock     = 2048;
 
-    juce::dsp::StateVariableTPTFilter<float> filterLowLP;
-    juce::dsp::StateVariableTPTFilter<float> filterLowHP;
-    juce::dsp::StateVariableTPTFilter<float> filterHighLP;
-    juce::dsp::StateVariableTPTFilter<float> filterHighHP;
+    // Stage 1 エンジン
+    Crossover crossover1;
+    Crossover dryCrossover1;
+    DynamicsNode node1;
 
-    juce::AudioBuffer<float> lowBuffer;
-    juce::AudioBuffer<float> midBuffer;
-    juce::AudioBuffer<float> highBuffer;
+    // Stage 2 エンジン (OTT x 2)
+    Crossover crossover2;
+    Crossover dryCrossover2;
+    DynamicsNode node2;
 
-    // パラメーター
-    float currentMix         = 0.35f;
-    float timeMultiplierParam = 1.35f;
-    float lowMidFreqParam     = 140.0f;
-    float midHighFreqParam    = 3800.0f;
+    // 内部作業バッファ
+    juce::AudioBuffer<float> dryBuffer;
+    alignas(32) std::vector<juce::dsp::SIMDRegister<float>> simdBuffer;
 
-    float upwardAmount[3]    = { 0.60f, 0.40f, 0.15f };
-    float downwardAmount[3]  = { 0.75f, 0.70f, 0.60f };
-    float bandGainDb[3]      = { 0.0f,  0.0f,  0.0f  };
+    // --- Global パラメータ ---
+    float currentMix  = 0.35f;
+    float gateFloorDb = -45.0f;
+    int   phaseMode   = 1;     // 0: Color, 1: Align Phase (デフォルト Align)
+    bool  xoverLink   = true;  // S1/S2 クロスオーバー連動
 
-    // ノイズゲート設定
-    float gateFloorDb        = -45.0f;   // ユーザー設定値 (dBFS)
-    float noiseFloorLinear   = 0.0f;     // 事前計算: 10^(gateFloorDb/20)
-    float gateBottomLinear   = 0.0f;     // 事前計算: 10^((gateFloorDb-9)/20)
+    // --- Stage 1 パラメータ ---
+    float s1Time         = 1.35f;
+    float s1LowMidFreq   = 140.0f;
+    float s1MidHighFreq  = 3800.0f;
+    float s1Upward[3]    = { 60.0f, 40.0f, 15.0f };
+    float s1Downward[3]  = { 75.0f, 70.0f, 60.0f };
+    float s1GainDb[3]    = { 0.0f,  0.0f,  0.0f  };
 
-    float envFollower[3]     = { 0.0f, 0.0f, 0.0f };
+    // --- Stage 2 パラメータ ---
+    bool  s2On           = true;
+    float s2Mix          = 0.50f;
+    float s2Time         = 1.35f;
+    float s2LowMidFreq   = 140.0f;
+    float s2MidHighFreq  = 3800.0f;
+    float s2Upward[3]    = { 60.0f, 40.0f, 15.0f };
+    float s2Downward[3]  = { 75.0f, 70.0f, 60.0f };
+    float s2GainDb[3]    = { 0.0f,  0.0f,  0.0f  };
 
     TargetRoute route = TargetRoute::FullMix;
     bool activeState  = false;

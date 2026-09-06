@@ -44,6 +44,26 @@ FxSlotCard::FxSlotCard(AnatomyAudioProcessor& processor, int slotIndex,
     amountLabel.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
     amountLabel.setColour(juce::Label::textColourId, AnatomyColors::textDim);
     addAndMakeVisible(amountLabel);
+
+    // OTTx2 Stage 2 コントロール
+    s2AmountKnob.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    s2AmountKnob.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    s2AmountKnob.setColour(juce::Slider::rotarySliderFillColourId, AnatomyColors::babyBlue);
+    s2AmountKnob.setPopupDisplayEnabled(true, true, this);
+    s2AmountKnob.setVisible(false);
+    addChildComponent(s2AmountKnob);
+
+    s2AmountLabel.setText("S2 DEPTH", juce::dontSendNotification);
+    s2AmountLabel.setJustificationType(juce::Justification::centred);
+    s2AmountLabel.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
+    s2AmountLabel.setColour(juce::Label::textColourId, AnatomyColors::babyBlue.withAlpha(0.85f));
+    s2AmountLabel.setVisible(false);
+    addChildComponent(s2AmountLabel);
+
+    s2ToggleBtn.setColour(juce::ToggleButton::textColourId, AnatomyColors::babyBlue);
+    s2ToggleBtn.setColour(juce::ToggleButton::tickColourId, AnatomyColors::babyBlue);
+    s2ToggleBtn.setVisible(false);
+    addChildComponent(s2ToggleBtn);
 }
 
 juce::String FxSlotCard::getPrefix() const
@@ -61,16 +81,13 @@ void FxSlotCard::setTargetRoute(TargetRoute r)
 
 void FxSlotCard::updateFromRoute()
 {
-    // Limiter (7) and Glue Comp (6) disabled for non-FullMix routes
-    bool isFullMix = (currentRoute == TargetRoute::FullMix);
-    typeBox.setItemEnabled(6, isFullMix); // Glue Comp
-    typeBox.setItemEnabled(7, isFullMix); // Limiter
-
+    juce::String pre = getPrefix();
     const auto& order = proc.getEffectOrder(currentRoute);
+
     if (slot < (int)order.size())
     {
         int fxType = order[(size_t)slot];
-        typeBox.setSelectedId(fxType + 2, juce::dontSendNotification); // +2 maps 0(Sat)->2
+        typeBox.setSelectedId(fxType + 2, juce::dontSendNotification);
         setEffectType(fxType);
     }
     else
@@ -83,11 +100,55 @@ void FxSlotCard::updateFromRoute()
 void FxSlotCard::setEffectType(int fxType)
 {
     amountAttachment.reset(); // 既存のアタッチメントを解除
+    s2AmountAttachment.reset();
+    s2ToggleAttachment.reset();
 
     typeBox.setSelectedId(fxType >= 0 ? fxType + 2 : 1, juce::dontSendNotification);
 
-    if (fxType >= 0 && fxType < 7)
+    if (fxType == 3) // OTT (OTTx2 デュアルステージ)
     {
+        juce::String pre = getPrefix();
+        amountLabel.setText("S1 DEPTH", juce::dontSendNotification);
+        amountLabel.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
+        amountLabel.setColour(juce::Label::textColourId, AnatomyColors::peach.withAlpha(0.9f));
+        amountKnob.setColour(juce::Slider::rotarySliderFillColourId, AnatomyColors::peach);
+        amountKnob.setEnabled(true);
+        amountKnob.setAlpha(1.0f);
+
+        if (proc.apvts.getParameter(pre + "OttDepth") != nullptr)
+        {
+            amountAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+                proc.apvts, pre + "OttDepth", amountKnob);
+        }
+
+        s2AmountKnob.setVisible(true);
+        s2AmountKnob.setEnabled(true);
+        s2AmountKnob.setAlpha(1.0f);
+        s2AmountLabel.setVisible(true);
+        s2ToggleBtn.setVisible(true);
+
+        if (proc.apvts.getParameter(pre + "Ott2Depth") != nullptr)
+        {
+            s2AmountAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+                proc.apvts, pre + "Ott2Depth", s2AmountKnob);
+        }
+        if (proc.apvts.getParameter(pre + "Ott2On") != nullptr)
+        {
+            s2ToggleAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+                proc.apvts, pre + "Ott2On", s2ToggleBtn);
+        }
+    }
+    else if (fxType >= 0 && fxType < 7)
+    {
+        s2AmountKnob.setVisible(false);
+        s2AmountLabel.setVisible(false);
+        s2ToggleBtn.setVisible(false);
+
+        amountLabel.setText("AMOUNT", juce::dontSendNotification);
+        amountLabel.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
+        amountLabel.setColour(juce::Label::textColourId, AnatomyColors::textDim);
+        amountKnob.setColour(juce::Slider::rotarySliderFillColourId, AnatomyColors::accentFull);
+
         juce::String pre = getPrefix();
         juce::String mixParamId;
         switch (fxType)
@@ -95,7 +156,6 @@ void FxSlotCard::setEffectType(int fxType)
             case 0: mixParamId = pre + "SatMix"; break;
             case 1: mixParamId = pre + "BcMix"; break;
             case 2: mixParamId = pre + "NsMix"; break;
-            case 3: mixParamId = pre + "OttDepth"; break;
             case 4: mixParamId = pre + "GlueDepth"; break;
             case 5: mixParamId = pre + "LimMix"; break;
             case 6: mixParamId = pre + "TsMix"; break;
@@ -111,10 +171,19 @@ void FxSlotCard::setEffectType(int fxType)
     }
     else
     {
+        s2AmountKnob.setVisible(false);
+        s2AmountLabel.setVisible(false);
+        s2ToggleBtn.setVisible(false);
+
+        amountLabel.setText("AMOUNT", juce::dontSendNotification);
+        amountLabel.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
+        amountLabel.setColour(juce::Label::textColourId, AnatomyColors::textDim);
         amountKnob.setEnabled(false);
         amountKnob.setValue(0.0, juce::dontSendNotification);
         amountKnob.setAlpha(0.35f);
     }
+
+    resized();
     repaint();
 }
 
@@ -167,8 +236,28 @@ void FxSlotCard::paint(juce::Graphics& g)
 void FxSlotCard::resized()
 {
     typeBox.setBounds(8, 28, getWidth() - 16, 22);
-    amountKnob.setBounds((getWidth() - 48) / 2, 54, 48, 48);
-    amountLabel.setBounds(0, 102, getWidth(), 12);
+
+    int fxType = getEffectType();
+    if (fxType == 3) // OTT
+    {
+        const int knobSize = 42;
+        const int s1X = 14;
+        const int s2X = getWidth() - 14 - knobSize;
+        const int knobY = 54;
+
+        amountKnob.setBounds(s1X, knobY, knobSize, knobSize);
+        amountLabel.setBounds(s1X - 6, knobY + knobSize + 2, knobSize + 12, 12);
+
+        s2AmountKnob.setBounds(s2X, knobY, knobSize, knobSize);
+        s2AmountLabel.setBounds(s2X - 6, knobY + knobSize + 2, knobSize + 12, 12);
+
+        s2ToggleBtn.setBounds(getWidth() / 2 - 16, knobY + 10, 32, 20);
+    }
+    else
+    {
+        amountKnob.setBounds((getWidth() - 48) / 2, 54, 48, 48);
+        amountLabel.setBounds(0, 102, getWidth(), 12);
+    }
 }
 
 void FxSlotCard::mouseDown(const juce::MouseEvent&)

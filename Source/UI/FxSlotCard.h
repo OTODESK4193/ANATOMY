@@ -59,6 +59,13 @@ private:
     juce::Label amountLabel;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> amountAttachment;
 
+    // OTTx2 Stage 2 コントロール
+    ValueKnob s2AmountKnob;
+    juce::Label s2AmountLabel;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> s2AmountAttachment;
+    juce::ToggleButton s2ToggleBtn{ "S2" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> s2ToggleAttachment;
+
     bool dragOver = false;
     bool selected = false;
 

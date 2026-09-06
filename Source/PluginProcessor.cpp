@@ -56,9 +56,13 @@ AnatomyAudioProcessor::AnatomyAudioProcessor()
     apvts.addParameterListener("clickCurve", this);
 
     juce::StringArray ottParams{ "transOttDepth", "transOttTime", "transOttLowMidXOver", "transOttMidHighXOver",
+                                 "transOtt2On", "transOtt2Depth", "transOtt2Time", "transOtt2LowMidXOver", "transOtt2MidHighXOver",
                                  "tonalOttDepth", "tonalOttTime", "tonalOttLowMidXOver", "tonalOttMidHighXOver",
+                                 "tonalOtt2On", "tonalOtt2Depth", "tonalOtt2Time", "tonalOtt2LowMidXOver", "tonalOtt2MidHighXOver",
                                  "fullOttDepth", "fullOttTime", "fullOttLowMidXOver", "fullOttMidHighXOver",
+                                 "fullOtt2On", "fullOtt2Depth", "fullOtt2Time", "fullOtt2LowMidXOver", "fullOtt2MidHighXOver",
                                  "layerOttDepth", "layerOttTime", "layerOttLowMidXOver", "layerOttMidHighXOver",
+                                 "layerOtt2On", "layerOtt2Depth", "layerOtt2Time", "layerOtt2LowMidXOver", "layerOtt2MidHighXOver",
                                  "transPitch", "tonalPitch", "layerPitch", "transMixGain", "tonalMixGain",
                                  "layerGain", "layerOffset", "tonalDelay" };
     for (const auto& pid : ottParams) apvts.addParameterListener(pid, this);
@@ -92,9 +96,13 @@ AnatomyAudioProcessor::~AnatomyAudioProcessor()
     apvts.removeParameterListener("clickCurve", this);
 
     juce::StringArray ottParams{ "transOttDepth", "transOttTime", "transOttLowMidXOver", "transOttMidHighXOver",
+                                 "transOtt2On", "transOtt2Depth", "transOtt2Time", "transOtt2LowMidXOver", "transOtt2MidHighXOver",
                                  "tonalOttDepth", "tonalOttTime", "tonalOttLowMidXOver", "tonalOttMidHighXOver",
+                                 "tonalOtt2On", "tonalOtt2Depth", "tonalOtt2Time", "tonalOtt2LowMidXOver", "tonalOtt2MidHighXOver",
                                  "fullOttDepth", "fullOttTime", "fullOttLowMidXOver", "fullOttMidHighXOver",
+                                 "fullOtt2On", "fullOtt2Depth", "fullOtt2Time", "fullOtt2LowMidXOver", "fullOtt2MidHighXOver",
                                  "layerOttDepth", "layerOttTime", "layerOttLowMidXOver", "layerOttMidHighXOver",
+                                 "layerOtt2On", "layerOtt2Depth", "layerOtt2Time", "layerOtt2LowMidXOver", "layerOtt2MidHighXOver",
                                  "transPitch", "tonalPitch", "layerPitch", "transMixGain", "tonalMixGain",
                                  "layerGain", "layerOffset", "tonalDelay" };
     for (const auto& pid : ottParams) apvts.removeParameterListener(pid, this);
@@ -170,6 +178,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "OttLowMidXOver", 1 }, pre + " OTT Low/Mid X-Over", 40.0f, 1000.0f, 140.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "OttMidHighXOver", 1 }, pre + " OTT Mid/High X-Over", 1000.0f, 15000.0f, 3800.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "OttGateFloor", 1 }, pre + " OTT Gate Floor (dBFS)", -70.0f, -20.0f, -45.0f));
+        params.push_back(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{ pre + "OttPhaseMode", 1 }, pre + " OTT Phase Mode", juce::StringArray{ "Color", "Align" }, 1));
+        params.push_back(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{ pre + "OttXoverLink", 1 }, pre + " OTT X-Over Link", true));
+
+        // OTT Stage 2 (OTTx2 Dual Cascade)
+        params.push_back(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{ pre + "Ott2On", 1 }, pre + " OTT2 Enable", true));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "Ott2Depth", 1 }, pre + " OTT2 Depth", 0.0f, 1.0f, 0.0f));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "Ott2Time", 1 }, pre + " OTT2 Time Multiplier", 0.1f, 10.0f, 1.35f));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "Ott2LowMidXOver", 1 }, pre + " OTT2 Low/Mid X-Over", 40.0f, 1000.0f, 140.0f));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "Ott2MidHighXOver", 1 }, pre + " OTT2 Mid/High X-Over", 1000.0f, 15000.0f, 3800.0f));
 
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "GlueDepth", 1 }, pre + " Glue Mix",              0.0f,   1.0f,    0.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "GlueThr",   1 }, pre + " Glue Threshold (dBFS)", -40.0f, 0.0f,  -18.0f));
@@ -187,6 +204,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout AnatomyAudioProcessor::creat
             params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "Ott" + b + "Up", 1 }, pre + " OTT " + b + " Upward Comp", 0.0f, 100.0f, defUp * 100.0f));
             params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "Ott" + b + "Down", 1 }, pre + " OTT " + b + " Downward Comp", 0.0f, 100.0f, defDown * 100.0f));
             params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "Ott" + b + "Gain", 1 }, pre + " OTT " + b + " Band Gain", -24.0f, 24.0f, 0.0f));
+
+            params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "Ott2" + b + "Up", 1 }, pre + " OTT2 " + b + " Upward Comp", 0.0f, 100.0f, defUp * 100.0f));
+            params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "Ott2" + b + "Down", 1 }, pre + " OTT2 " + b + " Downward Comp", 0.0f, 100.0f, defDown * 100.0f));
+            params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "Ott2" + b + "Gain", 1 }, pre + " OTT2 " + b + " Band Gain", -24.0f, 24.0f, 0.0f));
         }
 
         params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ pre + "LimGain", 1 }, pre + " Limiter In Gain (dB)", 0.0f, 24.0f, 0.0f));
@@ -308,11 +329,25 @@ void AnatomyAudioProcessor::initParamCache()
         c.ottLowMidXOver = apvts.getRawParameterValue(pre + "OttLowMidXOver");
         c.ottMidHighXOver = apvts.getRawParameterValue(pre + "OttMidHighXOver");
         c.ottGateFloor  = apvts.getRawParameterValue(pre + "OttGateFloor");
+        c.ottPhaseMode  = apvts.getRawParameterValue(pre + "OttPhaseMode");
+        c.ottXoverLink  = apvts.getRawParameterValue(pre + "OttXoverLink");
         for (int b = 0; b < 3; ++b)
         {
             c.ottBandUp[b]   = apvts.getRawParameterValue(pre + "Ott" + bandNames[b] + "Up");
             c.ottBandDown[b] = apvts.getRawParameterValue(pre + "Ott" + bandNames[b] + "Down");
             c.ottBandGain[b] = apvts.getRawParameterValue(pre + "Ott" + bandNames[b] + "Gain");
+        }
+
+        c.ott2On           = apvts.getRawParameterValue(pre + "Ott2On");
+        c.ott2Depth        = apvts.getRawParameterValue(pre + "Ott2Depth");
+        c.ott2Time         = apvts.getRawParameterValue(pre + "Ott2Time");
+        c.ott2LowMidXOver  = apvts.getRawParameterValue(pre + "Ott2LowMidXOver");
+        c.ott2MidHighXOver = apvts.getRawParameterValue(pre + "Ott2MidHighXOver");
+        for (int b = 0; b < 3; ++b)
+        {
+            c.ott2BandUp[b]   = apvts.getRawParameterValue(pre + "Ott2" + bandNames[b] + "Up");
+            c.ott2BandDown[b] = apvts.getRawParameterValue(pre + "Ott2" + bandNames[b] + "Down");
+            c.ott2BandGain[b] = apvts.getRawParameterValue(pre + "Ott2" + bandNames[b] + "Gain");
         }
 
         c.glueDepth = apvts.getRawParameterValue(pre + "GlueDepth");
@@ -374,11 +409,26 @@ void AnatomyAudioProcessor::synchronizePoolParameters() noexcept
             if (c.ottLowMidXOver) c.ott->setLowMidXOver(c.ottLowMidXOver->load());
             if (c.ottMidHighXOver) c.ott->setMidHighXOver(c.ottMidHighXOver->load());
             if (c.ottGateFloor) c.ott->setGateFloorDb(c.ottGateFloor->load());
+            if (c.ottPhaseMode) c.ott->setPhaseMode(static_cast<int>(c.ottPhaseMode->load()));
+            if (c.ottXoverLink) c.ott->setXoverLink(c.ottXoverLink->load() >= 0.5f);
             for (int b = 0; b < 3; ++b)
             {
                 if (c.ottBandUp[b]) c.ott->setBandUpward(b, c.ottBandUp[b]->load());
                 if (c.ottBandDown[b]) c.ott->setBandDownward(b, c.ottBandDown[b]->load());
                 if (c.ottBandGain[b]) c.ott->setBandGainDb(b, c.ottBandGain[b]->load());
+            }
+
+            // OTT Stage 2 (OTTx2 Dual Cascade)
+            if (c.ott2On) c.ott->setStage2On(c.ott2On->load() >= 0.5f);
+            if (c.ott2Depth) c.ott->setStage2Mix(c.ott2Depth->load());
+            if (c.ott2Time) c.ott->setStage2TimeMultiplier(c.ott2Time->load());
+            if (c.ott2LowMidXOver) c.ott->setStage2LowMidXOver(c.ott2LowMidXOver->load());
+            if (c.ott2MidHighXOver) c.ott->setStage2MidHighXOver(c.ott2MidHighXOver->load());
+            for (int b = 0; b < 3; ++b)
+            {
+                if (c.ott2BandUp[b]) c.ott->setStage2BandUpward(b, c.ott2BandUp[b]->load());
+                if (c.ott2BandDown[b]) c.ott->setStage2BandDownward(b, c.ott2BandDown[b]->load());
+                if (c.ott2BandGain[b]) c.ott->setStage2BandGainDb(b, c.ott2BandGain[b]->load());
             }
         }
 
@@ -1636,12 +1686,28 @@ void AnatomyAudioProcessor::applyEffectsOffline(juce::AudioBuffer<float>& buffer
             if (c.ottLowMidXOver) ott.setLowMidXOver(c.ottLowMidXOver->load());
             if (c.ottMidHighXOver) ott.setMidHighXOver(c.ottMidHighXOver->load());
             if (c.ottGateFloor) ott.setGateFloorDb(c.ottGateFloor->load());
+            if (c.ottPhaseMode) ott.setPhaseMode(static_cast<int>(c.ottPhaseMode->load()));
+            if (c.ottXoverLink) ott.setXoverLink(c.ottXoverLink->load() >= 0.5f);
             for (int b = 0; b < 3; ++b)
             {
                 if (c.ottBandUp[b])   ott.setBandUpward(b, c.ottBandUp[b]->load());
                 if (c.ottBandDown[b]) ott.setBandDownward(b, c.ottBandDown[b]->load());
                 if (c.ottBandGain[b]) ott.setBandGainDb(b, c.ottBandGain[b]->load());
             }
+
+            // OTT Stage 2 (OTTx2 Dual Cascade)
+            if (c.ott2On) ott.setStage2On(c.ott2On->load() >= 0.5f);
+            if (c.ott2Depth) ott.setStage2Mix(c.ott2Depth->load());
+            if (c.ott2Time) ott.setStage2TimeMultiplier(c.ott2Time->load());
+            if (c.ott2LowMidXOver) ott.setStage2LowMidXOver(c.ott2LowMidXOver->load());
+            if (c.ott2MidHighXOver) ott.setStage2MidHighXOver(c.ott2MidHighXOver->load());
+            for (int b = 0; b < 3; ++b)
+            {
+                if (c.ott2BandUp[b])   ott.setStage2BandUpward(b, c.ott2BandUp[b]->load());
+                if (c.ott2BandDown[b]) ott.setStage2BandDownward(b, c.ott2BandDown[b]->load());
+                if (c.ott2BandGain[b]) ott.setStage2BandGainDb(b, c.ott2BandGain[b]->load());
+            }
+
             ott.process(buffer);
         }
         else if (idx == 4) // GLUE

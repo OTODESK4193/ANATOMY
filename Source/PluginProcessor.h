@@ -298,6 +298,17 @@ private:
         std::atomic<float>* ottBandDown[3] = {};
         std::atomic<float>* ottBandGain[3] = {};
 
+        std::atomic<float>* ottPhaseMode     = nullptr;
+        std::atomic<float>* ottXoverLink     = nullptr;
+        std::atomic<float>* ott2On           = nullptr;
+        std::atomic<float>* ott2Depth        = nullptr;
+        std::atomic<float>* ott2Time         = nullptr;
+        std::atomic<float>* ott2LowMidXOver  = nullptr;
+        std::atomic<float>* ott2MidHighXOver = nullptr;
+        std::atomic<float>* ott2BandUp[3]    = {};
+        std::atomic<float>* ott2BandDown[3]  = {};
+        std::atomic<float>* ott2BandGain[3]  = {};
+
         std::atomic<float>* glueDepth = nullptr;
         std::atomic<float>* glueThr   = nullptr;
         std::atomic<float>* glueRatio = nullptr;

@@ -13,8 +13,7 @@
 
 class AnatomyAudioProcessor;
 
-class WaveformComponent final : public juce::Component,
-                                public juce::DragAndDropContainer
+class WaveformComponent final : public juce::Component
 {
 public:
     WaveformComponent();

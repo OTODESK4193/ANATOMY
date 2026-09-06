@@ -635,7 +635,7 @@ void WaveformComponent::paint(juce::Graphics& g)
         }
 
         // ── END マーカー (上部 ◀ 三角形 ＋ 縦線) ──
-        float drawEndX = std::min(w - 1.0f, endX);
+        float drawEndX = std::min(w - 2.0f, endX);
         if (drawEndX >= -5.0f && drawEndX <= w + 5.0f)
         {
             g.setColour(juce::Colours::white.withAlpha(0.6f));
@@ -775,49 +775,89 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
 
         float startX = getXFromMs(startOffsetMs);
         float endX = getXFromMs(endOffsetMs);
-        float drawEndX = std::min(static_cast<float>(getWidth() - 1), endX);
+        float drawEndX = std::min(static_cast<float>(getWidth() - 2), endX);
         float fInX = getXFromMs(startOffsetMs + fadeInMs);
         float fOutX = (fadeOutMs > 0.1f) ? getXFromMs(endOffsetMs - fadeOutMs) : std::min(static_cast<float>(getWidth() - 6), getXFromMs(endOffsetMs));
+
+        // スマート・アンカリング付き Endマーカー開始ラムダ
+        auto startEndMarkerDrag = [&]()
+        {
+            currentDragMode = DragMode::EndMarker;
+            float actualStartMs = endOffsetMs;
+            if (endX >= static_cast<float>(getWidth() - 3))
+            {
+                // 画面外または右端ピン留め時は、見えている画面右端の時間からドラッグを開始
+                actualStartMs = getMsFromX(drawEndX);
+            }
+            dragStartParamMs = actualStartMs;
+            dragStartMouseXf = e.position.x;
+            setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
+        };
+
+        auto startStartMarkerDrag = [&]()
+        {
+            currentDragMode = DragMode::StartMarker;
+            dragStartParamMs = startOffsetMs;
+            dragStartMouseXf = e.position.x;
+            setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
+        };
 
         // 1. 上部 ▶ / ◀ 三角形マーカー判定 (y <= 18) (最近傍判定で密集時も確実に選択)
         if (my <= 18.0f)
         {
             bool inStartTri = (mx >= startX - 6.0f && mx <= startX + 16.0f);
-            bool inEndTri   = (mx >= drawEndX - 16.0f && mx <= drawEndX + 6.0f);
+            bool inEndTri   = (mx >= drawEndX - 16.0f && mx <= drawEndX + 8.0f);
             if (inStartTri && inEndTri)
             {
                 if (std::abs(mx - startX) <= std::abs(mx - drawEndX))
                 {
-                    currentDragMode = DragMode::StartMarker;
-                    dragStartParamMs = startOffsetMs;
-                    dragStartMouseXf = e.position.x;
+                    startStartMarkerDrag();
                     return;
                 }
                 else
                 {
-                    currentDragMode = DragMode::EndMarker;
-                    dragStartParamMs = endOffsetMs;
-                    dragStartMouseXf = e.position.x;
+                    startEndMarkerDrag();
                     return;
                 }
             }
             else if (inStartTri)
             {
-                currentDragMode = DragMode::StartMarker;
-                dragStartParamMs = startOffsetMs;
-                dragStartMouseXf = e.position.x;
+                startStartMarkerDrag();
                 return;
             }
             else if (inEndTri)
             {
-                currentDragMode = DragMode::EndMarker;
-                dragStartParamMs = endOffsetMs;
-                dragStartMouseXf = e.position.x;
+                startEndMarkerDrag();
                 return;
             }
         }
 
-        // 2. FadeIn テンションハンドル判定 (カーブ中央 ●)
+        // 2. 縦線マーカー判定（右端付近では EndMarker を最優先判定）
+        float distStart = std::abs(mx - startX);
+        float distEnd   = std::abs(mx - drawEndX);
+        bool nearStart  = (distStart <= 8.0f);
+        bool nearEnd    = (distEnd <= 10.0f || (mx >= static_cast<float>(getWidth() - 16) && endX >= static_cast<float>(getWidth() - 4)));
+
+        if (nearEnd && !nearStart)
+        {
+            startEndMarkerDrag();
+            return;
+        }
+        else if (nearStart && !nearEnd)
+        {
+            startStartMarkerDrag();
+            return;
+        }
+        else if (nearStart && nearEnd)
+        {
+            if (distStart <= distEnd)
+                startStartMarkerDrag();
+            else
+                startEndMarkerDrag();
+            return;
+        }
+
+        // 3. FadeIn テンションハンドル判定 (カーブ中央 ●)
         if (fadeInMs > 0.1f)
         {
             float fMidX = (startX + fInX) * 0.5f;
@@ -831,7 +871,7 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
             }
         }
 
-        // 3. FadeOut テンションハンドル判定 (カーブ中央 ●)
+        // 4. FadeOut テンションハンドル判定 (カーブ中央 ●)
         if (fadeOutMs > 0.1f)
         {
             float fMidX = (fOutX + drawEndX) * 0.5f;
@@ -845,8 +885,8 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
             }
         }
 
-        // 4. FadeIn ハンドル判定 (真ん中 y=mid 付近の ●)
-        if (std::abs(mx - fInX) <= 10.0f && std::abs(my - midY) <= 16.0f)
+        // 5. FadeIn ハンドル判定 (真ん中 y=mid 付近の ●)
+        if (fadeInMs > 0.1f && std::abs(mx - fInX) <= 10.0f && std::abs(my - midY) <= 16.0f)
         {
             currentDragMode = DragMode::FadeInHandle;
             dragStartParamMs = fadeInMs;
@@ -854,49 +894,11 @@ void WaveformComponent::mouseDown(const juce::MouseEvent& e)
             return;
         }
 
-        // 5. FadeOut ハンドル判定 (真ん中 y=mid 付近の ●)
-        if (std::abs(mx - fOutX) <= 10.0f && std::abs(my - midY) <= 16.0f)
+        // 6. FadeOut ハンドル判定 (真ん中 y=mid 付近の ●: フェード有効時のみ判定)
+        if (fadeOutMs > 0.1f && std::abs(mx - fOutX) <= 10.0f && std::abs(my - midY) <= 16.0f)
         {
             currentDragMode = DragMode::FadeOutHandle;
             dragStartParamMs = fadeOutMs;
-            dragStartMouseXf = e.position.x;
-            return;
-        }
-
-        // 6. 縦線マーカー判定 (最近傍判定で近い方を優先選択)
-        float distStart = std::abs(mx - startX);
-        float distEnd = std::abs(mx - drawEndX);
-        bool nearStart = (distStart <= 8.0f);
-        bool nearEnd = (distEnd <= 8.0f || (endX >= static_cast<float>(getWidth()) && mx >= static_cast<float>(getWidth() - 12)));
-
-        if (nearStart && nearEnd)
-        {
-            if (distStart <= distEnd)
-            {
-                currentDragMode = DragMode::StartMarker;
-                dragStartParamMs = startOffsetMs;
-                dragStartMouseXf = e.position.x;
-                return;
-            }
-            else
-            {
-                currentDragMode = DragMode::EndMarker;
-                dragStartParamMs = endOffsetMs;
-                dragStartMouseXf = e.position.x;
-                return;
-            }
-        }
-        else if (nearStart)
-        {
-            currentDragMode = DragMode::StartMarker;
-            dragStartParamMs = startOffsetMs;
-            dragStartMouseXf = e.position.x;
-            return;
-        }
-        else if (nearEnd)
-        {
-            currentDragMode = DragMode::EndMarker;
-            dragStartParamMs = endOffsetMs;
             dragStartMouseXf = e.position.x;
             return;
         }
@@ -927,6 +929,7 @@ void WaveformComponent::mouseDrag(const juce::MouseEvent& e)
     {
     case DragMode::StartMarker:
     {
+        setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
         // PicoSampler 方式: サブピクセル変位を加算
         double deltaMs = static_cast<double>(e.position.x - dragStartMouseXf) * msPerPixel;
         double minMarginMs = (1.0 / sampleRate) * 1000.0;
@@ -953,6 +956,7 @@ void WaveformComponent::mouseDrag(const juce::MouseEvent& e)
     }
     case DragMode::EndMarker:
     {
+        setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
         double deltaMs = static_cast<double>(e.position.x - dragStartMouseXf) * msPerPixel;
         double minMarginMs = (1.0 / sampleRate) * 1000.0;
         double minAllowedMs = std::min(totalMs, static_cast<double>(startOffsetMs) + minMarginMs);
@@ -1082,21 +1086,26 @@ void WaveformComponent::mouseMove(const juce::MouseEvent& e)
     float midY = getHeight() * 0.5f;
     float startX = getXFromMs(startOffsetMs);
     float endX = getXFromMs(endOffsetMs);
-    float drawEndX = std::min(static_cast<float>(getWidth() - 1), endX);
+    float drawEndX = std::min(static_cast<float>(getWidth() - 2), endX);
     float fInX = getXFromMs(startOffsetMs + fadeInMs);
     float fOutX = (fadeOutMs > 0.1f) ? getXFromMs(endOffsetMs - fadeOutMs) : std::min(static_cast<float>(getWidth() - 6), getXFromMs(endOffsetMs));
 
-    if (my <= 18.0f && ((mx >= startX - 6.0f && mx <= startX + 16.0f) || (mx >= drawEndX - 16.0f && mx <= drawEndX + 6.0f)))
+    float distStart = std::abs(mx - startX);
+    float distEnd   = std::abs(mx - drawEndX);
+    bool nearStart  = (distStart <= 8.0f);
+    bool nearEnd    = (distEnd <= 10.0f || (mx >= static_cast<float>(getWidth() - 16) && endX >= static_cast<float>(getWidth() - 4)));
+
+    if (my <= 18.0f && ((mx >= startX - 6.0f && mx <= startX + 16.0f) || (mx >= drawEndX - 16.0f && mx <= drawEndX + 8.0f)))
     {
         setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
     }
-    else if (std::abs(my - midY) <= 16.0f && (std::abs(mx - fInX) <= 10.0f || std::abs(mx - fOutX) <= 10.0f))
+    else if (nearStart || nearEnd)
+    {
+        setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
+    }
+    else if (std::abs(my - midY) <= 16.0f && ((fadeInMs > 0.1f && std::abs(mx - fInX) <= 10.0f) || (fadeOutMs > 0.1f && std::abs(mx - fOutX) <= 10.0f)))
     {
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
-    }
-    else if (std::abs(mx - startX) <= 8.0f || std::abs(mx - drawEndX) <= 8.0f || (endX >= static_cast<float>(getWidth()) && mx >= static_cast<float>(getWidth() - 12)))
-    {
-        setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
     }
     else if (zoomLevel > 1.05f && my >= getHeight() - 8)
     {
